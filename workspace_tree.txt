@@ -1,0 +1,118 @@
+physics-ide
+├── src
+│   ├── styles.css
+│   ├── index.html
+│   ├── assets
+│   │   ├── tauri.svg
+│   │   └── javascript.svg
+│   └── main.js
+├── src-tauri
+│   ├── tauri.conf.json
+│   ├── versions
+│   │   ├── v1.0.0
+│   │   │   ├── tauri.conf.json
+│   │   │   ├── src
+│   │   │   │   ├── lib.rs
+│   │   │   │   ├── main.rs
+│   │   │   │   └── manifest.rs
+│   │   │   ├── Cargo.lock
+│   │   │   ├── Cargo.toml
+│   │   │   ├── icons
+│   │   │   │   ├── icon.icns
+│   │   │   │   ├── Square44x44Logo.png
+│   │   │   │   ├── Square284x284Logo.png
+│   │   │   │   ├── Square89x89Logo.png
+│   │   │   │   ├── Square142x142Logo.png
+│   │   │   │   ├── Square107x107Logo.png
+│   │   │   │   ├── icon.png
+│   │   │   │   ├── 128x128.png
+│   │   │   │   ├── Square150x150Logo.png
+│   │   │   │   ├── 32x32.png
+│   │   │   │   ├── Square30x30Logo.png
+│   │   │   │   ├── Square71x71Logo.png
+│   │   │   │   ├── icon.ico
+│   │   │   │   ├── Square310x310Logo.png
+│   │   │   │   ├── StoreLogo.png
+│   │   │   │   └── 128x128@2x.png
+│   │   │   ├── capabilities
+│   │   │   │   └── default.json
+│   │   │   ├── gen
+│   │   │   │   └── schemas
+│   │   │   │       ├── capabilities.json
+│   │   │   │       ├── acl-manifests.json
+│   │   │   │       ├── linux-schema.json
+│   │   │   │       └── desktop-schema.json
+│   │   │   ├── build.rs
+│   │   │   └── ide_config.json
+│   │   └── v.1.0.1
+│   │       ├── tauri.conf.json
+│   │       ├── src
+│   │       │   ├── lib.rs
+│   │       │   ├── main.rs
+│   │       │   └── manifest.rs
+│   │       ├── Cargo.lock
+│   │       ├── Cargo.toml
+│   │       ├── icons
+│   │       │   ├── icon.icns
+│   │       │   ├── Square44x44Logo.png
+│   │       │   ├── Square284x284Logo.png
+│   │       │   ├── Square89x89Logo.png
+│   │       │   ├── Square142x142Logo.png
+│   │       │   ├── Square107x107Logo.png
+│   │       │   ├── icon.png
+│   │       │   ├── 128x128.png
+│   │       │   ├── Square150x150Logo.png
+│   │       │   ├── 32x32.png
+│   │       │   ├── Square30x30Logo.png
+│   │       │   ├── Square71x71Logo.png
+│   │       │   ├── icon.ico
+│   │       │   ├── Square310x310Logo.png
+│   │       │   ├── StoreLogo.png
+│   │       │   └── 128x128@2x.png
+│   │       ├── capabilities
+│   │       │   └── default.json
+│   │       ├── gen
+│   │       │   └── schemas
+│   │       │       ├── capabilities.json
+│   │       │       ├── acl-manifests.json
+│   │       │       ├── linux-schema.json
+│   │       │       └── desktop-schema.json
+│   │       ├── build.rs
+│   │       └── ide_config.json
+│   ├── src
+│   │   ├── lib.rs
+│   │   ├── main.rs
+│   │   └── manifest.rs
+│   ├── Cargo.lock
+│   ├── Cargo.toml
+│   ├── icons
+│   │   ├── icon.icns
+│   │   ├── Square44x44Logo.png
+│   │   ├── Square284x284Logo.png
+│   │   ├── Square89x89Logo.png
+│   │   ├── Square142x142Logo.png
+│   │   ├── Square107x107Logo.png
+│   │   ├── icon.png
+│   │   ├── 128x128.png
+│   │   ├── Square150x150Logo.png
+│   │   ├── 32x32.png
+│   │   ├── Square30x30Logo.png
+│   │   ├── Square71x71Logo.png
+│   │   ├── icon.ico
+│   │   ├── Square310x310Logo.png
+│   │   ├── StoreLogo.png
+│   │   └── 128x128@2x.png
+│   ├── capabilities
+│   │   └── default.json
+│   ├── gen
+│   │   └── schemas
+│   │       ├── capabilities.json
+│   │       ├── acl-manifests.json
+│   │       ├── linux-schema.json
+│   │       └── desktop-schema.json
+│   ├── build.rs
+│   └── ide_config.json
+├── project_prime_manifest.json
+├── package.json
+├── README.md
+└── workspace_tree.txt

@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Theoretical Research IDE</title>
+  
+  <!-- Fast LaTeX rendering stylesheet -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+
+  <style>
+      /* 1. THEME VARIABLES (Dark & Light Modes) */
+      /* 1. THEME VARIABLES (Dark & Light Modes) */
+      :root, [data-theme="dark"] {
+                  /* Backgrounds */
+                  --bg-dark: #181825;       
+                  --bg-darker: #11111b;     
+                  --bg-panel: #613583; /* Your custom purple */
+                  
+                  /* Borders */
+                  --border-color: #313244;  /* General dividers */
+                  --border-panel: #613583;  /* Custom purple panel border */
+                  --border-input: #45475a;  /* Input field borders */
+            
+                  /* Typography */
+                  --text: #cdd6f4;          
+                  --text-muted: #a6adc8;    
+            
+                  /* Accents */
+                  --accent: #33d17a;        
+                  --accent-dim: #89b4fa;    
+                  
+                  color-scheme: dark;
+      }
+
+	  [data-theme="chromostereopsis"] {
+	        /* Rich, Deep Royal Blue Fluid Backgrounds (Zero Black) */
+	        --bg-main: #020617;
+	        --bg-darker: #050b1a;
+	        --bg-panel: #0a1428;       /* Deep sapphire blue panel field */
+	        
+	        /* Structural Borders */
+	        --border-color: #1e3a8a;   /* Vibrant blue framing */
+	        --border-panel: #2563eb;   
+	        --border-input: #1d4ed8;
+	        
+	        /* Searing Laser Red Typography (Everything burns red) */
+	        --text: #ff1a1a;           /* Pure, high-purity bright red text */
+	        --text-muted: #fca5a5;     /* Softer red for secondary labels */
+	        
+	        /* Active Accents */
+	        --accent: #ff0033;         /* Maximum-intensity floating red */
+	        --accent-dim: #dc2626;
+	        
+	        color-scheme: dark;
+	  }
+        
+      [data-theme="light"] {
+                  /* Backgrounds */
+                  --bg-dark: #e6e9ef;
+                  --bg-darker: #eff1f5;
+                  --bg-panel: #deddda;
+                  
+                  /* Borders */
+                  --border-color: #bcc0cc;
+                  --border-panel: #7287fd;  /* Light theme panel border */
+                  --border-input: #9ca0b0;
+            
+                  /* Typography */
+                  --text: #4c4f69;
+                  --text-muted: #6c6f85;
+            
+                  /* Accents */
+                  --accent: #26a269;
+                  --accent-dim: #7287fd;
+                  
+                  color-scheme: light;
+      }
+  
+      /* 2. UNIVERSAL FORM CONTRAST FIX */
+	  select, input, textarea {
+        background-color: var(--bg-darker) !important;
+        color: var(--text) !important;
+        border: 1px solid var(--border-input) !important;
+      }
+            
+      select option {
+        background-color: var(--bg-panel) !important;
+        color: var(--text) !important;
+      }
+  
+      /* 3. ORIGINAL APP STYLING */
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+        background-color: var(--bg-darker);
+        color: var(--text);
+        overflow: hidden;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+  
+      /* TOP MENU BAR */
+      .menu-bar {
+        background-color: var(--bg-dark);
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        padding: 2px 10px;
+        user-select: none;
+        z-index: 100;
+      }
+  
+      /* Project Status Tooltip Styles */
+      .project-info-container {
+          position: relative; 
+          cursor: help;
+          padding: 6px 12px;
+        font-size: 0.85rem;
+        margin-left: auto; /* Push to the right side of the menu bar */
+      }
+  
+      .tooltip-box {
+          display: none;
+          position: absolute;
+          top: 30px;
+          right: 0; /* Align right */
+          width: 300px;
+          background-color: var(--bg-dark);
+          border: 1px solid var(--accent);
+          padding: 10px;
+          border-radius: 4px;
+          box-shadow: 0px 4px 12px rgba(0,0,0,0.5);
+          font-size: 0.85rem;
+          z-index: 1000;
+          pointer-events: none;
+      }
+      
+      .menu-item {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        position: relative;
+      }
+  
+      .menu-item:hover {
+        background-color: var(--bg-panel);
+        color: var(--accent);
+        border-radius: 4px;
+      }
+  
+      .dropdown-content {
+        display: none;
+        position: absolute;
+        background-color: var(--bg-dark);
+        border: 1px solid var(--border-color);
+        min-width: 160px;
+        box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5);
+        z-index: 200;
+        top: 100%;
+        left: 0;
+        border-radius: 4px;
+      }
+  
+      .menu-item:hover .dropdown-content {
+        display: block;
+      }
+  
+      .dropdown-content a {
+        color: var(--text);
+        padding: 8px 12px;
+        text-decoration: none;
+        display: block;
+        font-size: 0.8rem;
+      }
+  
+      .dropdown-content a:hover {
+        background-color: var(--bg-panel);
+        color: var(--accent);
+      }
+  
+      /* Outer Wrapper */
+      .app-container {
+        display: flex;
+        width: 100vw;
+        flex-grow: 1;
+        height: calc(100vh - 35px);
+        overflow: hidden;
+      }
+  
+      /* Panels & Sidebars */
+      .panel-section:first-of-type {
+          flex-grow: 1;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+      }
+  
+      #left-wing {
+          width: 250px;
+          min-width: 150px;
+          max-width: 450px;
+          border-right: none;
+          padding: 15px;
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          box-sizing: border-box;
+          overflow: hidden;
+      }
+      
+      #file-tree-container {
+          overflow-y: auto;
+          border: 1px solid var(--border-color);
+          padding: 5px;
+          background: var(--bg-dark);
+      }
+  
+      #center-pane {
+        flex-grow: 1;
+        min-width: 400px;
+        background-color: var(--bg-panel);
+        padding: 10px;
+        gap: 10px;
+        display: flex;
+      }
+  
+      /* Resizers */
+      .resizer {
+        width: 4px;
+        cursor: col-resize;
+        background-color: var(--border-color);
+        transition: background-color 0.2s ease;
+        z-index: 10;
+        height: 100%;
+      }
+  
+      .resizer:hover,
+      .resizer.dragging {
+        background-color: var(--accent);
+      }
+  
+      /* Rotating Cylinders/Panes */
+      .cylinder-pane {
+              flex: 1;
+              display: flex;
+              flex-direction: column;
+              background-color: var(--bg-darker);
+              border: 1px solid var(--border-panel); /* Maps to your panel border variable */
+              border-radius: 6px;
+              position: relative;
+              overflow: hidden;
+              height: 100%;
+      }
+  
+      .pane-header {
+        background-color: var(--bg-dark);
+        border-bottom: 1px solid var(--border-color);
+        padding: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+  
+      .pane-title {
+        font-weight: bold;
+        color: var(--accent);
+        font-size: 0.9rem;
+      }
+  
+      .stack-viewport {
+        flex-grow: 1;
+        position: relative;
+        overflow-y: hidden;
+      }
+  
+      .stack-strip {
+        display: flex;
+        flex-direction: column;
+        height: 300%;
+        transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        position: absolute;
+        width: 100%;
+        top: 0;
+      }
+  
+      .stack-slot {
+        height: 33.333%;
+        padding: 15px;
+        box-sizing: border-box;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+  
+      .stack-slot::-webkit-scrollbar { width: 6px; }
+      .stack-slot::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+  
+      /* Controls & Toolbelt styles */
+      .panel-section {
+        margin-bottom: 15px;
+      }
+  
+      .panel-section-title {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #a6adc8;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 5px;
+        margin-bottom: 10px;
+      }
+  
+      .file-tree {
+        font-family: monospace;
+        font-size: 0.85rem;
+        flex-grow: 1;
+        overflow-y: auto;
+        background-color: var(--bg-darker);
+        padding: 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border-color);
+      }
+  
+      .file-item {
+        padding: 4px 4px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-radius: 3px;
+        user-select: none;
+      }
+  
+      .file-item:hover {
+        color: var(--accent);
+        background-color: rgba(255, 255, 255, 0.05);
+      }
+  
+      .btn-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+      }
+  
+      button {
+        background-color: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        color: var(--text);
+        padding: 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        transition: all 0.2s;
+      }
+  
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+  
+      .btn-large {
+        grid-column: span 2;
+      }
+  
+      .btn-special {
+        grid-column: span 2;
+        background-color: rgba(203, 166, 247, 0.1);
+        border-color: var(--accent-dim);
+        color: var(--accent-dim);
+      }
+  
+      .btn-special:hover {
+        background-color: var(--accent-dim);
+        color: var(--bg-darker);
+      }
+  
+      /* Live LaTeX Message bubble components */
+      .chat-bubble {
+        background-color: var(--bg-panel);
+        padding: 10px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+        border-left: 3px solid var(--accent-dim);
+        white-space: pre-wrap;
+      }
+  
+      .chat-input-wrapper {
+        padding: 10px;
+        border-top: 1px solid var(--border-color);
+        background-color: var(--bg-dark);
+        display: flex;
+        gap: 5px;
+      }
+  
+      .chat-input {
+        flex-grow: 1;
+        background: var(--bg-darker);
+        border: 1px solid var(--border-color);
+        color: var(--text);
+        padding: 8px;
+        border-radius: 4px;
+      }
+  
+      .chat-input:focus { outline: none; border-color: var(--accent); }
+  
+      /* EMBEDDED TERMINAL STYLING */
+      .terminal-panel {
+        height: 180px;
+        background-color: #000000;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        font-family: monospace;
+        overflow: hidden;
+      }
+  
+      .terminal-header {
+        background-color: var(--bg-dark);
+        padding: 5px 10px;
+        font-size: 0.75rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid var(--border-color);
+      }
+  
+      .terminal-body {
+        padding: 8px;
+        flex-grow: 1;
+        font-size: 0.8rem;
+        overflow-y: auto;
+        color: #a6e3a1;
+      }
+  
+      /* SETTINGS MODAL STYLES */
+      .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.7);
+        justify-content: center;
+        align-items: center;
+      }
+  
+      .modal-content {
+              background-color: var(--bg-panel);
+              border: 2px solid var(--border-panel);
+              padding: 25px;
+              border-radius: 8px;
+              width: 450px;
+              box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      }
+  
+      .modal-header {
+        font-size: 1.2rem;
+        color: var(--accent);
+        margin-bottom: 15px;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 5px;
+      }
+  
+      .equation-window {
+          box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+          min-width: 200px;
+          min-height: 100px;
+      }
+      .window-header button {
+          float: right;
+          padding: 0 5px;
+          background: transparent;
+          border: none;
+          cursor: pointer;
+      }
+  
+      .form-group { margin-bottom: 15px; }
+      .form-group label { display: block; margin-bottom: 5px; font-size: 0.85rem; color: #a6adc8; }
+      .form-group select, .form-group input { width: 100%; padding: 8px; background: var(--bg-darker); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text); box-sizing: border-box; }
+      .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
+      
+      #save-prefs-btn.success { background-color: #2e7d32 !important; color: #ffffff; border-color: #2e7d32; }
+      .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.1); }
+      .pane-config-block h4 { margin: 0 0 8px 0; font-size: 0.85rem; color: var(--accent-dim); }
+    </style>
+</head>
+<body>
+
+<!-- Menu Bar -->
+  <div class="menu-bar">
+    <div class="menu-item">
+      File
+	  <div class="dropdown-content">
+        <a href="#" onclick="alert('Creating new theory sheet...')">New Theory Sheet</a>
+        <a href="#" onclick="loadWorkspace()">Open Workspace</a>
+        <a href="#" onclick="saveVersion()">Save as Version</a>
+        <a href="#" onclick="restoreVersion()">Restore Version</a>
+        <a href="#" onclick="saveHypothesis()">Save as Hypothesis</a>
+        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 4px 0;">
+        <a href="#" onclick="window.close()">Exit</a>
+      </div>
+    </div>
+    <div class="menu-item">
+      Edit
+      <div class="dropdown-content">
+        <a href="#" onclick="alert('Formula clipboard copy...')">Copy Math String</a>
+        <a href="#" onclick="alert('Paste external parameters...')">Paste Context Buffer</a>
+      </div>
+    </div>
+    <div class="menu-item">
+      View
+      <div class="dropdown-content">
+        <a href="#" onclick="rotateLeft(1)">Next Analytical Slot</a>
+        <a href="#" onclick="rotateRight(1)">Next Creative Slot</a>
+      </div>
+    </div>
+    <div class="menu-item" onclick="openSettingsModal()">Customize</div>
+
+    <!-- Added Project Info Tooltip Elements Here -->
+    <div class="project-info-container" onmouseenter="showProjectTooltip()" onmouseleave="hideProjectTooltip()">
+        Project Status ⓘ
+        <div id="project-tooltip" class="tooltip-box">
+            <strong>Status:</strong> <span id="status-text">Ready</span><br>
+            <strong>Root:</strong> <span id="root-path-text">Not set</span>
+        </div>
+    </div>
+  </div>
+
+  <div class="app-container">
+    
+    <!-- Left Wing -->
+    <div id="left-wing" class="panel" style="display: flex; flex-direction: column; height: 100%; box-sizing: border-box;">
+        
+        <!-- Top Part: Tree -->
+        <div class="panel-section" style="flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+            <div class="panel-section-title">Cosmology Workspace</div>
+            <button id="select-dir-btn" onclick="loadWorkspace()" style="width: 100%; margin-bottom: 10px;">📂 Open Folder</button>
+            
+            <div class="file-tree" id="file-tree-container" style="flex: 1; overflow-y: auto; min-height: 0;">
+                <!-- Tree content will go here -->
+            </div>
+        </div>
+    
+        <!-- Bottom Part: Compile & Deploy -->
+        <div class="panel-section" style="flex: 0 0 auto; margin-top: 15px;">
+            <div class="panel-section-title">Compile & Deploy</div>
+            <div class="btn-group">
+                <button class="btn-special" onclick="exportWorkspaceTree()">🌳 Export ASCII Tree</button>
+                <button onclick="executeGitPull()">Pull</button>
+                <button onclick="executeGitPush()">Push</button>
+                <button class="btn-large" onclick="alert('Compiling Markdown to TeX & PDF...')">Render PDF</button>
+                <button class="btn-large" onclick="alert('Converting workspace to Word format...')">Render DOCX</button>
+            </div>
+        </div>
+	</div>
+	
+    <!-- Left Resizer -->
+    <div id="left-resizer" class="resizer"></div>
+
+    <!-- Center Stage -->
+    <div id="center-pane">
+      
+      <!-- Left Cylinder -->
+      <div class="cylinder-pane" id="left-cylinder">
+        <div class="pane-header">
+          <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
+          <div>
+            <button onclick="rotateLeft(-1)">▲</button>
+            <button onclick="rotateLeft(1)">▼</button>
+          </div>
+        </div>
+
+        <div class="stack-viewport">
+          <div class="stack-strip" id="left-strip">
+            
+            <div class="stack-slot">
+              <div class="chat-bubble">
+                <strong>System:</strong> Initializing L1: Code Workspace. Run simulations for Multi-Manifold collisions here.
+              </div>
+            </div>
+
+            <div class="stack-slot">
+              <div class="chat-bubble">
+                <strong>System:</strong> L2: Mathematical Bedrock initialized.
+              </div>
+              <div class="chat-bubble" id="l2-equation"></div>
+            </div>
+
+            <div class="stack-slot">
+              <div class="chat-bubble">
+                <strong>System:</strong> L3: Empirical GR Stress-Tester.
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="chat-input-wrapper">
+          <input type="text" id="left-chat-input" class="chat-input" placeholder="Query analytical stack..." onkeydown="if(event.key === 'Enter') submitPrompt('left')">
+          <button onclick="submitPrompt('left')">Send</button>
+        </div>
+      </div>
+
+      <!-- Right Cylinder -->
+      <div class="cylinder-pane" id="right-cylinder">
+        <div class="pane-header">
+          <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
+          <div>
+            <button onclick="rotateRight(-1)">▲</button>
+            <button onclick="rotateRight(1)">▼</button>
+          </div>
+        </div>
+
+        <div class="stack-viewport">
+          <div class="stack-strip" id="right-strip">
+            
+            <div class="stack-slot">
+              <div class="chat-bubble">
+                <strong>System:</strong> Creative Sandboxing. What-if scenarios around cosmic horizons.
+              </div>
+            </div>
+
+            <div class="stack-slot">
+              <div class="chat-bubble">
+                <strong>System:</strong> Translating formulas to visualization prompts.
+              </div>
+            </div>
+
+            <div class="stack-slot">
+              <div class="chat-bubble">
+                <strong>System:</strong> Wild expansion prompts active.
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="chat-input-wrapper">
+          <input type="text" id="right-chat-input" class="chat-input" placeholder="Query speculation engine..." onkeydown="if(event.key === 'Enter') submitPrompt('right')">
+          <button onclick="submitPrompt('right')">Send</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right Resizer -->
+    <div id="right-resizer" class="resizer"></div>
+
+    <!-- Right Wing -->
+    <div id="right-wing" class="panel">
+      <div>
+        <div class="panel-section">
+          <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
+		  <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="sendAIStateBriefing()">⚡ Send Briefing Packet</button>
+          <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Updates current state of equations and folder structure to AI context.</div>
+        </div>
+
+	  <!-- Removed Duplicate Equation Development Block Here -->
+	  <div class="panel-section">
+	      <div class="panel-section-title">Equation Development</div>
+	      <textarea id="latex-input" class="chat-input" placeholder="Simplified LaTeX..."></textarea>
+	      <div class="btn-group" style="margin-top: 5px;">
+	          <button onclick="cleanLaTeX()">🧹 Quick Clean</button>
+	          <button onclick="previewEquation()">Render Preview</button>
+	          <button class="btn-large btn-special" onclick="saveEquation()">💾 Save to Workspace</button>
+	      </div>
+	  </div>
+       
+      <div class="panel-section" style="margin-top:auto;">
+        <div class="panel-section-title">Integrated Terminal</div>
+        <div class="terminal-panel">
+          <div class="terminal-header">
+            <span id="terminal-label">bash (~/projects/physics-ide)</span>
+            <button style="padding: 2px 5px; font-size:0.65rem;" onclick="spawnDetachedTerminal()">Detach ↗</button>
+          </div>
+          <div class="terminal-body" id="terminal-output">
+            $ IDE Interface Initialized<br>
+            $ Ready for commands...<br>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scratchpad / Idea Pad -->
+      <div class="panel-section" style="margin-top: 15px; display: flex; flex-direction: column; flex-grow: 1; min-height: 150px;">
+              <div class="panel-section-title">Scratchpad / Idea Pad</div>
+              
+              <!-- Mini Wordpad Formatting Toolbar -->
+              <div style="display: flex; gap: 4px; margin-bottom: 5px;">
+                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('bold')" title="Bold"><b>B</b></button>
+                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('italic')" title="Italic"><i>I</i></button>
+                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\\int_{0}^{\\infty}')" title="Insert Integral">∫ LaTeX</button>
+                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\n--- Note ---\n')" title="Insert Divider">Divider</button>
+                <button style="padding: 3px 8px; font-size: 0.7rem; margin-left: auto; color: var(--accent);" onclick="clearScratchpad()">Clear</button>
+              </div>
+      
+              <!-- Editable Workspace Canvas -->
+              <div id="scratchpad-content" contenteditable="true" style="flex-grow: 1; background-color: var(--bg-darker); border: 1px solid var(--border-panel); border-radius: 4px; padding: 10px; color: var(--text); font-family: monospace; font-size: 0.8rem; overflow-y: auto; outline: none;" placeholder="Jot down raw ideas, equations, or script snippets..."></div>
+      
+              <!-- File Action Buttons -->
+              <div class="btn-group" style="margin-top: 5px;">
+                <button onclick="saveScratchpad(false)">💾 Save</button>
+                <button onclick="saveScratchpad(true)">💾 Save As...</button>
+              </div>
+      </div>
+    </div>
+
+  </div>
+
+<!-- Restore Version Modal -->
+  <div id="restore-modal" class="modal">
+    <div class="modal-content" style="width: 350px;">
+      <div class="modal-header" style="color: #f38ba8;">⚠️ Restore Version</div>
+      
+      <p style="font-size: 0.85rem; color: #a6adc8; margin-bottom: 15px;">
+        Warning: This will perform a hard reset. All unsaved progress and files created after this version will be wiped.
+      </p>
+
+      <div class="form-group">
+        <label for="version-select">Select Version Tag</label>
+        <select id="version-select">
+          <!-- Tags will be dynamically injected here -->
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+        <button onclick="document.getElementById('restore-modal').style.display='none'">Cancel</button>
+        <button style="background-color: #f38ba8; color: var(--bg-darker); font-weight: bold;" onclick="executeRestore()">
+          Hard Restore
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preferences Modal -->
+  <div id="settings-modal" class="modal">
+      <div class="modal-content" style="width: 550px;">
+        <div class="modal-header">System Settings</div>
+  
+        <!-- Tab Navigation -->
+        <div class="tab-navigation" style="display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 5px;">
+          <button class="tab-btn active" style="background: none; border: none; color: var(--accent); cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('locations')">📁 Locations</button>
+          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('apps')">💻 System & Apps</button>
+          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('ai')">🤖 AI Models</button>
+          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('appearance')">🎨 Appearance</button>
+        </div>
+  
+        <!-- Tab 1: Locations -->
+        <div id="tab-locations" class="settings-tab-panel">
+          <div class="form-group">
+            <label for="settings-project-root">Project Root Directory</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="settings-project-root">
+              <button onclick="browseForDirectory('project-root')">Browse</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="settings-theory-dir">Theory Markdown Directory</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="settings-theory-dir">
+              <button onclick="browseForDirectory('theory-dir')">Browse</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="settings-master-axiom">Master Axiom File</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="settings-master-axiom">
+              <button onclick="browseForFile('master-axiom')">Browse</button>
+            </div>
+          </div>
+        </div>
+  
+        <!-- Tab 2: System & Apps -->
+        <div id="tab-apps" class="settings-tab-panel" style="display: none;">
+                  <div class="form-group">
+                    <label for="settings-editor">Default CLI Editor</label>
+                    <input type="text" id="settings-editor">
+                  </div>
+                  <div class="form-group">
+                    <label for="settings-terminal">Terminal Application</label>
+                    <input type="text" id="settings-terminal">
+                  </div>
+        </div>
+  
+        <!-- Tab 3: AI Configuration -->
+          
+	<!-- Tab 3: AI Configuration -->
+	        <div id="tab-ai" class="settings-tab-panel" style="display: none;">
+	          <div style="display: flex; gap: 10px;">
+	            <div class="form-group" style="flex: 1;">
+	              <label for="settings-gemini-key">Google Gemini API Key</label>
+	              <input type="password" id="settings-gemini-key" placeholder="AIzaSy...">
+	            </div>
+	            <div class="form-group" style="flex: 1;">
+	              <label for="settings-openai-key">OpenAI API Key</label>
+	              <input type="password" id="settings-openai-key" placeholder="sk-proj-...">
+	            </div>
+	          </div>
+	
+	          <div class="form-group">
+	            <label for="settings-ollama-url">Local Ollama URL</label>
+	            <input type="text" id="settings-ollama-url" placeholder="http://127.0.0.1:11434">
+	          </div>
+	
+	          <div class="pane-config-block">
+	            <h4>Left Pane (Analytical Stack)</h4>
+	            <div class="form-group">
+	              <label for="settings-left-provider">Provider</label>
+	              <select id="settings-left-provider" onchange="updateModelUI('left')">
+	                <option value="gemini">Google Gemini</option>
+	                <option value="openai">OpenAI</option>
+	                <option value="ollama">Ollama (Local)</option>
+	              </select>
+	            </div>
+	            <div class="form-group">
+	              <label>Model Tier</label>
+	              <div id="left-model-container">
+	                <select id="settings-left-model">
+	                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (Light / Fast)</option>
+					  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Heavy / Deep Analysis)</option>	                </select>
+	              </div>
+	            </div>
+	          </div>
+	
+	          <div class="pane-config-block">
+	            <h4>Right Pane (Speculation Engine)</h4>
+	            <div class="form-group">
+	              <label for="settings-right-provider">Provider</label>
+	              <select id="settings-right-provider" onchange="updateModelUI('right')">
+	                <option value="gemini">Google Gemini</option>
+	                <option value="openai">OpenAI</option>
+	                <option value="ollama">Ollama (Local)</option>
+	              </select>
+	            </div>
+	            <div class="form-group">
+	              <label>Model Tier</label>
+	              <div id="right-model-container">
+	                <select id="settings-right-model"> 
+	                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (Light / Fast)</option>
+	                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Heavy / Deep Analysis)</option>
+	                </select>
+	              </div>
+	            </div>
+	          </div>
+	        </div>
+	        
+			<!-- Tab 4: Appearance & Colors -->
+			<div id="tab-appearance" class="settings-tab-panel" style="display: none;">
+			          <div class="form-group">
+			            <label for="settings-theme">UI Theme Preset</label>
+			            <!-- Note the onchange event here triggers the live preview -->
+			           <select id="settings-theme" onchange="previewThemePreset(this.value)">
+			              <option value="dark">Dark Mode (Catppuccin)</option>
+			              <option value="light">Light Mode</option>
+			              <option value="chromostereopsis">Chromostereopsis (Holographic)</option>
+			            </select>
+			          </div>
+			
+			          <div class="pane-config-block">
+			            <h4>Live Element Color Customizer</h4>
+			            <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
+			              <label for="picker-accent">Accent Color</label>
+			              <input type="color" id="picker-accent" value="#cba6f7" onchange="previewCustomColor('--accent', this.value)" style="width: 60px; height: 35px; cursor: pointer; padding: 0; border: none;">
+			            </div>
+			            <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
+			              <label for="picker-bg-panel">Panel Background</label>
+			              <input type="color" id="picker-bg-panel" value="#1e1e2e" onchange="previewCustomColor('--bg-panel', this.value)" style="width: 60px; height: 35px; cursor: pointer; padding: 0; border: none;">
+			            </div>
+			          </div>
+			</div>
+			
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+          <button onclick="closeSettingsModal()">Cancel</button>
+          <button id="save-prefs-btn" style="background-color: var(--accent); color: var(--bg-darker);" onclick="saveSettings()">
+            <span id="save-btn-text">Save Configuration</span>
+          </button>
+        </div>
+      </div>
+  </div>
+
+  <script>
+    const { invoke } = window.__TAURI__.core;
+
+    let currentConfig = null;
+    const chatHistories = {
+      left: [[], [], []],
+      right: [[], [], []]
+    };
+
+    let currentWorkspacePath = "";
+    let leftIndex = 0;
+    let rightIndex = 0;
+
+    const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
+    const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
+
+	function previewThemePreset(themeName) {
+	      document.documentElement.setAttribute('data-theme', themeName);
+	      
+	      // Clear inline style overrides so presets can take effect cleanly
+	      document.documentElement.style.removeProperty('--accent');
+	      document.documentElement.style.removeProperty('--bg-panel');
+	      document.documentElement.style.removeProperty('--border-panel');
+	      
+	      // Reset the color pickers in the UI to match defaults if needed
+	      if (themeName === 'dark') {
+	        document.getElementById('picker-accent').value = '#33d17a';
+	        document.getElementById('picker-bg-panel').value = '#613583';
+	      } else {
+	        document.getElementById('picker-accent').value = '#26a269';
+	        document.getElementById('picker-bg-panel').value = '#deddda';
+	      }
+	}
+
+    function previewCustomColor(variableName, colorValue) {
+      document.documentElement.style.setProperty(variableName, colorValue);
+    }
+
+    async function initializeApp() {
+      try {
+        currentConfig = await invoke('get_initial_state');
+        const savedTheme = currentConfig.theme || "dark";
+                document.getElementById('settings-theme').value = savedTheme;
+                document.documentElement.setAttribute('data-theme', savedTheme);
+                
+                if (currentConfig.custom_accent) {
+                  document.documentElement.style.setProperty('--accent', currentConfig.custom_accent);
+                  document.getElementById('picker-accent').value = currentConfig.custom_accent;
+                }
+                if (currentConfig.custom_bg_panel) {
+                  document.documentElement.style.setProperty('--bg-panel', currentConfig.custom_bg_panel);
+                  document.getElementById('picker-bg-panel').value = currentConfig.custom_bg_panel;
+                }
+        
+        document.getElementById('settings-editor').value = currentConfig.editor;
+        document.getElementById('settings-terminal').value = currentConfig.terminal_app;
+        document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
+        document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
+        document.getElementById('settings-left-provider').value = currentConfig.left_provider;
+        document.getElementById('settings-left-model').value = currentConfig.left_model;
+        document.getElementById('settings-right-provider').value = currentConfig.right_provider;
+        document.getElementById('settings-right-model').value = currentConfig.right_model;
+        document.getElementById('settings-project-root').value = currentConfig.project_root_dir || "";
+        document.getElementById('settings-theory-dir').value = currentConfig.theory_md_dir || "";
+        document.getElementById('settings-master-axiom').value = currentConfig.master_axiom_file || "";
+        document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
+        document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
+        document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
+        document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
+
+        if (currentConfig.last_root_dir) {
+          currentWorkspacePath = currentConfig.last_root_dir;
+          await fetchAndRenderDirectory(currentWorkspacePath);
+        }
+      } catch (err) {
+        appendTerminalLog(`Initialization runtime failure: ${err}`);
+      }
+    }
+    window.addEventListener('DOMContentLoaded', initializeApp);
+
+    async function submitPrompt(pane) {
+      if (!currentConfig) return;
+
+      const inputEl = document.getElementById(`${pane}-chat-input`);
+      const text = inputEl.value.trim();
+      if (!text) return;
+
+      inputEl.value = "";
+      const index = (pane === 'left') ? leftIndex : rightIndex;
+      const provider = (pane === 'left') ? currentConfig.left_provider : currentConfig.right_provider;
+
+      let messagePayload;
+      if (provider === 'gemini') {
+        messagePayload = { role: "user", parts: [{ text: text }] };
+      } else {
+        messagePayload = { role: "user", content: text };
+      }
+
+      chatHistories[pane][index].push(messagePayload);
+      appendChatBubble(pane, index, "Gregory", text);
+      appendTerminalLog(`Dispatching payload via active connection string to [${provider}]...`);
+
+      try {
+        const reply = await invoke('send_llm_prompt', {
+          pane: pane,
+          history: chatHistories[pane][index]
+        });
+
+        let responsePayload;
+        if (provider === 'gemini') {
+          responsePayload = { role: "model", parts: [{ text: reply }] };
+        } else {
+          responsePayload = { role: "assistant", content: reply };
+        }
+
+        chatHistories[pane][index].push(responsePayload);
+        appendChatBubble(pane, index, provider === 'gemini' ? "Gemini" : "Ollama", reply);
+      } catch (err) {
+        appendTerminalLog(`LLM Pipeline Fault: ${err}`);
+        appendChatBubble(pane, index, "System Error", err);
+      }
+    }
+
+    function appendChatBubble(pane, index, sender, text) {
+      const targetStrip = pane === 'left' ? 'left-strip' : 'right-strip';
+      const activeSlot = document.getElementById(targetStrip).children[index];
+
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble';
+      
+      const strongTag = document.createElement('strong');
+      strongTag.innerText = `${sender}: `;
+      bubble.appendChild(strongTag);
+      
+      const textNode = document.createTextNode(text);
+      bubble.appendChild(textNode);
+      
+      activeSlot.appendChild(bubble);
+      activeSlot.scrollTop = activeSlot.scrollHeight;
+    }
+
+    function cleanLaTeX() {
+        const inputField = document.getElementById('latex-input');
+        let text = inputField.value;
+        text = text.replace(/\$\$/g, '').replace(/\\\[/g, '').replace(/\\\]/g, '').trim();
+        inputField.value = text;
+        appendTerminalLog("Equation cleaned.");
+    }
+
+    async function loadWorkspace() {
+      try {
+        const selectedPath = await window.__TAURI__.dialog.open({
+          directory: true,
+          multiple: false,
+          title: "Select Workspace Directory"
+        });
+
+        if (!selectedPath) return;
+        
+        currentWorkspacePath = selectedPath;
+        await invoke('save_root_directory', { path: selectedPath });
+        await fetchAndRenderDirectory(selectedPath);
+      } catch (err) {
+        appendTerminalLog(`Error loading workspace: ${err}`);
+      }
+    }
+
+    async function fetchAndRenderDirectory(path, containerElement = null) {
+      try {
+        const container = containerElement || document.getElementById('file-tree-container');
+        if (!containerElement) {
+          container.innerHTML = '';
+        }
+
+        const entries = await invoke('read_directory', { path });
+
+        if (entries.length === 0) {
+           const emptyDiv = document.createElement('div');
+           emptyDiv.style.color = '#6c7086';
+           emptyDiv.style.padding = '4px 12px';
+           emptyDiv.style.fontStyle = 'italic';
+           emptyDiv.innerText = 'Empty directory.';
+           container.appendChild(emptyDiv);
+           return;
+        }
+
+        const ul = document.createElement('ul');
+        ul.style.listStyle = 'none';
+        ul.style.paddingLeft = containerElement ? '12px' : '2px';
+        ul.style.margin = '0';
+
+        entries.forEach(entry => {
+          const li = document.createElement('li');
+          li.style.margin = '4px 0';
+
+          const label = document.createElement('div');
+          label.className = 'file-item';
+          label.innerText = (entry.is_dir ? '📁 ' : '📄 ') + entry.name;
+          li.appendChild(label);
+
+          if (entry.is_dir) {
+            const subContainer = document.createElement('div');
+            subContainer.style.display = 'none';
+            li.appendChild(subContainer);
+
+            let subFoldersLoaded = false;
+            label.onclick = async (e) => {
+              e.stopPropagation();
+              const isCollapsed = subContainer.style.display === 'none';
+              
+              if (isCollapsed) {
+                if (!subFoldersLoaded) {
+                  await fetchAndRenderDirectory(entry.path, subContainer);
+                  subFoldersLoaded = true;
+                }
+                subContainer.style.display = 'block';
+                label.innerText = '📂 ' + entry.name;
+              } else {
+                subContainer.style.display = 'none';
+                label.innerText = '📁 ' + entry.name;
+              }
+            };
+          } else {
+            label.onclick = (e) => {
+              e.stopPropagation();
+              openEditor(entry.path);
+            };
+          }
+          ul.appendChild(li);
+        });
+
+        container.appendChild(ul);
+        if (!containerElement) {
+          appendTerminalLog(`Loaded directory tree: ${path}`);
+        }
+      } catch (err) {
+        appendTerminalLog(`Tree Read Error: ${err}`);
+      }
+    }
+
+    async function exportWorkspaceTree() {
+      if (!currentWorkspacePath) {
+        alert("Please load a workspace directory first!");
+        return;
+      }
+      try {
+        const msg = await invoke('export_workspace_tree', { rootPath: currentWorkspacePath });
+        appendTerminalLog(msg);
+        alert(msg);
+      } catch (err) {
+        appendTerminalLog(`Export Error: ${err}`);
+      }
+    }
+
+async function executeGitPull() {
+      if (!currentWorkspacePath) { alert("Please load a workspace first!"); return; }
+      appendTerminalLog("Executing git pull... (This may take a moment)");
+      
+      try {
+        const result = await invoke('git_pull');
+        appendTerminalLog(result);
+        // Refresh the file tree to show any newly pulled files
+        await fetchAndRenderDirectory(currentWorkspacePath);
+      } catch (err) {
+        appendTerminalLog(`Pull Error: ${err}`);
+      }
+    }
+
+    async function executeGitPush() {
+      if (!currentWorkspacePath) { alert("Please load a workspace first!"); return; }
+      appendTerminalLog("Executing git push...");
+      
+      try {
+        const result = await invoke('git_push');
+        appendTerminalLog(result);
+      } catch (err) {
+        appendTerminalLog(`Push Error: ${err}`);
+      }
+    }
+
+async function restoreVersion() {
+      if (!currentWorkspacePath) { 
+        alert("Please load a workspace first!"); 
+        return; 
+      }
+      
+      try {
+        // 1. Ask Rust for all available tags in this directory
+        const tags = await invoke('get_version_tags', { rootPath: currentWorkspacePath });
+        
+        if (tags.length === 0) {
+            alert("No versions found in this workspace.");
+            return;
+        }
+
+        // 2. Populate the dropdown menu
+        const selectEl = document.getElementById('version-select');
+        selectEl.innerHTML = ''; // Clear old options
+        tags.forEach(tag => {
+            const option = document.createElement('option');
+            option.value = tag;
+            option.text = tag;
+            selectEl.appendChild(option);
+        });
+
+        // 3. Show the modal
+        document.getElementById('restore-modal').style.display = 'flex';
+
+      } catch (err) {
+        appendTerminalLog(`Error fetching versions: ${err}`);
+        alert(err);
+      }
+    }
+
+    async function executeRestore() {
+        const selectedTag = document.getElementById('version-select').value;
+        if (!selectedTag) return;
+
+        // Hide the modal immediately
+        document.getElementById('restore-modal').style.display = 'none';
+
+        try {
+            // Tell Rust to execute the hard reset
+            const result = await invoke('restore_version', { tag: selectedTag, rootPath: currentWorkspacePath });
+            appendTerminalLog(result);
+            alert(result);
+            
+            // Refresh the file tree so the UI matches the newly restored files
+            await fetchAndRenderDirectory(currentWorkspacePath);
+        } catch (err) {
+            appendTerminalLog(`Restore Error: ${err}`);
+            alert(`Failed to restore version: ${err}`);
+        }
+    }
+
+    function rotateLeft(direction) {
+      leftIndex = Math.max(0, Math.min(2, leftIndex + direction));
+      document.getElementById('left-strip').style.transform = `translateY(-${leftIndex * 33.333}%)`;
+      document.getElementById('left-title').innerText = leftTitles[leftIndex];
+    }
+
+    function rotateRight(direction) {
+      rightIndex = Math.max(0, Math.min(2, rightIndex + direction));
+      document.getElementById('right-strip').style.transform = `translateY(-${rightIndex * 33.333}%)`;
+      document.getElementById('right-title').innerText = rightTitles[rightIndex];
+    }
+
+    function insertClipboard(math) {
+      alert("Copied math string to scratchpad: " + math);
+    }
+
+    function openSettingsModal() {
+      document.getElementById('settings-modal').style.display = 'flex';
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settings-modal').style.display = 'none';
+      const saveBtn = document.getElementById("save-prefs-btn");
+      const saveBtnText = document.getElementById("save-btn-text");
+      saveBtn.classList.remove("success");
+      saveBtn.disabled = false;
+      saveBtnText.textContent = "Save Configuration";
+    }
+
+	// Tab switcher logic
+	    function switchSettingsTab(tabId) {
+	      const panels = document.querySelectorAll('.settings-tab-panel');
+	      panels.forEach(p => p.style.display = 'none');
+	      
+	      const targetPanel = document.getElementById(`tab-${tabId}`);
+	      if (targetPanel) {
+	        targetPanel.style.display = 'block';
+	      }
+	      
+	      const buttons = document.querySelectorAll('.tab-navigation .tab-btn');
+	      buttons.forEach(b => {
+	        b.classList.remove('active');
+	        b.style.color = '#6c7086';
+	      });
+	      
+	      const clickedBtn = Array.from(buttons).find(b => b.getAttribute('onclick').includes(tabId));
+	      if (clickedBtn) {
+	        clickedBtn.classList.add('active');
+	        clickedBtn.style.color = 'var(--accent)';
+	      }
+	    }
+	
+	    // Dialogue Directory Browser Helper
+	    async function browseForDirectory(targetInputId) {
+	      try {
+	        const selected = await window.__TAURI__.dialog.open({
+	          directory: true,
+	          multiple: false,
+	          title: "Choose Folder Path"
+	        });
+	        if (selected) {
+	          document.getElementById(`settings-${targetInputId}`).value = selected;
+	        }
+	      } catch (err) {
+	        appendTerminalLog(`Directory Browse Dialog Error: ${err}`);
+	      }
+	    }
+	
+	    // Dialogue File Browser Helper
+	    async function browseForFile(targetInputId) {
+	      try {
+	        const selected = await window.__TAURI__.dialog.open({
+	          directory: false,
+	          multiple: false,
+	          filters: [{ name: 'Markdown Files', extensions: ['md'] }],
+	          title: "Choose File Path"
+	        });
+	        if (selected) {
+	          document.getElementById(`settings-${targetInputId}`).value = selected;
+	        }
+	      } catch (err) {
+	        appendTerminalLog(`File Browse Dialog Error: ${err}`);
+	      }
+	    }
+
+    async function saveSettings() {
+      const saveBtn = document.getElementById("save-prefs-btn");
+      const saveBtnText = document.getElementById("save-btn-text");
+      
+      saveBtn.disabled = true;
+      saveBtnText.textContent = "Saving...";
+
+      const editor = document.getElementById('settings-editor').value;
+      const term = document.getElementById('settings-terminal').value;
+      const geminiKey = document.getElementById('settings-gemini-key').value;
+      const openaiKey = document.getElementById('settings-openai-key').value;
+      const ollamaUrl = document.getElementById('settings-ollama-url').value;
+      const leftProvider = document.getElementById('settings-left-provider').value;
+      const leftModel = document.getElementById('settings-left-model').value;
+      const rightProvider = document.getElementById('settings-right-provider').value;
+      const rightModel = document.getElementById('settings-right-model').value;
+      const projectRoot = document.getElementById('settings-project-root').value;
+      const theoryDir = document.getElementById('settings-theory-dir').value;
+      const masterAxiom = document.getElementById('settings-master-axiom').value;
+      
+      // Fetch new appearance settings
+      const theme = document.getElementById('settings-theme').value;
+      const customAccent = document.getElementById('picker-accent').value;
+      const customBgPanel = document.getElementById('picker-bg-panel').value;
+
+      try {
+        await invoke('save_user_settings', { 
+          editor: editor,
+          terminalApp: term, 
+          geminiKey: geminiKey, 
+          openaiKey: openaiKey, 
+          ollamaUrl: ollamaUrl, 
+          leftProvider: leftProvider, 
+          leftModel: leftModel, 
+          rightProvider: rightProvider, 
+          rightModel: rightModel,
+          projectRootDir: projectRoot,
+          theoryMdDir: theoryDir,
+          masterAxiomFile: masterAxiom,
+          theme: theme,
+          customAccent: customAccent,
+          customBgPanel: customBgPanel
+        });
+        
+        currentConfig.editor = editor;
+        currentConfig.terminal_app = term;
+        currentConfig.gemini_api_key = geminiKey;
+        currentConfig.openai_api_key = openaiKey;
+        currentConfig.ollama_url = ollamaUrl;
+        currentConfig.left_provider = leftProvider;
+        currentConfig.left_model = leftModel;
+        currentConfig.right_provider = rightProvider;
+        currentConfig.right_model = rightModel;
+        currentConfig.project_root_dir = projectRoot;
+        currentConfig.theory_md_dir = theoryDir;
+        currentConfig.master_axiom_file = masterAxiom;
+        currentConfig.theme = theme;
+        currentConfig.custom_accent = customAccent;
+        currentConfig.custom_bg_panel = customBgPanel;
+
+        document.getElementById('terminal-label').innerText = `${term} (~/projects/physics-ide)`;
+        
+        saveBtn.classList.add("success");
+        saveBtnText.innerHTML = "✓ Preferences Updated";
+        appendTerminalLog(`Saved configuration. Native Terminal: ${term} | Editor: ${editor}`);
+
+        setTimeout(() => {
+          closeSettingsModal();
+        }, 850);
+      } catch (err) {
+        console.error(err);
+        saveBtnText.textContent = "Save Failed";
+        saveBtn.disabled = false;
+        appendTerminalLog(`Save Error: ${err}`);
+      }
+    }
+        
+	async function saveEquation() {
+	    const content = document.getElementById('latex-input').value;
+	    if (!content) return;
+	    
+	    const label = prompt("Enter a label for this equation (e.g., 'Interface-Energy'):", "Equation");
+	    if (!label) return;
+	
+	    try {
+	        const response = await invoke('save_equation_to_md', { 
+	            content: content,
+	            label: label
+	        });
+	        appendTerminalLog(response);
+	    } catch (err) {
+	        appendTerminalLog("Save Error: " + err);
+	    }
+	}
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const leftWing = document.getElementById("left-wing");
+      const rightWing = document.getElementById("right-wing");
+      const leftResizer = document.getElementById("left-resizer");
+      const rightResizer = document.getElementById("right-resizer");
+
+      function initResize(resizer, targetPanel, isLeftPanel) {
+        let startX, startWidth;
+
+        const startDrag = (e) => {
+          startX = e.clientX;
+          startWidth = parseInt(document.defaultView.getComputedStyle(targetPanel).width, 10);
+          resizer.classList.add("dragging");
+          
+          document.documentElement.addEventListener("mousemove", doDrag);
+          document.documentElement.addEventListener("mouseup", stopDrag);
+        };
+
+        const doDrag = (e) => {
+          let newWidth;
+          if (isLeftPanel) {
+            newWidth = startWidth + (e.clientX - startX);
+          } else {
+            newWidth = startWidth - (e.clientX - startX);
+          }
+          
+          const minWidth = isLeftPanel ? 150 : 200;
+          const maxWidth = isLeftPanel ? 450 : 500;
+          
+          if (newWidth >= minWidth && newWidth <= maxWidth) {
+            targetPanel.style.width = `${newWidth}px`;
+          }
+        };
+
+        const stopDrag = () => {
+          resizer.classList.remove("dragging");
+          document.documentElement.removeEventListener("mousemove", doDrag);
+          document.documentElement.removeEventListener("mouseup", stopDrag);
+        };
+
+        resizer.addEventListener("mousedown", startDrag);
+      }
+
+      initResize(leftResizer, leftWing, true);
+      initResize(rightResizer, rightWing, false);
+    });
+
+    function openEditor(filePath) {
+          if (!currentConfig) return;
+    
+          const terminalApp = currentConfig.terminal_app || "gnome-terminal";
+          const editor = currentConfig.editor || "micro";
+    
+          invoke('launch_file_editor', { 
+            filePath: filePath, 
+            terminalApp: terminalApp, 
+            editor: editor 
+          })
+            .then(msg => appendTerminalLog(msg))
+            .catch(err => appendTerminalLog(`Editor Error: ${err}`));
+    }
+
+    function spawnDetachedTerminal() {
+      invoke('detach_terminal_shell')
+        .then(msg => appendTerminalLog(msg))
+        .catch(err => appendTerminalLog(`Terminal Error: ${err}`));
+    }
+
+    function sendAIStateBriefing() {
+      document.getElementById('briefing-indicator').innerText = "🤖 Syncing Briefing...";
+      
+      invoke('compile_ai_briefing')
+        .then((briefingStr) => {
+          appendTerminalLog("AI state compiled cleanly! Sent JSON manifest.");
+          document.getElementById('briefing-indicator').innerText = "🤖 AI Synced (Ready)";
+          alert("Daily State Briefing Generated:\n\n" + briefingStr);
+        });
+    }
+
+    function appendTerminalLog(line) {
+      const body = document.getElementById('terminal-output');
+      body.innerHTML += `<br>$ ${line}`;
+      body.scrollTop = body.scrollHeight;
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      katex.render("T_{baryon} = \\oint_{\\Sigma} P(e) \\cdot d\\vec{s} \\approx 1.008 \\text{ AMU}", document.getElementById('l2-equation'), {
+        throwOnError: false,
+        displayMode: true
+      });
+    });
+    
+    async function showProjectTooltip() {
+      const tooltip = document.getElementById('project-tooltip');
+      tooltip.style.display = 'block';
+    
+      try {
+        const briefing = JSON.parse(await invoke('compile_ai_briefing'));
+        document.getElementById('status-text').innerText = briefing.status || "Unknown";
+        document.getElementById('root-path-text').innerText = briefing.project_root || "Not set";
+      } catch (e) {
+        console.error("Failed to load briefing:", e);
+      }
+    }
+    
+    function hideProjectTooltip() {
+      document.getElementById('project-tooltip').style.display = 'none';
+    }
+
+    function createEquationWindow(latexSvg) {
+        const win = document.createElement('div');
+        win.className = 'equation-window';
+        win.style.position = 'fixed';
+        win.style.top = '100px';
+        win.style.left = '100px';
+        win.style.zIndex = '1000';
+        win.style.backgroundColor = 'var(--bg-panel)';
+        win.style.border = '1px solid var(--accent)';
+        win.style.padding = '10px';
+        win.style.borderRadius = '8px';
+        win.style.resize = 'both';
+        win.style.overflow = 'auto';
+    
+        win.innerHTML = `
+            <div class="window-header" style="cursor: move; margin-bottom: 5px; border-bottom: 1px solid var(--border-color);">
+                Equation Preview 
+                <button onclick="this.parentElement.parentElement.remove()">X</button>
+            </div>
+            <div class="equation-content">${latexSvg}</div>
+        `;
+    
+        document.body.appendChild(win);
+        makeDraggable(win);
+    }
+    
+    function makeDraggable(el) {
+        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+        el.querySelector('.window-header').onmousedown = (e) => {
+            e.preventDefault();
+            pos3 = e.clientX; pos4 = e.clientY;
+            document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+            document.onmousemove = (e) => {
+                pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                pos3 = e.clientX; pos4 = e.clientY;
+                el.style.top = (el.offsetTop - pos2) + "px";
+                el.style.left = (el.offsetLeft - pos1) + "px";
+            };
+        };
+    }
+
+	function previewEquation() {
+	    const input = document.getElementById('latex-input').value;
+	    if (!input.trim()) return;
+	
+	    const tempDiv = document.createElement('div');
+	    try {
+	        katex.render(input, tempDiv, {
+	            throwOnError: false,
+	            displayMode: true
+	        });
+	        createEquationWindow(tempDiv.innerHTML);
+	    } catch (e) {
+	        appendTerminalLog("LaTeX Render Error: " + e.message);
+	    }
+	}
+
+	async function saveVersion() {
+	      // 1. Ensure a workspace is actually loaded first
+	      if (!currentWorkspacePath) {
+	        alert("Please load a workspace directory first!");
+	        return;
+	      }
+	
+		  const tag = prompt("Enter a version tag (e.g., v1.0.0):");
+		  if (!tag) return;
+	
+		  try {
+	        // 2. Pass BOTH the tag and the rootPath down the bridge
+		    const result = await invoke('save_as_version', { 
+	            tag: tag,
+	            rootPath: currentWorkspacePath 
+	        });
+	        
+		    appendTerminalLog(result);
+		    alert(result);
+		  } catch (err) {
+		    appendTerminalLog(`Version Save Error: ${err}`);
+	        alert(`Failed to save version: ${err}`);
+		  }
+		}
+
+	function updateModelUI(side) {
+		    const provider = document.getElementById(`settings-${side}-provider`).value;
+		    const container = document.getElementById(`${side}-model-container`);
+		        
+		    if (provider === 'gemini') {
+		        container.innerHTML = `
+		            <select id="settings-${side}-model">
+		                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Light / Fast)</option>
+		                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Heavy / Deep Analysis)</option>
+		            </select>`;
+		    } else if (provider === 'openai') {
+		        container.innerHTML = `
+		            <select id="settings-${side}-model">
+		                <option value="gpt-4o-mini">GPT-4o Mini (Light / Fast)</option>
+		                <option value="gpt-4o">GPT-4o Flagship (Heavy / Data Crunching)</option>
+		            </select>`;
+		    } else if (provider === 'ollama') {
+		        container.innerHTML = `
+		            <select id="settings-${side}-model">
+		                <option value="llama3:8b">Llama 3 8B (Light / Fast Local)</option>
+		                <option value="llama3:70b">Llama 3 70B / Mistral Large (Heavy Local)</option>
+		            </select>`;
+		    }
+	}
+	
+  </script>
+</body>
+</html>

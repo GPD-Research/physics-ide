@@ -1,0 +1,218 @@
+/* ==========================================================================
+   1. THEME VARIABLE SCHEMES
+   ========================================================================== */
+
+/* Default Dark Theme (Your existing aesthetic) */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg-main: #1e1e2e;           /* Deep canvas */
+  --bg-panel: #252538;          /* Sidebar and container backgrounds */
+  --bg-modal: #181825;          /* Modal window */
+  --text-main: #f6f6f6;         /* Primary text */
+  --text-muted: #a6adc8;        /* Sub-headings and hints */
+  --accent: #b4befe;            /* Cyan / soft purple brand accent */
+  --accent-hover: #cba6f7;
+  --border-color: rgba(255, 255, 255, 0.15);
+  --input-bg: #11111b;
+  --button-text: #11111b;       /* Contrast text on active buttons */
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Light Theme (High-contrast, legible interface) */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-main: #f4f5f8;           /* Crisp canvas */
+  --bg-panel: #ffffff;          /* White containers */
+  --bg-modal: #ffffff;          /* White modal window */
+  --text-main: #2d3142;         /* Dark grey typography */
+  --text-muted: #5c6370;        /* Mid-tone grey */
+  --accent: #396cd8;            /* High-contrast blue */
+  --accent-hover: #224ea3;
+  --border-color: rgba(0, 0, 0, 0.15);
+  --input-bg: #e9ecef;
+  --button-text: #ffffff;       /* Contrast text on active buttons */
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* ==========================================================================
+   2. GENERAL TYPOGRAPHY & RESET
+   ========================================================================== */
+
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  color: var(--text-main);
+  background-color: var(--bg-main);
+  transition: background-color 0.2s, color 0.2s;
+  margin: 0;
+}
+
+/* ==========================================================================
+   3. BASE LAYOUT & COMMON ELEMENTS
+   ========================================================================== */
+
+.container {
+  margin: 0;
+  padding-top: 10vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+}
+
+a {
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: inherit;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+h1 {
+  text-align: center;
+  color: var(--text-main);
+}
+
+/* ==========================================================================
+   4. FORM FIELDS, INPUTS & BUTTONS
+   ========================================================================== */
+
+input,
+select,
+button {
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-main);
+  background-color: var(--input-bg);
+  transition: border-color 0.25s, background-color 0.25s, color 0.25s;
+  box-shadow: var(--shadow);
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+  background-color: var(--bg-panel);
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button:active {
+  border-color: var(--accent);
+  background-color: var(--input-bg);
+}
+
+#greet-input {
+  margin-right: 5px;
+}
+
+/* Save / Preference Buttons: Ensure high visibility */
+#save-prefs-btn {
+  background-color: var(--accent) !important;
+  color: var(--button-text) !important;
+  border-color: transparent;
+}
+
+#save-prefs-btn:hover {
+  background-color: var(--accent-hover) !important;
+}
+
+/* ==========================================================================
+   5. LOGOS (UNMODIFIED ANIMATIONS)
+   ========================================================================== */
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: 0.75s;
+}
+
+.logo.vanilla:hover {
+  filter: drop-shadow(0 0 2em #ffe21c);
+}
+
+.logo.tauri:hover {
+  filter: drop-shadow(0 0 2em #24c8db);
+}
+
+/* ==========================================================================
+   6. MODAL & TAB STYLES
+   ========================================================================== */
+
+.modal-content {
+  background-color: var(--bg-modal);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  box-shadow: var(--shadow);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.modal-header {
+  font-size: 1.4em;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 20px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.form-group label {
+  font-size: 0.9em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.pane-config-block {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 14px;
+}
+
+.pane-config-block h4 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: var(--accent);
+}
+
+.tab-btn {
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.tab-btn.active {
+  color: var(--accent) !important;
+  border-bottom: 2px solid var(--accent) !important;
+}

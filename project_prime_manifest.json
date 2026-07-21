@@ -1,0 +1,25 @@
+{
+  "project_name": "Cosmology_Theory_Name",
+  "version": "1.0.0",
+  "last_updated": "2026-07-16T12:30:00Z",
+  "nodes": [
+    {
+      "path": "src/math/tensor_analysis.rs",
+      "is_relevant": true,
+      "show_children": false,
+      "causal_log": "Initial formulation of the metric tensor paradigm."
+    },
+    {
+      "path": "src/physics/models/",
+      "is_relevant": true,
+      "show_children": true,
+      "causal_log": "Expanded to include quantum field interactions."
+    },
+    {
+      "path": "assets/fonts/",
+      "is_relevant": false,
+      "show_children": false,
+      "causal_log": "Excluded from AI priming for relevance pruning."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Ignore the IDE's JSON configuration file
+ide_config.json
+src-tauri/ide_config.json
+
+# If you are testing with a workspace folder located inside your project directory, ignore it:
+/workspace/
+/test-files/

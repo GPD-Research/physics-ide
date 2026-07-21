@@ -1,0 +1,14 @@
+{
+  "editor": "micro",
+  "terminal_app": "gnome-terminal",
+  "last_root_dir": "/home/gregory-dearth",
+  "project_root_dir": "",
+  "theory_md_dir": "",
+  "master_axiom_file": "",
+  "left_provider": "gemini",
+  "left_model": "gemini-1.5-flash",
+  "right_provider": "gemini",
+  "right_model": "gemini-1.5-pro",
+  "gemini_api_key": "",
+  "ollama_url": "http://localhost:11434"
+}
