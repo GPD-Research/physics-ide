@@ -101,7 +101,7 @@ impl Default for AppConfig {
             left_provider: "ollama".to_string(),
             left_model: "deepseek-r1:14b".to_string(),
             right_provider: "ollama".to_string(),
-            right_model: "qwen2.5:7b-instruct".to_string(),
+            right_model: "qwen2.5:7b".to_string(),
             project_root_dir: String::new(),
             theory_md_dir: String::new(),
             master_axiom_file: String::new(),
@@ -446,7 +446,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
                 if pane_is_left {
                     "deepseek-r1:14b".to_string()
                 } else {
-                    "qwen2.5:7b-instruct".to_string()
+                    "qwen2.5:7b".to_string()
                 }
             }
         }

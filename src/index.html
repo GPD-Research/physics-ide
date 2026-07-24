@@ -1120,7 +1120,7 @@
     function getDefaultModelForPane(side, provider) {
       const normalizedProvider = (provider || '').toLowerCase();
       if (normalizedProvider === 'ollama') {
-        return side === 'left' ? 'deepseek-r1:14b' : 'qwen2.5:7b-instruct';
+        return side === 'left' ? 'deepseek-r1:14b' : 'qwen2.5:7b';
       }
       if (normalizedProvider === 'openai') {
         return side === 'left' ? 'gpt-4o' : 'gpt-4o-mini';

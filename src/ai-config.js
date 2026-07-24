@@ -13,7 +13,7 @@ export function getModelOptions(provider) {
     case 'ollama':
       return [
         { value: 'deepseek-r1:14b', label: 'DeepSeek R1 14B (Analytical / Thoughtful, ~9GB)' },
-        { value: 'qwen2.5:7b-instruct', label: 'Qwen 2.5 7B Instruct (Conversational / Synthesis, ~4-5GB)' },
+        { value: 'qwen2.5:7b', label: 'Qwen 2.5 7B (Conversational / Synthesis, ~4-5GB)' },
         { value: 'llama3:8b', label: 'Llama 3 8B (Light / Fast Local)' },
         { value: 'llama3:70b', label: 'Llama 3 70B / Mistral Large (Heavy Local)' },
       ];
