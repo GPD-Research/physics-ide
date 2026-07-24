@@ -443,7 +443,7 @@ fn import_theory_source(source_path: &Path, output_dir: &Path) -> Result<serde_j
             fs::write(&fallback_path, &contents).map_err(|e| format!("Failed to write fallback chapter import: {e}"))?;
             created_files.push(fallback_path.to_string_lossy().to_string());
         } else {
-            for (index, (title, body)) in sections.iter().enumerate() {
+            for (_index, (title, body)) in sections.iter().enumerate() {
                 let file_name = format!("{}.md", sanitize_slug(title));
                 let target_path = output_dir.join(file_name);
                 let markdown = format!("# {}\n\n{}\n", title, body);
@@ -611,7 +611,7 @@ fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: 
 
     let style = detect_theory_style(scan);
 
-    let (structure_section, assumptions_section, predictions_section) = if style == "left_field" {
+    let (structure_section, _assumptions_section, _predictions_section) = if style == "left_field" {
         (
             "## Structural Assumptions\n- Describe the foundational geometry, interaction domain, or manifold topology assumed by the model.\n- Note any boundary-condition-like constraints or seam-like operators introduced by the theory.",
             "## Model Constraints\n- Identify any explicit constraints, conservation-like rules, or emergent operator requirements.\n- Distinguish what is postulated from what is derived or inferred.",
