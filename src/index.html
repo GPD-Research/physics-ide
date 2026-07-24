@@ -935,6 +935,17 @@
             </div>
           </div>
           <div class="form-group">
+            <label for="settings-import-source">Theory Source File</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="settings-import-source" placeholder="/path/to/manuscript.txt or theory.md">
+              <button onclick="browseForFile('import-source', ['md', 'txt', 'docx', 'doc'])">Browse</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <button type="button" onclick="importTheorySource()" style="width: 100%;">📦 Import Theory Source into Folder</button>
+            <div id="theory-import-status" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Creates markdown sections and an equations file inside the configured theory folder.</div>
+          </div>
+          <div class="form-group">
             <button type="button" onclick="generateAxiomFromTheory()" style="width: 100%;">🧠 Generate Master Axiom from Theory Folder</button>
             <div id="axiom-generation-status" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Uses the configured theory markdown directory and Gemini 1.5 Pro when an API key is available.</div>
           </div>
@@ -1594,12 +1605,12 @@ async function restoreVersion() {
 	    }
 	
 	    // Dialogue File Browser Helper
-	    async function browseForFile(targetInputId) {
+	    async function browseForFile(targetInputId, extensions = ['md']) {
 	      try {
 	        const selected = await window.__TAURI__.dialog.open({
 	          directory: false,
 	          multiple: false,
-	          filters: [{ name: 'Markdown Files', extensions: ['md'] }],
+	          filters: [{ name: 'Theory Files', extensions }],
 	          title: "Choose File Path"
 	        });
 	        if (selected) {
@@ -1688,6 +1699,38 @@ async function restoreVersion() {
         saveBtn.disabled = false;
         appendTerminalLog(`Save Error: ${err}`);
         alert(`Settings could not be persisted to the backend config file. They were stored locally as a fallback instead.\n\n${err}`);
+      }
+    }
+
+    async function importTheorySource() {
+      const statusEl = document.getElementById('theory-import-status');
+      const sourcePath = document.getElementById('settings-import-source').value.trim();
+      const outputDir = document.getElementById('settings-theory-dir').value.trim();
+
+      if (!sourcePath) {
+        statusEl.textContent = 'Select a theory source file first.';
+        return;
+      }
+
+      if (!outputDir) {
+        statusEl.textContent = 'Set a theory output directory first.';
+        return;
+      }
+
+      statusEl.textContent = 'Importing...';
+
+      try {
+        const result = await invoke('import_theory_source_command', {
+          sourcePath,
+          outputDir
+        });
+        const payload = typeof result === 'string' ? JSON.parse(result) : result;
+
+        statusEl.textContent = `Imported ${payload.mode || 'theory'} source into ${payload.output_dir || outputDir}.`;
+        appendTerminalLog(`Theory import complete. Mode: ${payload.mode || 'unknown'} | Files: ${payload.files_created?.length || 0}`);
+      } catch (err) {
+        statusEl.textContent = `Import failed: ${err}`;
+        appendTerminalLog(`Theory import error: ${err}`);
       }
     }
 

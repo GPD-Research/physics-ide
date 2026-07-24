@@ -310,6 +310,139 @@ fn recursive_markdown_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Res
     Ok(())
 }
 
+fn sanitize_slug(value: &str) -> String {
+    let mut cleaned = String::new();
+    let mut last_was_underscore = false;
+
+    for ch in value.trim().to_lowercase().chars() {
+        if ch.is_alphanumeric() {
+            cleaned.push(ch);
+            last_was_underscore = false;
+        } else {
+            if !last_was_underscore {
+                cleaned.push('_');
+                last_was_underscore = true;
+            }
+        }
+    }
+
+    cleaned.trim_matches('_').to_string()
+}
+
+fn identify_theory_mode(scan: &serde_json::Value) -> &'static str {
+    let content = scan["file_summaries"]
+        .as_array()
+        .map(|items| {
+            items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
+        })
+        .unwrap_or_default()
+        + "\n"
+        + &scan["headings"].as_array().map(|items| {
+            items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
+        }).unwrap_or_default();
+
+    let lower = content.to_lowercase();
+    let has_left_field = ["bimodal", "emergent constraint", "seam stress", "boundary seam", "topological", "left-field", "emergent"].iter().any(|marker| lower.contains(marker));
+    let has_mainstream = ["lambda", "cosmological constant", "einstein", "general relativity", "standard model", "flrw", "metric"].iter().any(|marker| lower.contains(marker));
+
+    if has_left_field && !has_mainstream {
+        "left_field"
+    } else if has_left_field && has_mainstream {
+        "hybrid"
+    } else {
+        "mainstream"
+    }
+}
+
+fn import_theory_source(source_path: &Path, output_dir: &Path) -> Result<serde_json::Value, String> {
+    if !source_path.exists() {
+        return Err(format!("Source path does not exist: {}", source_path.display()));
+    }
+
+    let source_extension = source_path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_lowercase();
+    let mut created_files = Vec::new();
+
+    fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output directory: {e}"))?;
+
+    let source_type = if source_extension == "md" {
+        "markdown"
+    } else if source_extension == "docx" || source_extension == "doc" {
+        "document"
+    } else {
+        "manuscript"
+    };
+
+    let contents = fs::read_to_string(source_path).map_err(|e| format!("Failed to read source file: {e}"))?;
+
+    if source_type == "markdown" {
+        let file_name = source_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let target_path = output_dir.join(format!("{}.md", file_name));
+        fs::write(&target_path, &contents).map_err(|e| format!("Failed to write markdown import: {e}"))?;
+        created_files.push(target_path.to_string_lossy().to_string());
+    } else {
+        let mut sections: Vec<(String, String)> = Vec::new();
+        let mut current_title = "chapter_1".to_string();
+        let mut current_body = String::new();
+
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if trimmed.to_lowercase().starts_with("chapter") || trimmed.to_lowercase().starts_with("section") {
+                if !current_body.trim().is_empty() {
+                    sections.push((current_title.clone(), current_body.trim().to_string()));
+                }
+                current_title = sanitize_slug(trimmed);
+                current_body.clear();
+            } else {
+                current_body.push_str(trimmed);
+                current_body.push('\n');
+            }
+        }
+
+        if !current_body.trim().is_empty() {
+            sections.push((current_title.clone(), current_body.trim().to_string()));
+        }
+
+        if sections.is_empty() {
+            let fallback_path = output_dir.join("chapter_1.md");
+            fs::write(&fallback_path, &contents).map_err(|e| format!("Failed to write fallback chapter import: {e}"))?;
+            created_files.push(fallback_path.to_string_lossy().to_string());
+        } else {
+            for (index, (title, body)) in sections.iter().enumerate() {
+                let file_name = format!("{}.md", sanitize_slug(title));
+                let target_path = output_dir.join(file_name);
+                let markdown = format!("# {}\n\n{}\n", title, body);
+                fs::write(&target_path, markdown).map_err(|e| format!("Failed to write imported section: {e}"))?;
+                created_files.push(target_path.to_string_lossy().to_string());
+            }
+
+            let equation_path = output_dir.join("equations.md");
+            let equation_content = contents
+                .lines()
+                .filter(|line| line.contains('$') || line.contains("\\math") || line.contains("\\frac") || line.contains("\\partial"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !equation_content.trim().is_empty() {
+                fs::write(&equation_path, format!("# Equations\n\n{}\n", equation_content)).map_err(|e| format!("Failed to write equations file: {e}"))?;
+                created_files.push(equation_path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let scan = scan_markdown_theory(output_dir.to_string_lossy().as_ref());
+    let mode = identify_theory_mode(&scan);
+
+    Ok(serde_json::json!({
+        "source_type": source_type,
+        "mode": mode,
+        "files_created": created_files,
+        "output_dir": output_dir.to_string_lossy().to_string()
+    }))
+}
+
 fn scan_markdown_theory(theory_dir: &str) -> serde_json::Value {
     let mut files = Vec::new();
     let theory_path = Path::new(theory_dir);
@@ -378,6 +511,53 @@ fn scan_markdown_theory(theory_dir: &str) -> serde_json::Value {
     })
 }
 
+fn detect_theory_style(scan: &serde_json::Value) -> &'static str {
+    let combined = scan["headings"].as_array().map(|items| {
+        items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
+    }).unwrap_or_default()
+    + "\n"
+    + &scan["file_summaries"].as_array().map(|items| {
+        items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
+    }).unwrap_or_default();
+
+    let lowercase = combined.to_lowercase();
+
+    let left_field_markers = [
+        "bimodal",
+        "manifold",
+        "emergent constraint",
+        "seam stress",
+        "boundary seam",
+        "topological",
+        "nonstandard",
+        "left-field",
+        "alternative",
+        "emergent",
+    ];
+
+    let mainstream_markers = [
+        "lambda",
+        "cosmological constant",
+        "einstein",
+        "general relativity",
+        "standard model",
+        "perturbation",
+        "metric",
+        "flrw",
+    ];
+
+    let has_left_field = left_field_markers.iter().any(|marker| lowercase.contains(marker));
+    let has_mainstream = mainstream_markers.iter().any(|marker| lowercase.contains(marker));
+
+    if has_left_field && !has_mainstream {
+        "left_field"
+    } else if has_left_field && has_mainstream {
+        "hybrid"
+    } else {
+        "mainstream"
+    }
+}
+
 fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: &serde_json::Value) -> String {
     let theory_label = scan["headings"]
         .as_array()
@@ -397,16 +577,58 @@ fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: 
         .and_then(|value| value.as_str())
         .unwrap_or("State the core explanatory hypothesis here.");
 
-    format!(
-        "# Master Axiom\n\n## Core Axiom\nThe {} framework posits that cosmological structure emerges from a self-consistent relation between order, constraint, and recursive refinement.\n\n## Assumptions\n- Assumption 1: State the foundational conditions under which the model is expected to hold.\n- Assumption 2: State any symmetry, conservation law, or boundary condition that is required.\n\n## Hypothesis\n{}\n\n## Predictions\n1. Specify a measurable signature or scaling relation that follows from the hypothesis.\n2. State a limiting case or boundary condition that should produce a distinct outcome.\n3. Describe the expected observational or analytic difference from competing models.\n\n## Observational Consequences\n- Identify the observational patterns, data products, or simulation outputs implied by the theory.\n- Explain how those consequences would be distinguished from alternative interpretations.\n\n## Testable Criteria\n- What evidence would confirm the hypothesis?\n- What evidence would falsify or constrain it?\n\n## Lagrangian / Action\n{}\n\n## Source Context\n- Theory directory: {}\n- Master axiom file: {}\n- Files scanned: {}\n",
+    let style = detect_theory_style(scan);
+
+    let (structure_section, assumptions_section, predictions_section) = if style == "left_field" {
+        (
+            "## Structural Assumptions\n- Describe the foundational geometry, interaction domain, or manifold topology assumed by the model.\n- Note any boundary-condition-like constraints or seam-like operators introduced by the theory.",
+            "## Model Constraints\n- Identify any explicit constraints, conservation-like rules, or emergent operator requirements.\n- Distinguish what is postulated from what is derived or inferred.",
+            "## Derived Signatures\n1. Specify a signature, scaling relation, or topological pattern that should emerge from the model.\n2. Describe the boundary or transition regime where the theory predicts a distinct behavior.\n3. Note what would count as a meaningful divergence from competing interpretations."
+        )
+    } else {
+        (
+            "## Assumptions\n- Assumption 1: State the foundational conditions under which the model is expected to hold.\n- Assumption 2: State any symmetry, conservation law, or boundary condition that is required.",
+            "## Hypothesis\n{}",
+            "## Predictions\n1. Specify a measurable signature or scaling relation that follows from the hypothesis.\n2. State a limiting case or boundary condition that should produce a distinct outcome.\n3. Describe the expected observational or analytic difference from competing models."
+        )
+    };
+
+    let mut template = format!(
+        "# Master Axiom\n\n## Core Axiom\nThe {} framework is treated here as a structured model candidate rather than as an assumed truth. Its purpose is to define a coherent internal rule set that can be tested against empirical data and compared against alternative formulations.\n\n{}\n\n",
         theory_label,
-        hypothesis,
-        lagrangian,
-        theory_dir,
-        master_axiom_path,
-        scan["files_scanned"].as_u64().unwrap_or(0)
-    )
+        structure_section
+    );
+
+    if style == "left_field" {
+        template.push_str(&format!(
+            "## Model Constraints\n- Identify any explicit constraints, conservation-like rules, or emergent operator requirements.\n- Distinguish what is postulated from what is derived or inferred.\n\n## Hypothesis\n{}\n\n## Derived Signatures\n1. Specify a signature, scaling relation, or topological pattern that should emerge from the model.\n2. Describe the boundary or transition regime where the theory predicts a distinct behavior.\n3. Note what would count as a meaningful divergence from competing interpretations.\n\n## Observational Consequences\n- Identify the observational patterns, data products, or simulation outputs implied by the theory.\n- Explain how those consequences would be distinguished from alternative interpretations.\n\n## Testable Criteria\n- What evidence would confirm the hypothesis?\n- What evidence would falsify or constrain it?\n\n## Lagrangian / Action\n{}\n\n## Source Context\n- Theory directory: {}\n- Master axiom file: {}\n- Files scanned: {}\n",
+            hypothesis,
+            lagrangian,
+            theory_dir,
+            master_axiom_path,
+            scan["files_scanned"].as_u64().unwrap_or(0)
+        ));
+    } else {
+        template.push_str(&format!(
+            "## Hypothesis\n{}\n\n## Predictions\n1. Specify a measurable signature or scaling relation that follows from the hypothesis.\n2. State a limiting case or boundary condition that should produce a distinct outcome.\n3. Describe the expected observational or analytic difference from competing models.\n\n## Observational Consequences\n- Identify the observational patterns, data products, or simulation outputs implied by the theory.\n- Explain how those consequences would be distinguished from alternative interpretations.\n\n## Testable Criteria\n- What evidence would confirm the hypothesis?\n- What evidence would falsify or constrain it?\n\n## Lagrangian / Action\n{}\n\n## Source Context\n- Theory directory: {}\n- Master axiom file: {}\n- Files scanned: {}\n",
+            hypothesis,
+            lagrangian,
+            theory_dir,
+            master_axiom_path,
+            scan["files_scanned"].as_u64().unwrap_or(0)
+        ));
+    }
+
+    template
 }
+
+// NOTE: The long-term architecture for theory ingestion is intentionally
+// multi-mode and paradigm-agnostic. The IDE should detect the model family from
+// the theory markdown tree and then select an appropriate parser mode (for example:
+// mainstream-cosmology, hybrid, or left-field/emergent). If the user provides a
+// manuscript document instead of a markdown directory, the IDE should be able to
+// split that document into chapter/section markdown files and then continue the
+// same ingestion workflow from those generated files.
 
 fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::Value, fallback_template: &str) -> Option<String> {
     if api_key.trim().is_empty() {
@@ -503,6 +725,24 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
     });
 
     Ok(briefing.to_string())
+}
+
+#[tauri::command]
+fn import_theory_source_command(source_path: String, output_dir: String, app: tauri::AppHandle) -> Result<String, String> {
+    let source_path = PathBuf::from(&source_path);
+    let output_dir = PathBuf::from(&output_dir);
+    let result = import_theory_source(&source_path, &output_dir)?;
+
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+
+    let mut payload = result;
+    payload["master_axiom_file"] = serde_json::Value::String(config.master_axiom_file.clone());
+    Ok(payload.to_string())
 }
 
 #[tauri::command]
@@ -867,6 +1107,48 @@ mod tests {
     }
 
     #[test]
+    fn classifies_left_field_theory_as_non_mainstream() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_left_field_style_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(
+            temp_dir.join("bmi.md"),
+            "# BMI Theory\n\nThis model uses a bimodal manifold interaction framework with emergent constraint operators and seam stress.\n",
+        )
+        .unwrap();
+
+        let scan = scan_markdown_theory(temp_dir.to_str().unwrap());
+        let style = detect_theory_style(&scan);
+        let template = build_master_axiom_template(temp_dir.to_str().unwrap(), "", &scan);
+
+        assert_eq!(style, "left_field");
+        assert!(template.contains("## Structural Assumptions"));
+    }
+
+    #[test]
+    fn imports_plaintext_manuscript_into_markdown_sections() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_import_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let source_path = temp_dir.join("manuscript.txt");
+        fs::write(
+            &source_path,
+            "Chapter 1: Foundations\n\nThis chapter introduces the model.\n\nSection 1.1: Core claim\n\nThe theory uses a metric relation and a state variable.\n\n$$\\mathcal{L} = \\frac{1}{2}\\partial_\\mu \\phi \\partial^\\mu \\phi - V(\\phi)$$\n",
+        )
+        .unwrap();
+
+        let output_dir = temp_dir.join("imported");
+        let result = import_theory_source(&source_path, &output_dir).unwrap();
+
+        assert_eq!(result["source_type"].as_str().unwrap(), "manuscript");
+        assert!(output_dir.join("chapter_1_foundations.md").exists());
+        assert!(output_dir.join("equations.md").exists());
+        assert!(result["files_created"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
     fn builds_empirical_analysis_primer_with_dataset_context() {
         let request = EmpiricalAnalysisRequest {
             dataset_path: "/data/cms_run.csv".to_string(),
@@ -933,6 +1215,7 @@ pub fn run() {
             export_workspace_tree,
             send_llm_prompt,
             compile_ai_briefing,
+            import_theory_source_command,
             generate_master_axiom_from_theory,
             launch_file_editor,
             detach_terminal_shell,
