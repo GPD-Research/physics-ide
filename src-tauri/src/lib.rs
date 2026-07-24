@@ -151,16 +151,46 @@ fn get_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn default_home_dir() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn apply_unset_path_defaults(config: &mut AppConfig) {
+    let Some(home_dir) = default_home_dir() else {
+        return;
+    };
+
+    if config.last_root_dir.trim().is_empty() {
+        config.last_root_dir = home_dir.clone();
+    }
+
+    if config.project_root_dir.trim().is_empty() {
+        config.project_root_dir = home_dir;
+    }
+}
+
 // --- TAURI COMMANDS ---
 
 #[tauri::command]
 fn get_initial_state(app: AppHandle) -> AppConfig {
     if let Ok(config_path) = get_config_path(&app) {
         if let Ok(config_data) = fs::read_to_string(config_path) {
-            return serde_json::from_str(&config_data).unwrap_or_default();
+            let mut config = serde_json::from_str(&config_data).unwrap_or_default();
+            apply_unset_path_defaults(&mut config);
+            return config;
         }
     }
-    AppConfig::default()
+
+    let mut config = AppConfig::default();
+    apply_unset_path_defaults(&mut config);
+    config
 }
 
 #[tauri::command]

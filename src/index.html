@@ -1130,8 +1130,9 @@
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
 
-        if (currentConfig.last_root_dir) {
-          currentWorkspacePath = currentConfig.last_root_dir;
+        const initialWorkspaceRoot = currentConfig.last_root_dir || currentConfig.project_root_dir || "";
+        if (initialWorkspaceRoot) {
+          currentWorkspacePath = initialWorkspaceRoot;
           await fetchAndRenderDirectory(currentWorkspacePath);
         }
       } catch (err) {
@@ -1261,9 +1262,11 @@
 
     async function loadWorkspace() {
       try {
+        const defaultPath = currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || undefined;
         const selectedPath = await window.__TAURI__.dialog.open({
           directory: true,
           multiple: false,
+          defaultPath,
           title: "Select Workspace Directory"
         });
 
@@ -1592,9 +1595,12 @@ async function restoreVersion() {
 	    // Dialogue Directory Browser Helper
 	    async function browseForDirectory(targetInputId) {
 	      try {
+          const existingPath = document.getElementById(`settings-${targetInputId}`)?.value?.trim();
+          const defaultPath = existingPath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || currentWorkspacePath || undefined;
 	        const selected = await window.__TAURI__.dialog.open({
 	          directory: true,
 	          multiple: false,
+            defaultPath,
 	          title: "Choose Folder Path"
 	        });
 	        if (selected) {
