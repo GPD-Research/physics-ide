@@ -3,6 +3,26 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+#[derive(Deserialize, Default)]
+struct GeminiApiResponse {
+    candidates: Vec<GeminiCandidate>,
+}
+
+#[derive(Deserialize, Default)]
+struct GeminiCandidate {
+    content: GeminiContent,
+}
+
+#[derive(Deserialize, Default)]
+struct GeminiContent {
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Deserialize, Default)]
+struct GeminiPart {
+    text: String,
+}
+
 // --- RUNTIME MEMORY STATE ---
 pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
@@ -388,6 +408,59 @@ fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: 
     )
 }
 
+fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::Value, fallback_template: &str) -> Option<String> {
+    if api_key.trim().is_empty() {
+        return None;
+    }
+
+    let heading_summary = scan["headings"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|value| value.as_str())
+        .unwrap_or("No headings found");
+
+    let lagrangian_summary = scan["lagrangian_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|value| value.as_str())
+        .unwrap_or("No Lagrangian detected");
+
+    let hypothesis_summary = scan["hypothesis_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|value| value.as_str())
+        .unwrap_or("No hypothesis detected");
+
+    let prompt = format!(
+        "You are helping produce a scientific master axiom file for a cosmological theory repository.\n\nTheory directory: {}\n\nDetected heading: {}\nDetected Lagrangian/action: {}\nDetected hypothesis/axiom candidate: {}\n\nWrite a polished markdown master axiom document with sections: Core Axiom, Assumptions, Hypothesis, Predictions, Observational Consequences, Testable Criteria, and Lagrangian / Action. Keep it concise, scientific, and suitable for a researcher to refine.\n\nIf the evidence is sparse, preserve the human-in-the-loop placeholders rather than inventing unsupported details.\n\nFallback template:\n{}",
+        theory_dir, heading_summary, lagrangian_summary, hypothesis_summary, fallback_template
+    );
+
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .post(format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={}", api_key))
+        .json(&serde_json::json!({
+            "contents": [{
+                "parts": [{ "text": prompt }]
+            }]
+        }))
+        .send()
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let body = response.text().ok()?;
+    let parsed: GeminiApiResponse = serde_json::from_str(&body).ok()?;
+    parsed.candidates.into_iter().find_map(|candidate| {
+        candidate.content.parts.into_iter().find_map(|part| {
+            let text = part.text.trim();
+            if text.is_empty() { None } else { Some(text.to_string()) }
+        })
+    })
+}
+
 #[tauri::command]
 fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
     let current_path = state.workspace_path.lock().unwrap_or_else(|_| panic!("Mutex poisoned")).clone();
@@ -430,6 +503,65 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
     });
 
     Ok(briefing.to_string())
+}
+
+#[tauri::command]
+fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+
+    let effective_theory_dir = if theory_dir.trim().is_empty() {
+        if !config.theory_md_dir.is_empty() {
+            config.theory_md_dir.clone()
+        } else if !config.project_root_dir.is_empty() {
+            config.project_root_dir.clone()
+        } else {
+            String::new()
+        }
+    } else {
+        theory_dir
+    };
+
+    let effective_output_path = if master_axiom_path.trim().is_empty() {
+        if !config.master_axiom_file.is_empty() {
+            config.master_axiom_file.clone()
+        } else if !effective_theory_dir.is_empty() {
+            PathBuf::from(&effective_theory_dir).join("master_axiom.md").to_string_lossy().to_string()
+        } else {
+            "master_axiom.md".to_string()
+        }
+    } else {
+        master_axiom_path
+    };
+
+    let scan = scan_markdown_theory(&effective_theory_dir);
+    let fallback_template = build_master_axiom_template(&effective_theory_dir, &effective_output_path, &scan);
+    let mut final_content = fallback_template.clone();
+    let mut status = "Generated locally from scanned markdown".to_string();
+
+    if let Some(ai_content) = try_generate_with_gemini(&config.gemini_api_key, &effective_theory_dir, &scan, &fallback_template) {
+        final_content = ai_content;
+        status = "Generated with Gemini 1.5 Pro".to_string();
+    }
+
+    let output_path = PathBuf::from(&effective_output_path);
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create output directory: {e}"))?;
+    }
+    fs::write(&output_path, &final_content).map_err(|e| format!("Failed to write master axiom file: {e}"))?;
+
+    let payload = serde_json::json!({
+        "status": status,
+        "master_axiom_file": output_path.to_string_lossy().to_string(),
+        "files_scanned": scan["files_scanned"],
+        "template": final_content
+    });
+
+    Ok(payload.to_string())
 }
 
 #[tauri::command]
@@ -801,6 +933,7 @@ pub fn run() {
             export_workspace_tree,
             send_llm_prompt,
             compile_ai_briefing,
+            generate_master_axiom_from_theory,
             launch_file_editor,
             detach_terminal_shell,
             git_pull,

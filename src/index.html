@@ -650,8 +650,10 @@
             <div class="panel-section-title">Integrated Terminal</div>
             <div class="terminal-panel">
               <div class="terminal-header">
-                <span id="terminal-label">bash (~/projects/physics-ide)</span>
-                <button style="padding: 2px 5px; font-size:0.65rem;" onclick="spawnDetachedTerminal()">Detach ↗</button>
+                <div class="terminal-title-row">
+                  <span class="terminal-title" id="terminal-label">bash (~/projects/physics-ide)</span>
+                  <button class="terminal-action" onclick="spawnDetachedTerminal()">Detach ↗</button>
+                </div>
               </div>
               <div class="terminal-body" id="terminal-output">
                 $ IDE Interface Initialized<br>
@@ -931,6 +933,10 @@
               <input type="text" id="settings-master-axiom">
               <button onclick="browseForFile('master-axiom')">Browse</button>
             </div>
+          </div>
+          <div class="form-group">
+            <button type="button" onclick="generateAxiomFromTheory()" style="width: 100%;">🧠 Generate Master Axiom from Theory Folder</button>
+            <div id="axiom-generation-status" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Uses the configured theory markdown directory and Gemini 1.5 Pro when an API key is available.</div>
           </div>
         </div>
   
@@ -1623,31 +1629,32 @@ async function restoreVersion() {
       const projectRoot = document.getElementById('settings-project-root').value;
       const theoryDir = document.getElementById('settings-theory-dir').value;
       const masterAxiom = document.getElementById('settings-master-axiom').value;
-      
-      // Fetch new appearance settings
       const theme = document.getElementById('settings-theme').value;
       const customAccent = document.getElementById('picker-accent').value;
       const customBgPanel = document.getElementById('picker-bg-panel').value;
 
+      const payload = {
+        editor,
+        terminal_app: term,
+        gemini_key: geminiKey,
+        openai_key: openaiKey,
+        ollama_url: ollamaUrl,
+        left_provider: leftProvider,
+        left_model: leftModel,
+        right_provider: rightProvider,
+        right_model: rightModel,
+        project_root_dir: projectRoot,
+        theory_md_dir: theoryDir,
+        master_axiom_file: masterAxiom,
+        theme,
+        custom_accent: customAccent,
+        custom_bg_panel: customBgPanel
+      };
+
       try {
-        await invoke('save_user_settings', { 
-          editor,
-          terminal_app: term,
-          gemini_key: geminiKey,
-          openai_key: openaiKey,
-          ollama_url: ollamaUrl,
-          left_provider: leftProvider,
-          left_model: leftModel,
-          right_provider: rightProvider,
-          right_model: rightModel,
-          project_root_dir: projectRoot,
-          theory_md_dir: theoryDir,
-          master_axiom_file: masterAxiom,
-          theme,
-          custom_accent: customAccent,
-          custom_bg_panel: customBgPanel
-        });
+        await invoke('save_user_settings', payload);
         
+        currentConfig = { ...(currentConfig || {}), ...payload };
         currentConfig.editor = editor;
         currentConfig.terminal_app = term;
         currentConfig.gemini_api_key = geminiKey;
@@ -1664,6 +1671,7 @@ async function restoreVersion() {
         currentConfig.custom_accent = customAccent;
         currentConfig.custom_bg_panel = customBgPanel;
 
+        localStorage.setItem('physics-ide-settings-fallback', JSON.stringify(payload));
         document.getElementById('terminal-label').innerText = `${term} (~/projects/physics-ide)`;
         
         saveBtn.classList.add("success");
@@ -1674,10 +1682,43 @@ async function restoreVersion() {
           closeSettingsModal();
         }, 850);
       } catch (err) {
+        localStorage.setItem('physics-ide-settings-fallback', JSON.stringify(payload));
         console.error(err);
         saveBtnText.textContent = "Save Failed";
         saveBtn.disabled = false;
         appendTerminalLog(`Save Error: ${err}`);
+        alert(`Settings could not be persisted to the backend config file. They were stored locally as a fallback instead.\n\n${err}`);
+      }
+    }
+
+    async function generateAxiomFromTheory() {
+      const statusEl = document.getElementById('axiom-generation-status');
+      const theoryDir = document.getElementById('settings-theory-dir').value.trim();
+      const masterAxiomPath = document.getElementById('settings-master-axiom').value.trim();
+
+      if (!theoryDir) {
+        statusEl.textContent = 'Select a theory markdown directory first.';
+        return;
+      }
+
+      statusEl.textContent = 'Generating...';
+
+      try {
+        const result = await invoke('generate_master_axiom_from_theory', {
+          theoryDir,
+          masterAxiomPath
+        });
+        const payload = typeof result === 'string' ? JSON.parse(result) : result;
+
+        if (payload.master_axiom_file) {
+          document.getElementById('settings-master-axiom').value = payload.master_axiom_file;
+        }
+
+        statusEl.textContent = payload.status || 'Master axiom generated.';
+        appendTerminalLog(`Axiom generation complete. Files scanned: ${payload.files_scanned || 0}`);
+      } catch (err) {
+        statusEl.textContent = `Generation failed: ${err}`;
+        appendTerminalLog(`Axiom generation error: ${err}`);
       }
     }
         
