@@ -410,7 +410,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
     let model = if model.is_empty() {
         match provider.to_ascii_lowercase().as_str() {
             "openai" => "gpt-4o-mini".to_string(),
-            "gemini" => "gemini-2.0-flash".to_string(),
+            "gemini" => "gemini-2.5-flash".to_string(),
             _ => "llama3.2:3b".to_string(),
         }
     } else {
@@ -418,6 +418,24 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
     };
 
     (provider, model)
+}
+
+fn normalize_model_for_provider(provider: &str, model: &str) -> String {
+    let trimmed = model.trim().trim_start_matches("models/");
+    match provider.to_ascii_lowercase().as_str() {
+        "gemini" => match trimmed {
+            "gemini-1.5-flash" | "gemini-2.0-flash" => "gemini-2.0-flash".to_string(),
+            "gemini-1.5-pro" | "gemini-2.5-pro" | "gemini-2.5-flash" => "gemini-2.5-flash".to_string(),
+            other if other.is_empty() => "gemini-2.5-flash".to_string(),
+            other => other.to_string(),
+        },
+        "openai" => match trimmed {
+            "gpt-4" | "gpt-4o" => "gpt-4o-mini".to_string(),
+            other if other.is_empty() => "gpt-4o-mini".to_string(),
+            other => other.to_string(),
+        },
+        _ => trimmed.to_string(),
+    }
 }
 
 fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
@@ -494,21 +512,11 @@ fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
         return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
     }
 
-    fn normalize_gemini_model(model: &str) -> String {
-        let trimmed = model.trim().trim_start_matches("models/");
-        match trimmed {
-            // Legacy names are mapped to currently supported model families.
-            "gemini-1.5-flash" => "gemini-2.0-flash".to_string(),
-            "gemini-1.5-pro" => "gemini-2.5-pro".to_string(),
-            other if other.is_empty() => "gemini-2.0-flash".to_string(),
-            other => other.to_string(),
-        }
-    }
+    let normalized_model = normalize_model_for_provider("gemini", model);
 
     fn gemini_model_candidates(model: &str) -> Vec<String> {
-        let normalized = normalize_gemini_model(model);
-        let mut candidates = vec![normalized];
-        for fallback in ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"] {
+        let mut candidates = vec![model.to_string()];
+        for fallback in ["gemini-2.5-flash", "gemini-2.0-flash"] {
             if !candidates.iter().any(|existing| existing == fallback) {
                 candidates.push(fallback.to_string());
             }
@@ -525,7 +533,7 @@ fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
 
     let mut last_error = "Gemini request failed before receiving a response".to_string();
 
-    for candidate_model in gemini_model_candidates(model) {
+    for candidate_model in gemini_model_candidates(&normalized_model) {
         let response = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={api_key}"
@@ -953,7 +961,7 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
         }]
     });
 
-    for candidate_model in ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] {
+    for candidate_model in ["gemini-2.5-flash", "gemini-2.0-flash"] {
         let response = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={}",
@@ -1378,6 +1386,13 @@ mod tests {
     fn rejects_negative_redshift() {
         let result = compute_cosmology_metrics(70.0, 0.3, 0.7, 0.0, -0.1);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn normalizes_unsupported_gemini_models_to_supported_flash_models() {
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.5-pro"), "gemini-2.5-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-2.5-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash"), "gemini-2.0-flash");
     }
 
     #[test]
