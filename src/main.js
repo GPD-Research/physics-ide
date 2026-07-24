@@ -402,6 +402,7 @@ async function saveSettings() {
   const editor = document.getElementById('settings-editor').value;
   const term = document.getElementById('settings-terminal').value;
   const geminiKey = document.getElementById('settings-gemini-key').value;
+  const openaiKey = document.getElementById('settings-openai-key').value;
   const ollamaUrl = document.getElementById('settings-ollama-url').value;
   const leftProvider = document.getElementById('settings-left-provider').value;
   const leftModel = document.getElementById('settings-left-model').value;
@@ -410,25 +411,32 @@ async function saveSettings() {
   const projectRoot = document.getElementById('settings-project-root').value;
   const theoryDir = document.getElementById('settings-theory-dir').value;
   const masterAxiom = document.getElementById('settings-master-axiom').value;
-  
-  // Extract and persist the theme choice locally
   const themeValue = document.getElementById('settings-theme').value;
+  const customAccent = document.getElementById('picker-accent').value;
+  const customBgPanel = document.getElementById('picker-bg-panel').value;
+  
   applyTheme(themeValue);
     
   try {
-    await invoke('save_user_settings', { 
-        editor: editor,            // match the variable captured from the DOM
-        terminal_app: term,        // match the variable from the DOM
-        gemini_key: geminiKey,
-        ollama_url: ollamaUrl,     // Ensure this matches the Rust arg name
-        left_provider: leftProvider,
-        left_model: leftModel,
-        right_provider: rightProvider,
-        right_model: rightModel,
-        project_root_dir: projectRoot, // Ensure this matches the Rust arg name
-        theory_md_dir: theoryDir,
-        master_axiom_file: masterAxiom
-    });
+    const payload = {
+      editor,
+      terminal_app: term,
+      gemini_key: geminiKey,
+      openai_key: openaiKey,
+      ollama_url: ollamaUrl,
+      left_provider: leftProvider,
+      left_model: leftModel,
+      right_provider: rightProvider,
+      right_model: rightModel,
+      project_root_dir: projectRoot,
+      theory_md_dir: theoryDir,
+      master_axiom_file: masterAxiom,
+      theme: themeValue,
+      custom_accent: customAccent,
+      custom_bg_panel: customBgPanel
+    };
+
+    await invoke('save_user_settings', payload);
     
     document.getElementById('terminal-label').innerText = `${term} (~/projects/physics-ide)`;
     
