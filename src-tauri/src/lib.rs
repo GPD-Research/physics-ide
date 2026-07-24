@@ -90,6 +90,38 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct SaveUserSettingsPayload {
+    pub editor: String,
+    #[serde(alias = "terminalApp")]
+    pub terminal_app: String,
+    #[serde(alias = "geminiKey")]
+    pub gemini_key: String,
+    #[serde(alias = "openaiKey")]
+    pub openai_key: String,
+    #[serde(alias = "ollamaUrl")]
+    pub ollama_url: String,
+    #[serde(alias = "leftProvider")]
+    pub left_provider: String,
+    #[serde(alias = "leftModel")]
+    pub left_model: String,
+    #[serde(alias = "rightProvider")]
+    pub right_provider: String,
+    #[serde(alias = "rightModel")]
+    pub right_model: String,
+    #[serde(alias = "projectRootDir")]
+    pub project_root_dir: String,
+    #[serde(alias = "theoryMdDir")]
+    pub theory_md_dir: String,
+    #[serde(alias = "masterAxiomFile")]
+    pub master_axiom_file: String,
+    pub theme: String,
+    #[serde(alias = "customAccent")]
+    pub custom_accent: String,
+    #[serde(alias = "customBgPanel")]
+    pub custom_bg_panel: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct EmpiricalAnalysisRequest {
     pub dataset_path: String,
     pub instrument: String,
@@ -1010,51 +1042,30 @@ fn generate_empirical_analysis_primer(
 }
 
 #[tauri::command]
-#[allow(non_snake_case)]
-fn save_user_settings(
-    editor: String,
-    terminal_app: String,
-    gemini_key: String,
-    openai_key: String,
-    ollama_url: String,
-    left_provider: String,
-    left_model: String,
-    right_provider: String,
-    right_model: String,
-    project_root_dir: String,
-    theory_md_dir: String,
-    master_axiom_file: String,
-    theme: String,
-    custom_accent: String,
-    custom_bg_panel: String,
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    
+fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -> Result<String, String> {
     let config_path = get_config_path(&app)?;
-    
+
     let mut config = if let Ok(data) = std::fs::read_to_string(&config_path) {
         serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
     } else {
         AppConfig::default()
     };
 
-    config.editor = editor;
-    config.terminal_app = terminal_app;
-    config.gemini_api_key = gemini_key;
-    config.openai_api_key = openai_key;
-    config.ollama_url = ollama_url;
-    config.left_provider = left_provider;
-    config.left_model = left_model;
-    config.right_provider = right_provider;
-    config.right_model = right_model;
-    config.project_root_dir = project_root_dir;
-    config.theory_md_dir = theory_md_dir;
-    config.master_axiom_file = master_axiom_file;
-    
-    // Assign the new appearance parameters
-    config.theme = theme;
-    config.custom_accent = custom_accent;
-    config.custom_bg_panel = custom_bg_panel;
+    config.editor = payload.editor;
+    config.terminal_app = payload.terminal_app;
+    config.gemini_api_key = payload.gemini_key;
+    config.openai_api_key = payload.openai_key;
+    config.ollama_url = payload.ollama_url;
+    config.left_provider = payload.left_provider;
+    config.left_model = payload.left_model;
+    config.right_provider = payload.right_provider;
+    config.right_model = payload.right_model;
+    config.project_root_dir = payload.project_root_dir;
+    config.theory_md_dir = payload.theory_md_dir;
+    config.master_axiom_file = payload.master_axiom_file;
+    config.theme = payload.theme;
+    config.custom_accent = payload.custom_accent;
+    config.custom_bg_panel = payload.custom_bg_panel;
 
     let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
@@ -1146,6 +1157,53 @@ mod tests {
         assert!(output_dir.join("chapter_1_foundations.md").exists());
         assert!(output_dir.join("equations.md").exists());
         assert!(result["files_created"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn deserialize_save_user_settings_payload_accepts_camel_and_snake_case() {
+        let camel_payload = serde_json::json!({
+            "editor": "vim",
+            "terminalApp": "gnome-terminal",
+            "geminiKey": "key",
+            "openaiKey": "openai",
+            "ollamaUrl": "http://127.0.0.1:11434",
+            "leftProvider": "gemini",
+            "leftModel": "gemini-1.5-flash",
+            "rightProvider": "ollama",
+            "rightModel": "qwen2.5",
+            "projectRootDir": "/tmp/project",
+            "theoryMdDir": "/tmp/theory",
+            "masterAxiomFile": "/tmp/master.md",
+            "theme": "dark",
+            "customAccent": "#33d17a",
+            "customBgPanel": "#2f4f3f"
+        });
+
+        let snake_payload = serde_json::json!({
+            "editor": "vim",
+            "terminal_app": "gnome-terminal",
+            "gemini_key": "key",
+            "openai_key": "openai",
+            "ollama_url": "http://127.0.0.1:11434",
+            "left_provider": "gemini",
+            "left_model": "gemini-1.5-flash",
+            "right_provider": "ollama",
+            "right_model": "qwen2.5",
+            "project_root_dir": "/tmp/project",
+            "theory_md_dir": "/tmp/theory",
+            "master_axiom_file": "/tmp/master.md",
+            "theme": "dark",
+            "custom_accent": "#33d17a",
+            "custom_bg_panel": "#2f4f3f"
+        });
+
+        let camel: SaveUserSettingsPayload = serde_json::from_value(camel_payload).unwrap();
+        let snake: SaveUserSettingsPayload = serde_json::from_value(snake_payload).unwrap();
+
+        assert_eq!(camel.terminal_app, "gnome-terminal");
+        assert_eq!(snake.terminal_app, "gnome-terminal");
+        assert_eq!(camel.project_root_dir, "/tmp/project");
+        assert_eq!(snake.project_root_dir, "/tmp/project");
     }
 
     #[test]
