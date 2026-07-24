@@ -436,7 +436,7 @@ async function saveSettings() {
       custom_bg_panel: customBgPanel
     };
 
-    await invoke('save_user_settings', payload);
+    await invoke('save_user_settings', { payload });
     
     document.getElementById('terminal-label').innerText = `${term} (~/projects/physics-ide)`;
     

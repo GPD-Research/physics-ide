@@ -1663,7 +1663,7 @@ async function restoreVersion() {
       };
 
       try {
-        await invoke('save_user_settings', payload);
+        await invoke('save_user_settings', { payload });
         
         currentConfig = { ...(currentConfig || {}), ...payload };
         currentConfig.editor = editor;
