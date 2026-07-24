@@ -389,7 +389,7 @@ mod llm_prompt_tests {
 }
 
 #[tauri::command]
-fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
+async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
     let temperature = ollama_temperature_for_pane(&pane);
@@ -401,12 +401,21 @@ fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::Ap
         prompt
     };
 
-    match provider.to_ascii_lowercase().as_str() {
-        "ollama" => call_ollama(&config.ollama_url, &model, &prompt_for_model, temperature),
-        "openai" => call_openai(&config.openai_api_key, &model, &prompt_for_model),
-        "gemini" => call_gemini(&config.gemini_api_key, &model, &prompt_for_model),
-        other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
-    }
+    let provider_name = provider.to_ascii_lowercase();
+    let ollama_url = config.ollama_url.clone();
+    let openai_api_key = config.openai_api_key.clone();
+    let gemini_api_key = config.gemini_api_key.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        match provider_name.as_str() {
+            "ollama" => call_ollama(&ollama_url, &model, &prompt_for_model, temperature),
+            "openai" => call_openai(&openai_api_key, &model, &prompt_for_model),
+            "gemini" => call_gemini(&gemini_api_key, &model, &prompt_for_model),
+            other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
+        }
+    })
+    .await
+    .map_err(|e| format!("LLM worker task failed: {e}"))?
 }
 
 fn get_app_config(app: &AppHandle) -> Result<AppConfig, String> {
