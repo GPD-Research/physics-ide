@@ -1,0 +1,90 @@
+# GParted Resize Guide for Ubuntu and Windows Dual Boot
+
+## Goal
+
+This guide helps reclaim space from the Windows partition and give more space to the Ubuntu root partition on a dual-boot laptop.
+
+## Important cautions before you begin
+
+1. Back up anything important from Windows first.
+2. Make sure Windows is fully shut down before resizing.
+3. Disable Fast Startup in Windows before you start.
+4. If BitLocker is enabled, make sure it is unlocked and you have the recovery key available.
+5. Do not interrupt the resize operation once it starts.
+6. If you are unsure, stop and seek help from someone experienced with partitioning.
+
+## What your partition layout shows
+
+Based on your current partition map:
+- Ubuntu is on the ext4 partition /dev/nvme0n1p5.
+- Windows is on /dev/nvme0n1p3.
+- There is also a recovery partition /dev/nvme0n1p4 that should usually be left alone.
+- Your SD card is mounted separately and is not part of this resize.
+
+## Recommended approach
+
+### Step 1: Prepare Windows
+
+1. Open Windows.
+2. Search for "Power options".
+3. Open "Choose what the power buttons do".
+4. Click "Change settings that are currently unavailable".
+5. Turn off "Turn on fast startup".
+6. Shut Windows down fully.
+
+### Step 2: Boot into Ubuntu live environment or use GParted from Ubuntu
+
+You can use GParted from your installed Ubuntu system, but the safest route is often a live USB session.
+
+1. Boot into Ubuntu.
+2. Open GParted.
+3. Confirm the partitions are visible.
+
+### Step 3: Shrink the Windows partition
+
+1. Right-click the Windows NTFS partition (/dev/nvme0n1p3).
+2. Choose Resize/Move.
+3. Reduce its size by the amount you want to free for Linux.
+4. Apply the change.
+
+### Step 4: Grow the Ubuntu partition
+
+1. Right-click the Linux ext4 partition (/dev/nvme0n1p5).
+2. Choose Resize/Move.
+3. Expand it to use the newly freed unallocated space.
+4. Apply the change.
+
+### Step 5: Reboot
+
+1. Reboot the machine.
+2. Confirm that both Ubuntu and Windows still boot.
+
+## Recommended amount to free
+
+Because your Ubuntu partition is very full, a modest increase is better than trying to take too much at once.
+
+Suggested starting point:
+- Free 20–30 GiB from Windows if available.
+- If your Windows partition is large enough, you can grow Linux by 20 GiB first and reassess.
+
+## What to avoid
+
+- Do not delete the Windows recovery partition.
+- Do not move the EFI partition (/dev/nvme0n1p1).
+- Do not resize partitions while the machine is hibernating or sleeping.
+- Do not interrupt the operation.
+
+## If you see warnings
+
+If GParted reports filesystem errors or a need for a check:
+- Run a filesystem check first.
+- Do not proceed until the filesystem is healthy.
+
+## After resizing
+
+After rebooting:
+1. Check disk space again with:
+   df -h /
+2. If needed, run:
+   sudo apt clean
+3. Consider moving large folders or downloads to the SD card if you still need more room.
