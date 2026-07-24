@@ -16,11 +16,11 @@
                   /* Backgrounds */
                   --bg-dark: #181825;       
                   --bg-darker: #11111b;     
-                  --bg-panel: #613583; /* Your custom purple */
+                  --bg-panel: #2f4f3f; /* Chalkboard-inspired dark green */
                   
                   /* Borders */
                   --border-color: #313244;  /* General dividers */
-                  --border-panel: #613583;  /* Custom purple panel border */
+                  --border-panel: #2f4f3f;  /* Dark green panel border */
                   --border-input: #45475a;  /* Input field borders */
             
                   /* Typography */
@@ -175,6 +175,33 @@
         display: block;
         font-size: 0.8rem;
       }
+
+      .dropdown-content .menu-section {
+        padding: 6px 10px 4px;
+        font-size: 0.7rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent-dim);
+        border-top: 1px solid var(--border-color);
+        margin-top: 4px;
+      }
+
+      .dropdown-content .menu-section:first-child {
+        border-top: none;
+        margin-top: 0;
+      }
+
+      .dropdown-content .menu-item-toggle {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .dropdown-content .menu-item-toggle .menu-item-state {
+        color: var(--accent);
+        font-weight: 700;
+      }
   
       .dropdown-content a:hover {
         background-color: var(--bg-panel);
@@ -225,6 +252,16 @@
         padding: 10px;
         gap: 10px;
         display: flex;
+      }
+
+      #right-wing {
+        width: 320px;
+        min-width: 280px;
+        max-width: 420px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
   
       /* Resizers */
@@ -301,6 +338,48 @@
       /* Controls & Toolbelt styles */
       .panel-section {
         margin-bottom: 15px;
+      }
+
+      .right-wing-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+      }
+
+      .right-wing-tab-btn {
+        flex: 1 1 0;
+        min-width: 70px;
+        padding: 6px 8px;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background: var(--bg-dark);
+        border: 1px solid var(--border-color);
+      }
+
+      .right-wing-tab-btn.active {
+        background: var(--bg-panel);
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+
+      .right-wing-panels {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+
+      .right-wing-tab-panel {
+        display: none;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      .right-wing-tab-panel.active {
+        display: flex;
       }
   
       .panel-section-title {
@@ -410,6 +489,7 @@
       /* EMBEDDED TERMINAL STYLING */
       .terminal-panel {
         height: 180px;
+        min-height: 180px;
         background-color: #000000;
         border: 1px solid var(--border-color);
         border-radius: 6px;
@@ -517,8 +597,14 @@
     <div class="menu-item">
       View
       <div class="dropdown-content">
-        <a href="#" onclick="rotateLeft(1)">Next Analytical Slot</a>
-        <a href="#" onclick="rotateRight(1)">Next Creative Slot</a>
+        <div class="menu-section">Panels</div>
+        <a href="#" class="menu-item-toggle" id="view-menu-terminal" onclick="toggleViewTool('terminal'); return false;"><span>Terminal</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-inspectors" onclick="toggleViewTool('inspectors'); return false;"><span>Inspectors</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-equation" onclick="toggleViewTool('equation'); return false;"><span>Equation Tools</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
+        <div class="menu-section">Navigation</div>
+        <a href="#" onclick="rotateLeft(1); return false;">Next Analytical Slot</a>
+        <a href="#" onclick="rotateRight(1); return false;">Next Creative Slot</a>
       </div>
     </div>
     <div class="menu-item" onclick="openSettingsModal()">Customize</div>
@@ -557,6 +643,20 @@
                 <button onclick="executeGitPush()">Push</button>
                 <button class="btn-large" onclick="alert('Compiling Markdown to TeX & PDF...')">Render PDF</button>
                 <button class="btn-large" onclick="alert('Converting workspace to Word format...')">Render DOCX</button>
+            </div>
+        </div>
+
+        <div id="left-terminal-panel" class="panel-section" style="flex: 0 0 auto; margin-top: 15px;">
+            <div class="panel-section-title">Integrated Terminal</div>
+            <div class="terminal-panel">
+              <div class="terminal-header">
+                <span id="terminal-label">bash (~/projects/physics-ide)</span>
+                <button style="padding: 2px 5px; font-size:0.65rem;" onclick="spawnDetachedTerminal()">Detach ↗</button>
+              </div>
+              <div class="terminal-body" id="terminal-output">
+                $ IDE Interface Initialized<br>
+                $ Ready for commands...<br>
+              </div>
             </div>
         </div>
 	</div>
@@ -655,59 +755,117 @@
 
     <!-- Right Wing -->
     <div id="right-wing" class="panel">
-      <div>
-        <div class="panel-section">
-          <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
-		  <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="sendAIStateBriefing()">⚡ Send Briefing Packet</button>
-          <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Updates current state of equations and folder structure to AI context.</div>
-        </div>
-
-	  <!-- Removed Duplicate Equation Development Block Here -->
-	  <div class="panel-section">
-	      <div class="panel-section-title">Equation Development</div>
-	      <textarea id="latex-input" class="chat-input" placeholder="Simplified LaTeX..."></textarea>
-	      <div class="btn-group" style="margin-top: 5px;">
-	          <button onclick="cleanLaTeX()">🧹 Quick Clean</button>
-	          <button onclick="previewEquation()">Render Preview</button>
-	          <button class="btn-large btn-special" onclick="saveEquation()">💾 Save to Workspace</button>
-	      </div>
-	  </div>
-       
-      <div class="panel-section" style="margin-top:auto;">
-        <div class="panel-section-title">Integrated Terminal</div>
-        <div class="terminal-panel">
-          <div class="terminal-header">
-            <span id="terminal-label">bash (~/projects/physics-ide)</span>
-            <button style="padding: 2px 5px; font-size:0.65rem;" onclick="spawnDetachedTerminal()">Detach ↗</button>
-          </div>
-          <div class="terminal-body" id="terminal-output">
-            $ IDE Interface Initialized<br>
-            $ Ready for commands...<br>
-          </div>
-        </div>
+      <div class="right-wing-tabs">
+        <button class="right-wing-tab-btn active" data-tab="context" onclick="switchRightWingTab('context')">Context</button>
+        <button class="right-wing-tab-btn" data-tab="inspectors" onclick="switchRightWingTab('inspectors')">Inspectors</button>
+        <button class="right-wing-tab-btn" data-tab="equation" onclick="switchRightWingTab('equation')">Equation</button>
+        <button class="right-wing-tab-btn" data-tab="notes" onclick="switchRightWingTab('notes')">Notes</button>
       </div>
 
-      <!-- Scratchpad / Idea Pad -->
-      <div class="panel-section" style="margin-top: 15px; display: flex; flex-direction: column; flex-grow: 1; min-height: 150px;">
-              <div class="panel-section-title">Scratchpad / Idea Pad</div>
-              
-              <!-- Mini Wordpad Formatting Toolbar -->
-              <div style="display: flex; gap: 4px; margin-bottom: 5px;">
-                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('bold')" title="Bold"><b>B</b></button>
-                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('italic')" title="Italic"><i>I</i></button>
-                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\\int_{0}^{\\infty}')" title="Insert Integral">∫ LaTeX</button>
-                <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\n--- Note ---\n')" title="Insert Divider">Divider</button>
-                <button style="padding: 3px 8px; font-size: 0.7rem; margin-left: auto; color: var(--accent);" onclick="clearScratchpad()">Clear</button>
+      <div class="right-wing-panels">
+        <div id="right-tab-context" class="right-wing-tab-panel active">
+          <div class="panel-section">
+            <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
+            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="sendAIStateBriefing()">⚡ Send Briefing Packet</button>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Updates current state of equations and folder structure to AI context.</div>
+          </div>
+
+          <div class="panel-section">
+            <div class="panel-section-title">Empirical Analysis Workflow</div>
+            <div class="form-group">
+              <label for="analysis-dataset-path">Dataset Path / URL</label>
+              <input id="analysis-dataset-path" placeholder="/path/to/data.csv or public dataset reference">
+            </div>
+            <div class="form-group">
+              <label for="analysis-instrument">Instrument / Observatory</label>
+              <input id="analysis-instrument" placeholder="CERN LHC, DES, Planck, etc.">
+            </div>
+            <div class="form-group">
+              <label for="analysis-method">Observation Method</label>
+              <input id="analysis-method" placeholder="Collision reconstruction, photometry, spectroscopy">
+            </div>
+            <div class="form-group">
+              <label for="analysis-target">Target Variable</label>
+              <input id="analysis-target" placeholder="Invariant mass, redshift, flux, etc.">
+            </div>
+            <div class="form-group">
+              <label for="analysis-hypothesis">Working Hypothesis</label>
+              <textarea id="analysis-hypothesis" rows="4" placeholder="Describe what the dataset should test or reveal."></textarea>
+            </div>
+            <div class="form-group">
+              <label for="analysis-primer-mode">Primer Mode</label>
+              <select id="analysis-primer-mode">
+                <option value="focused">Focused</option>
+                <option value="expanded">Expanded</option>
+              </select>
+            </div>
+            <div class="btn-group" style="margin-top: 5px;">
+              <button onclick="runEmpiricalAnalysis()">🧪 Build Primer</button>
+              <button onclick="openEmpiricalPrimer()">Open Primer</button>
+            </div>
+            <textarea id="analysis-primer-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="The generated empirical-analysis primer will appear here."></textarea>
+          </div>
+        </div>
+
+        <div id="right-tab-inspectors" class="right-wing-tab-panel">
+          <div class="panel-section">
+            <div class="panel-section-title">Variables & Constants</div>
+            <div class="pane-config-block">
+              <h4>Cosmology Quick Metrics</h4>
+              <div class="form-group">
+                <label for="cosmo-h0">H0 (km/s/Mpc)</label>
+                <input id="cosmo-h0" type="number" value="70">
               </div>
-      
-              <!-- Editable Workspace Canvas -->
-              <div id="scratchpad-content" contenteditable="true" style="flex-grow: 1; background-color: var(--bg-darker); border: 1px solid var(--border-panel); border-radius: 4px; padding: 10px; color: var(--text); font-family: monospace; font-size: 0.8rem; overflow-y: auto; outline: none;" placeholder="Jot down raw ideas, equations, or script snippets..."></div>
-      
-              <!-- File Action Buttons -->
-              <div class="btn-group" style="margin-top: 5px;">
-                <button onclick="saveScratchpad(false)">💾 Save</button>
-                <button onclick="saveScratchpad(true)">💾 Save As...</button>
+              <div class="form-group">
+                <label for="cosmo-omega-m">Ωm</label>
+                <input id="cosmo-omega-m" type="number" step="0.01" value="0.3">
               </div>
+              <div class="form-group">
+                <label for="cosmo-omega-l">ΩΛ</label>
+                <input id="cosmo-omega-l" type="number" step="0.01" value="0.7">
+              </div>
+              <div class="form-group">
+                <label for="cosmo-omega-r">Ωr</label>
+                <input id="cosmo-omega-r" type="number" step="0.01" value="0.0">
+              </div>
+              <div class="form-group">
+                <label for="cosmo-z">Redshift z</label>
+                <input id="cosmo-z" type="number" step="0.01" value="0.0">
+              </div>
+              <button style="width: 100%;" onclick="runCosmologyMetrics()">Compute Metrics</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="right-tab-equation" class="right-wing-tab-panel">
+          <div class="panel-section">
+            <div class="panel-section-title">Equation Development</div>
+            <textarea id="latex-input" class="chat-input" placeholder="Simplified LaTeX..."></textarea>
+            <div class="btn-group" style="margin-top: 5px;">
+              <button onclick="cleanLaTeX()">🧹 Quick Clean</button>
+              <button onclick="previewEquation()">Render Preview</button>
+              <button class="btn-large btn-special" onclick="saveEquation()">💾 Save to Workspace</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="right-tab-notes" class="right-wing-tab-panel">
+          <div class="panel-section" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+            <div class="panel-section-title">Scratchpad / Idea Pad</div>
+            <div style="display: flex; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('bold')" title="Bold"><b>B</b></button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('italic')" title="Italic"><i>I</i></button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\\int_{0}^{\\infty}')" title="Insert Integral">∫ LaTeX</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\n--- Note ---\n')" title="Insert Divider">Divider</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem; margin-left: auto; color: var(--accent);" onclick="clearScratchpad()">Clear</button>
+            </div>
+            <div id="scratchpad-content" contenteditable="true" style="flex: 1; min-height: 0; background-color: var(--bg-darker); border: 1px solid var(--border-panel); border-radius: 4px; padding: 10px; color: var(--text); font-family: monospace; font-size: 0.8rem; overflow-y: auto; outline: none;" placeholder="Jot down raw ideas, equations, or script snippets..."></div>
+            <div class="btn-group" style="margin-top: 5px;">
+              <button onclick="saveScratchpad(false)">💾 Save</button>
+              <button onclick="saveScratchpad(true)">💾 Save As...</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -866,11 +1024,11 @@
 			            <h4>Live Element Color Customizer</h4>
 			            <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
 			              <label for="picker-accent">Accent Color</label>
-			              <input type="color" id="picker-accent" value="#cba6f7" onchange="previewCustomColor('--accent', this.value)" style="width: 60px; height: 35px; cursor: pointer; padding: 0; border: none;">
+			              <input type="color" id="picker-accent" value="#33d17a" onchange="previewCustomColor('--accent', this.value)" style="width: 60px; height: 35px; cursor: pointer; padding: 0; border: none;">
 			            </div>
 			            <div class="form-group" style="display: flex; align-items: center; justify-content: space-between;">
 			              <label for="picker-bg-panel">Panel Background</label>
-			              <input type="color" id="picker-bg-panel" value="#1e1e2e" onchange="previewCustomColor('--bg-panel', this.value)" style="width: 60px; height: 35px; cursor: pointer; padding: 0; border: none;">
+			              <input type="color" id="picker-bg-panel" value="#2f4f3f" onchange="previewCustomColor('--bg-panel', this.value)" style="width: 60px; height: 35px; cursor: pointer; padding: 0; border: none;">
 			            </div>
 			          </div>
 			</div>
@@ -911,7 +1069,7 @@
 	      // Reset the color pickers in the UI to match defaults if needed
 	      if (themeName === 'dark') {
 	        document.getElementById('picker-accent').value = '#33d17a';
-	        document.getElementById('picker-bg-panel').value = '#613583';
+	        document.getElementById('picker-bg-panel').value = '#2f4f3f';
 	      } else {
 	        document.getElementById('picker-accent').value = '#26a269';
 	        document.getElementById('picker-bg-panel').value = '#deddda';
@@ -1023,6 +1181,56 @@
       
       activeSlot.appendChild(bubble);
       activeSlot.scrollTop = activeSlot.scrollHeight;
+    }
+
+    function getPaneProvider(pane) {
+      return pane === 'left' ? (currentConfig?.left_provider || 'gemini') : (currentConfig?.right_provider || 'gemini');
+    }
+
+    function getPaneHistory(pane, index) {
+      return chatHistories[pane][index];
+    }
+
+    function updatePaneTitles() {
+      const leftTitle = leftIndex === 0
+        ? 'L1: GitHub & Scripting'
+        : leftIndex === 1
+          ? 'L2: Theory Analysis'
+          : 'L3: Empirical Synthesis';
+
+      const rightTitle = rightIndex === 0
+        ? 'R1: Speculation & Horizons'
+        : rightIndex === 1
+          ? 'R2: Empirical Critique'
+          : 'R3: Wild Expansion';
+
+      document.getElementById('left-title').innerText = leftTitle;
+      document.getElementById('right-title').innerText = rightTitle;
+    }
+
+    function advanceToAnalysisThread(pane, heading, promptText) {
+      const nextIndex = (pane === 'left' ? leftIndex : rightIndex) + 1;
+      const targetIndex = nextIndex > 2 ? 0 : nextIndex;
+
+      if (pane === 'left') {
+        leftIndex = targetIndex;
+      } else {
+        rightIndex = targetIndex;
+      }
+
+      const targetStrip = pane === 'left' ? 'left-strip' : 'right-strip';
+      const slot = document.getElementById(targetStrip).children[targetIndex];
+      const provider = getPaneProvider(pane);
+      const systemMessage = provider === 'gemini'
+        ? { role: 'system', parts: [{ text: promptText }] }
+        : { role: 'system', content: promptText };
+
+      getPaneHistory(pane, targetIndex).push(systemMessage);
+      appendChatBubble(pane, targetIndex, heading, promptText);
+      updatePaneTitles();
+      document.getElementById(targetStrip).style.transform = `translateY(-${targetIndex * 33.333}%)`;
+      slot.scrollTop = slot.scrollHeight;
+      appendTerminalLog(`${heading} thread activated for ${pane === 'left' ? 'theory' : 'empirical critique'} analysis.`);
     }
 
     function cleanLaTeX() {
@@ -1222,13 +1430,13 @@ async function restoreVersion() {
     function rotateLeft(direction) {
       leftIndex = Math.max(0, Math.min(2, leftIndex + direction));
       document.getElementById('left-strip').style.transform = `translateY(-${leftIndex * 33.333}%)`;
-      document.getElementById('left-title').innerText = leftTitles[leftIndex];
+      updatePaneTitles();
     }
 
     function rotateRight(direction) {
       rightIndex = Math.max(0, Math.min(2, rightIndex + direction));
       document.getElementById('right-strip').style.transform = `translateY(-${rightIndex * 33.333}%)`;
-      document.getElementById('right-title').innerText = rightTitles[rightIndex];
+      updatePaneTitles();
     }
 
     function insertClipboard(math) {
@@ -1270,6 +1478,98 @@ async function restoreVersion() {
 	        clickedBtn.style.color = 'var(--accent)';
 	      }
 	    }
+
+    function switchRightWingTab(tabId) {
+      const panels = document.querySelectorAll('.right-wing-tab-panel');
+      const buttons = document.querySelectorAll('.right-wing-tab-btn');
+      const availableTabs = ['context', 'inspectors', 'equation', 'notes'].filter((name) => {
+        if (name === 'context') return true;
+        return viewToolState[name];
+      });
+      const safeTab = availableTabs.includes(tabId) ? tabId : availableTabs[0] || 'context';
+
+      panels.forEach(panel => {
+        panel.classList.remove('active');
+        panel.style.display = 'none';
+      });
+
+      buttons.forEach(button => {
+        button.classList.remove('active');
+      });
+
+      document.getElementById(`right-tab-${safeTab}`)?.classList.add('active');
+      document.getElementById(`right-tab-${safeTab}`)?.style.setProperty('display', 'flex');
+      document.querySelector(`.right-wing-tab-btn[data-tab="${safeTab}"]`)?.classList.add('active');
+    }
+
+    const defaultViewToolState = { terminal: true, inspectors: true, equation: true, notes: true };
+    let viewToolState = { ...defaultViewToolState };
+
+    function persistViewToolState() {
+      localStorage.setItem('physics-ide-view-tools', JSON.stringify(viewToolState));
+    }
+
+    function syncViewMenuState() {
+      const entries = [
+        ['terminal', 'view-menu-terminal'],
+        ['inspectors', 'view-menu-inspectors'],
+        ['equation', 'view-menu-equation'],
+        ['notes', 'view-menu-notes']
+      ];
+
+      entries.forEach(([tool, elementId]) => {
+        const element = document.getElementById(elementId);
+        if (element) {
+          const label = tool.charAt(0).toUpperCase() + tool.slice(1).replace(/([A-Z])/g, ' $1');
+          const state = viewToolState[tool] ? '●' : '○';
+          element.innerHTML = `<span>${label}</span><span class="menu-item-state">${state}</span>`;
+        }
+      });
+    }
+
+    function setToolVisibility(toolName, visible, persist = true) {
+      viewToolState[toolName] = visible;
+      if (persist) persistViewToolState();
+
+      const targetMap = {
+        terminal: 'left-terminal-panel',
+        inspectors: 'right-tab-inspectors',
+        equation: 'right-tab-equation',
+        notes: 'right-tab-notes'
+      };
+
+      const element = document.getElementById(targetMap[toolName]);
+      if (element) {
+        element.style.display = visible ? 'flex' : 'none';
+      }
+
+      syncViewMenuState();
+    }
+
+    function toggleViewTool(toolName) {
+      const nextState = !viewToolState[toolName];
+      setToolVisibility(toolName, nextState);
+
+      if (toolName !== 'terminal' && !nextState) {
+        switchRightWingTab('context');
+      }
+    }
+
+    function initializeViewToolState() {
+      try {
+        const savedState = JSON.parse(localStorage.getItem('physics-ide-view-tools') || '{}');
+        viewToolState = { ...defaultViewToolState, ...savedState };
+      } catch (err) {
+        viewToolState = { ...defaultViewToolState };
+      }
+
+      Object.entries(viewToolState).forEach(([toolName, visible]) => {
+        setToolVisibility(toolName, visible, false);
+      });
+
+      syncViewMenuState();
+      switchRightWingTab('context');
+    }
 	
 	    // Dialogue Directory Browser Helper
 	    async function browseForDirectory(targetInputId) {
@@ -1331,21 +1631,21 @@ async function restoreVersion() {
 
       try {
         await invoke('save_user_settings', { 
-          editor: editor,
-          terminalApp: term, 
-          geminiKey: geminiKey, 
-          openaiKey: openaiKey, 
-          ollamaUrl: ollamaUrl, 
-          leftProvider: leftProvider, 
-          leftModel: leftModel, 
-          rightProvider: rightProvider, 
-          rightModel: rightModel,
-          projectRootDir: projectRoot,
-          theoryMdDir: theoryDir,
-          masterAxiomFile: masterAxiom,
-          theme: theme,
-          customAccent: customAccent,
-          customBgPanel: customBgPanel
+          editor,
+          terminal_app: term,
+          gemini_key: geminiKey,
+          openai_key: openaiKey,
+          ollama_url: ollamaUrl,
+          left_provider: leftProvider,
+          left_model: leftModel,
+          right_provider: rightProvider,
+          right_model: rightModel,
+          project_root_dir: projectRoot,
+          theory_md_dir: theoryDir,
+          master_axiom_file: masterAxiom,
+          theme,
+          custom_accent: customAccent,
+          custom_bg_panel: customBgPanel
         });
         
         currentConfig.editor = editor;
@@ -1384,14 +1684,16 @@ async function restoreVersion() {
 	async function saveEquation() {
 	    const content = document.getElementById('latex-input').value;
 	    if (!content) return;
-	    
-	    const label = prompt("Enter a label for this equation (e.g., 'Interface-Energy'):", "Equation");
-	    if (!label) return;
-	
+
 	    try {
-	        const response = await invoke('save_equation_to_md', { 
-	            content: content,
-	            label: label
+	        const targetPath = await window.__TAURI__.dialog.save({
+	            filters: [{ name: 'Markdown', extensions: ['md', 'txt'] }]
+	        });
+	        if (!targetPath) return;
+
+	        const response = await invoke('save_equation_to_md', {
+	            content,
+	            path: targetPath
 	        });
 	        appendTerminalLog(response);
 	    } catch (err) {
@@ -1404,6 +1706,8 @@ async function restoreVersion() {
       const rightWing = document.getElementById("right-wing");
       const leftResizer = document.getElementById("left-resizer");
       const rightResizer = document.getElementById("right-resizer");
+
+      initializeViewToolState();
 
       function initResize(resizer, targetPanel, isLeftPanel) {
         let startX, startWidth;
@@ -1453,12 +1757,162 @@ async function restoreVersion() {
           const editor = currentConfig.editor || "micro";
     
           invoke('launch_file_editor', { 
-            filePath: filePath, 
-            terminalApp: terminalApp, 
-            editor: editor 
+            file_path: filePath,
+            terminal_app: terminalApp,
+            editor
           })
             .then(msg => appendTerminalLog(msg))
             .catch(err => appendTerminalLog(`Editor Error: ${err}`));
+    }
+
+    function formatScratchpad(action) {
+      const editor = document.getElementById('scratchpad-content');
+      if (!editor) return;
+      const selection = window.getSelection();
+      const selectedText = selection ? selection.toString() : '';
+
+      if (action === 'bold' && selectedText) {
+        document.execCommand('bold');
+      } else if (action === 'italic' && selectedText) {
+        document.execCommand('italic');
+      } else if (action === 'insert') {
+        document.execCommand('insertText', false, '');
+      }
+
+      editor.focus();
+    }
+
+    function insertScratchpadText(text) {
+      const editor = document.getElementById('scratchpad-content');
+      if (!editor) return;
+      editor.focus();
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(document.createTextNode(text));
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else {
+        editor.innerHTML += text;
+      }
+    }
+
+    function clearScratchpad() {
+      const editor = document.getElementById('scratchpad-content');
+      if (editor) {
+        editor.innerHTML = '';
+      }
+    }
+
+    async function saveScratchpad(asNewFile = false) {
+      const content = document.getElementById('scratchpad-content').innerText.trim();
+      if (!content) {
+        appendTerminalLog('Scratchpad is empty.');
+        return;
+      }
+
+      const defaultPath = currentWorkspacePath ? `${currentWorkspacePath}/scratchpad.md` : 'scratchpad.md';
+      const targetPath = asNewFile ? (await window.__TAURI__.dialog.save({ filters: [{ name: 'Markdown', extensions: ['md'] }] })) : defaultPath;
+      if (!targetPath) return;
+
+      try {
+        const result = await invoke('save_scratchpad_content', { content, path: targetPath });
+        appendTerminalLog(result);
+      } catch (err) {
+        appendTerminalLog(`Scratchpad Save Error: ${err}`);
+      }
+    }
+
+    async function runEmpiricalAnalysis() {
+      const datasetPath = document.getElementById('analysis-dataset-path').value.trim();
+      const instrument = document.getElementById('analysis-instrument').value.trim();
+      const observationMethod = document.getElementById('analysis-method').value.trim();
+      const targetVariable = document.getElementById('analysis-target').value.trim();
+      const hypothesis = document.getElementById('analysis-hypothesis').value.trim();
+      const primerMode = document.getElementById('analysis-primer-mode').value;
+
+      if (!datasetPath && !hypothesis) {
+        appendTerminalLog('Please enter a dataset path or a working hypothesis before generating a primer.');
+        return;
+      }
+
+      try {
+        const response = await invoke('generate_empirical_analysis_primer', {
+          request: {
+            dataset_path: datasetPath,
+            instrument,
+            observation_method: observationMethod,
+            hypothesis,
+            target_variable: targetVariable,
+            workspace_path: currentWorkspacePath,
+            primer_mode: primerMode
+          }
+        });
+
+        const parsed = typeof response === 'string' ? JSON.parse(response) : response;
+        document.getElementById('analysis-primer-output').value = parsed.content || '';
+        appendTerminalLog(`Empirical primer saved to ${parsed.path || 'workspace'}`);
+
+        const theoryPrompt = [
+          'Theory thread activated for the current empirical test.',
+          `Dataset: ${datasetPath || 'unspecified'}`,
+          `Instrument: ${instrument || 'unspecified'}`,
+          `Observation method: ${observationMethod || 'unspecified'}`,
+          `Working hypothesis: ${hypothesis || 'unspecified'}`,
+          'Focus on how the current cosmological model predicts the observed signal and what assumptions may need refinement.'
+        ].join('\n');
+
+        const critiquePrompt = [
+          'Empirical critique thread activated for the current empirical test.',
+          `Dataset: ${datasetPath || 'unspecified'}`,
+          `Instrument: ${instrument || 'unspecified'}`,
+          `Observation method: ${observationMethod || 'unspecified'}`,
+          `Target variable: ${targetVariable || 'unspecified'}`,
+          'Focus on data provenance, measurement quality, selection effects, uncertainty handling, and whether the hypothesis is actually supported by the data.'
+        ].join('\n');
+
+        advanceToAnalysisThread('left', 'Theory', theoryPrompt);
+        advanceToAnalysisThread('right', 'Empirical Critique', critiquePrompt);
+      } catch (err) {
+        appendTerminalLog(`Empirical Analysis Error: ${err}`);
+      }
+    }
+
+    function openEmpiricalPrimer() {
+      const primerPath = currentWorkspacePath
+        ? `${currentWorkspacePath}/empirical_analysis_primer.md`
+        : 'empirical_analysis_primer.md';
+      openEditor(primerPath);
+    }
+
+    async function runCosmologyMetrics() {
+      const h0 = parseFloat(document.getElementById('cosmo-h0').value);
+      const omegaM = parseFloat(document.getElementById('cosmo-omega-m').value);
+      const omegaL = parseFloat(document.getElementById('cosmo-omega-l').value);
+      const omegaR = parseFloat(document.getElementById('cosmo-omega-r').value);
+      const z = parseFloat(document.getElementById('cosmo-z').value);
+
+      try {
+        const metrics = await invoke('compute_cosmology_metrics_command', {
+          h0,
+          omega_m: omegaM,
+          omega_l: omegaL,
+          omega_r: omegaR,
+          z
+        });
+        const summary = [
+          `Scale factor a(z) = ${metrics.scale_factor.toFixed(4)}`,
+          `E(z) = ${metrics.e_of_z.toFixed(4)}`,
+          `Ωk = ${metrics.omega_k.toFixed(4)}`,
+          `D_C = ${metrics.comoving_distance_mpc.toFixed(2)} Mpc`,
+          `D_L = ${metrics.luminosity_distance_mpc.toFixed(2)} Mpc`
+        ].join('\n');
+        appendTerminalLog(`Cosmology metrics:\n${summary}`);
+        alert(summary);
+      } catch (err) {
+        appendTerminalLog(`Cosmology Metrics Error: ${err}`);
+      }
     }
 
     function spawnDetachedTerminal() {

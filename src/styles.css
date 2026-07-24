@@ -6,8 +6,8 @@
 :root, [data-theme="dark"] {
   color-scheme: dark;
   --bg-main: #1e1e2e;           /* Deep canvas */
-  --bg-panel: #252538;          /* Sidebar and container backgrounds */
-  --bg-modal: #181825;          /* Modal window */
+  --bg-panel: #2f4f3f;          /* Chalkboard-inspired dark green */
+  --bg-modal: #1b2a23;          /* Dark green modal window */
   --text-main: #f6f6f6;         /* Primary text */
   --text-muted: #a6adc8;        /* Sub-headings and hints */
   --accent: #b4befe;            /* Cyan / soft purple brand accent */

@@ -8,6 +8,46 @@ pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct CosmologyMetrics {
+    pub scale_factor: f64,
+    pub e_of_z: f64,
+    pub omega_k: f64,
+    pub comoving_distance_mpc: f64,
+    pub luminosity_distance_mpc: f64,
+}
+
+fn compute_cosmology_metrics(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, z: f64) -> Result<CosmologyMetrics, String> {
+    if z < 0.0 {
+        return Err("Redshift must be non-negative".to_string());
+    }
+
+    let omega_k = 1.0 - omega_m - omega_l - omega_r;
+    let scale_factor = 1.0 / (1.0 + z);
+    let e_of_z = (omega_r * (1.0 + z).powi(4) + omega_m * (1.0 + z).powi(3) + omega_k * (1.0 + z).powi(2) + omega_l).sqrt();
+
+    let hubble_distance = 2997.92458 / h0.max(1e-9);
+    let mut integrand = 0.0;
+    let steps = 2000usize;
+    let dz = z as f64 / steps as f64;
+    for i in 0..steps {
+        let z_i = (i as f64 + 0.5) * dz;
+        let one_plus_z = 1.0 + z_i;
+        let integrand_value = 1.0 / ((omega_r * one_plus_z.powi(4) + omega_m * one_plus_z.powi(3) + omega_k * one_plus_z.powi(2) + omega_l).sqrt() * one_plus_z);
+        integrand += integrand_value;
+    }
+    let comoving_distance_mpc = hubble_distance * dz * integrand;
+    let luminosity_distance_mpc = (1.0 + z) * comoving_distance_mpc;
+
+    Ok(CosmologyMetrics {
+        scale_factor,
+        e_of_z,
+        omega_k,
+        comoving_distance_mpc,
+        luminosity_distance_mpc,
+    })
+}
+
 // --- PERSISTENT DISK CONFIGURATION ---
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct AppConfig {
@@ -27,6 +67,17 @@ pub struct AppConfig {
     theme: String,           // <-- NEW
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct EmpiricalAnalysisRequest {
+    pub dataset_path: String,
+    pub instrument: String,
+    pub observation_method: String,
+    pub hypothesis: String,
+    pub target_variable: String,
+    pub workspace_path: String,
+    pub primer_mode: String,
 }
 
 #[derive(Serialize)]
@@ -343,8 +394,100 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
 #[tauri::command]
 #[allow(non_snake_case)]
 fn save_equation_to_md(content: String, path: String) -> Result<String, String> {
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+    }
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
     Ok(format!("Equation saved successfully to {}", path))
+}
+
+#[tauri::command]
+fn save_scratchpad_content(content: String, path: String) -> Result<String, String> {
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(format!("Scratchpad saved successfully to {}", path))
+}
+
+fn build_empirical_analysis_primer(request: &EmpiricalAnalysisRequest) -> String {
+    let dataset = if request.dataset_path.trim().is_empty() {
+        "unspecified dataset".to_string()
+    } else {
+        request.dataset_path.trim().to_string()
+    };
+
+    let instrument = if request.instrument.trim().is_empty() {
+        "unspecified instrument".to_string()
+    } else {
+        request.instrument.trim().to_string()
+    };
+
+    let method = if request.observation_method.trim().is_empty() {
+        "unspecified observation method".to_string()
+    } else {
+        request.observation_method.trim().to_string()
+    };
+
+    let hypothesis = if request.hypothesis.trim().is_empty() {
+        "No formal hypothesis supplied yet.".to_string()
+    } else {
+        request.hypothesis.trim().to_string()
+    };
+
+    let target = if request.target_variable.trim().is_empty() {
+        "a quantity of interest".to_string()
+    } else {
+        request.target_variable.trim().to_string()
+    };
+
+    let mode = if request.primer_mode.trim().is_empty() {
+        "focused".to_string()
+    } else {
+        request.primer_mode.trim().to_string()
+    };
+
+    format!(
+        "# Empirical Analysis Primer\n\n## Objective\n- Dataset: {dataset}\n- Instrument: {instrument}\n- Observation method: {method}\n- Target variable: {target}\n- Mode: {mode}\n\n## Working Hypothesis\n{hypothesis}\n\n## Analysis Plan\n1. Define the measurement window and selection criteria.\n2. Record calibration, uncertainties, and data provenance.\n3. Compare the empirical signal against the current cosmological model.\n4. Flag discrepancies, residuals, and model updates for the human user.\n5. Summarize the fit quality and propose the next experiment.\n\n## AI Cooperation Structure\n- Analytical thread: fit the model, quantify residuals, and test robustness.\n- Creative thread: interpret the result, generate alternative hypotheses, and suggest follow-up observations.\n- Human steering: approve the analysis target, select cuts, and judge whether the conclusion is physically meaningful.\n\n## Deliverables\n- A short note summarizing the fit quality.\n- A comparison between predicted and observed values.\n- A follow-up question or next experiment to pursue."
+    )
+}
+
+#[tauri::command]
+fn compute_cosmology_metrics_command(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, z: f64) -> Result<CosmologyMetrics, String> {
+    compute_cosmology_metrics(h0, omega_m, omega_l, omega_r, z)
+}
+
+#[tauri::command]
+fn generate_empirical_analysis_primer(
+    request: EmpiricalAnalysisRequest,
+    state: tauri::State<AppState>,
+) -> Result<String, String> {
+    let primer_content = build_empirical_analysis_primer(&request);
+
+    let workspace_root = if request.workspace_path.trim().is_empty() {
+        state.workspace_path.lock().map_err(|_| "Mutex poisoned")?.clone()
+    } else {
+        request.workspace_path.clone()
+    };
+
+    let target_path = if workspace_root.is_empty() {
+        std::path::PathBuf::from("empirical_analysis_primer.md")
+    } else {
+        std::path::PathBuf::from(&workspace_root).join("empirical_analysis_primer.md")
+    };
+
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create primer directory: {e}"))?;
+    }
+
+    std::fs::write(&target_path, &primer_content).map_err(|e| format!("Failed to save primer: {e}"))?;
+
+    let payload = serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "content": primer_content
+    });
+
+    Ok(payload.to_string())
 }
 
 #[tauri::command]
@@ -399,6 +542,44 @@ fn save_user_settings(
 
     Ok("Settings saved successfully".to_string())
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computes_flat_cosmology_metrics_for_zero_redshift() {
+        let metrics = compute_cosmology_metrics(70.0, 0.3, 0.7, 0.0, 0.0).unwrap();
+        assert!((metrics.scale_factor - 1.0).abs() < 1e-9);
+        assert!(metrics.e_of_z > 0.0);
+        assert!(metrics.comoving_distance_mpc >= 0.0);
+    }
+
+    #[test]
+    fn rejects_negative_redshift() {
+        let result = compute_cosmology_metrics(70.0, 0.3, 0.7, 0.0, -0.1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn builds_empirical_analysis_primer_with_dataset_context() {
+        let request = EmpiricalAnalysisRequest {
+            dataset_path: "/data/cms_run.csv".to_string(),
+            instrument: "CMS".to_string(),
+            observation_method: "Collision reconstruction".to_string(),
+            hypothesis: "A feature in the dijet spectrum reflects a new cosmological signature.".to_string(),
+            target_variable: "Invariant mass".to_string(),
+            workspace_path: "/tmp/physics-ide".to_string(),
+            primer_mode: "focused".to_string(),
+        };
+
+        let primer = build_empirical_analysis_primer(&request);
+        assert!(primer.contains("Empirical Analysis Primer"));
+        assert!(primer.contains("CMS"));
+        assert!(primer.contains("Invariant mass"));
+        assert!(primer.contains("Collision reconstruction"));
+    }
+}
+
 // --- MAIN RUNNER ---
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -440,6 +621,9 @@ pub fn run() {
             save_as_hypothesis,
             get_version_tags,
             save_equation_to_md,
+            save_scratchpad_content,
+            compute_cosmology_metrics_command,
+            generate_empirical_analysis_primer,
             export_workspace_tree,
             send_llm_prompt,
             compile_ai_briefing,
