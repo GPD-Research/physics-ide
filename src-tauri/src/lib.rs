@@ -312,15 +312,171 @@ fn git_push(state: tauri::State<AppState>) -> Result<String, String> {
     }
 }
 
+#[cfg(test)]
+mod llm_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn builds_prompt_text_from_history() {
+        let history = vec![
+            serde_json::json!({"role": "system", "content": "You are a helpful assistant"}),
+            serde_json::json!({"role": "user", "content": "Summarize the theory"}),
+            serde_json::json!({"role": "assistant", "content": "A concise summary"}),
+        ];
+
+        let prompt = build_prompt_from_history(&history);
+        assert!(prompt.contains("System:"));
+        assert!(prompt.contains("User:"));
+        assert!(prompt.contains("Assistant:"));
+    }
+}
+
 #[tauri::command]
-fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>) -> Result<String, String> {
-    // Note: We use serde_json::Value for history because your frontend sends 
-    // different JSON shapes depending on if it's formatting for Gemini or Ollama.
-    
-    // TODO: Implement actual HTTP requests to Ollama or Gemini APIs here
-    println!("Received LLM prompt for {} pane. History length: {}", pane, history.len());
-    
-    Ok(format!("Backend placeholder: Acknowledged prompt for the {} pane.", pane))
+fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
+    let config = get_app_config(&app)?;
+    let (provider, model) = provider_settings_for_pane(&config, &pane);
+
+    let prompt = build_prompt_from_history(&history);
+    let prompt_for_model = if provider.eq_ignore_ascii_case("ollama") {
+        format!("You are a helpful scientific assistant. Respond concisely and use the repository context.\n\n{}", prompt)
+    } else {
+        prompt
+    };
+
+    match provider.to_ascii_lowercase().as_str() {
+        "ollama" => call_ollama(&config.ollama_url, &model, &prompt_for_model),
+        "openai" => call_openai(&config.openai_api_key, &model, &prompt_for_model),
+        "gemini" => call_gemini(&config.gemini_api_key, &model, &prompt_for_model),
+        other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
+    }
+}
+
+fn get_app_config(app: &AppHandle) -> Result<AppConfig, String> {
+    let config_path = get_config_path(app)?;
+    if let Ok(data) = fs::read_to_string(&config_path) {
+        return serde_json::from_str::<AppConfig>(&data).map_err(|e| e.to_string());
+    }
+    Ok(AppConfig::default())
+}
+
+fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a str, String) {
+    let provider = if pane.eq_ignore_ascii_case("left") {
+        config.left_provider.as_str()
+    } else {
+        config.right_provider.as_str()
+    };
+
+    let model = if pane.eq_ignore_ascii_case("left") {
+        config.left_model.clone()
+    } else {
+        config.right_model.clone()
+    };
+
+    let provider = if provider.is_empty() { "ollama" } else { provider };
+    let model = if model.is_empty() {
+        match provider.to_ascii_lowercase().as_str() {
+            "openai" => "gpt-4o-mini".to_string(),
+            "gemini" => "gemini-1.5-flash".to_string(),
+            _ => "llama3.2:3b".to_string(),
+        }
+    } else {
+        model
+    };
+
+    (provider, model)
+}
+
+fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
+    let mut prompt = String::new();
+    for entry in history {
+        if let Some(role) = entry.get("role").and_then(|v| v.as_str()) {
+            let role_label = role
+                .chars()
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + &role[1..].to_lowercase())
+                .unwrap_or_else(|| role.to_string());
+
+            if let Some(text) = entry.get("content").and_then(|v| v.as_str()) {
+                prompt.push_str(&format!("{}: {}\n", role_label, text));
+            } else if let Some(parts) = entry.get("parts").and_then(|v| v.as_array()) {
+                let joined = parts.iter().filter_map(|part| part.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(" ");
+                prompt.push_str(&format!("{}: {}\n", role_label, joined));
+            }
+        }
+    }
+    prompt.trim().to_string()
+}
+
+fn call_ollama(ollama_url: &str, model: &str, prompt: &str) -> Result<String, String> {
+    let url = if ollama_url.trim().is_empty() {
+        "http://127.0.0.1:11434/api/generate".to_string()
+    } else {
+        format!("{}/api/generate", ollama_url.trim_end_matches('/'))
+    };
+
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": prompt,
+        "stream": false
+    });
+
+    let response = client.post(&url).json(&body).send().map_err(|e| format!("Ollama request failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Ollama request failed with status {}", response.status()));
+    }
+
+    let parsed: serde_json::Value = response.json().map_err(|e| format!("Ollama response parsing failed: {e}"))?;
+    parsed.get("response").and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| "Ollama returned no response text".to_string())
+}
+
+fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("OpenAI API key is not configured. Please add one in Settings.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let response = client.post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7
+        }))
+        .send()
+        .map_err(|e| format!("OpenAI request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("OpenAI request failed with status {}", response.status()));
+    }
+
+    let parsed: serde_json::Value = response.json().map_err(|e| format!("OpenAI response parsing failed: {e}"))?;
+    parsed.get("choices").and_then(|choices| choices.get(0)).and_then(|choice| choice.get("message")).and_then(|message| message.get("content")).and_then(|value| value.as_str()).map(str::to_string).ok_or_else(|| "OpenAI returned no response content".to_string())
+}
+
+fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let response = client.post(format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"))
+        .json(&serde_json::json!({
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }))
+        .send()
+        .map_err(|e| format!("Gemini request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Gemini request failed with status {}", response.status()));
+    }
+
+    let body = response.text().map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+    parsed.get("candidates").and_then(|candidates| candidates.get(0)).and_then(|candidate| candidate.get("content")).and_then(|content| content.get("parts")).and_then(|parts| parts.get(0)).and_then(|part| part.get("text")).and_then(|value| value.as_str()).map(str::to_string).ok_or_else(|| "Gemini returned no response content".to_string())
 }
 
 fn recursive_markdown_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
@@ -911,32 +1067,51 @@ fn get_version_tags(rootPath: String) -> Result<Vec<String>, String> {
 #[tauri::command]
 fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
     let src = std::path::Path::new(&root_path);
-    
+
     if !src.exists() {
         return Err(format!("Source path does not exist: {}", root_path));
     }
 
+    if !src.is_dir() {
+        return Err(format!("Source path is not a directory: {}", root_path));
+    }
+
+    let src = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
     let parent = src.parent().ok_or_else(|| "Invalid parent directory".to_string())?;
     let folder_name = src.file_name().ok_or_else(|| "Invalid file name".to_string())?;
-    let dest_dir = parent.join(format!("{}_{}", folder_name.to_str().unwrap(), tag));
+    let dest_dir = parent.join(format!("{}_{}", folder_name.to_string_lossy(), tag));
+
+    if dest_dir.exists() {
+        std::fs::remove_dir_all(&dest_dir).map_err(|e| format!("Failed to replace existing version folder: {}", e))?;
+    }
 
     fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+
+            if matches!(name.as_ref(), ".git" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode") {
+                continue;
+            }
+
             let file_type = entry.file_type()?;
-            
-            if file_type.is_dir() {
-                if entry.file_name() == "target" { continue; }
-                copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
-            } else {
-                std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
+            let entry_path = entry.path();
+            let dest_path = dst.join(&file_name);
+
+            if file_type.is_symlink() {
+                continue;
+            } else if file_type.is_dir() {
+                copy_recursive(&entry_path, &dest_path)?;
+            } else if file_type.is_file() {
+                std::fs::copy(&entry_path, &dest_path)?;
             }
         }
         Ok(())
     }
 
-    copy_recursive(src, &dest_dir)
+    copy_recursive(&src, &dest_dir)
         .map_err(|e| format!("Failed to save version: {}", e))?;
 
     Ok(format!("Version '{}' saved successfully to {:?}", tag, dest_dir))
@@ -1157,6 +1332,26 @@ mod tests {
         assert!(output_dir.join("chapter_1_foundations.md").exists());
         assert!(output_dir.join("equations.md").exists());
         assert!(result["files_created"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn save_as_version_skips_git_and_generated_directories() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_version_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let source_dir = temp_dir.join("source");
+        fs::create_dir_all(source_dir.join(".git/objects")).unwrap();
+        fs::create_dir_all(source_dir.join("build/output")).unwrap();
+        fs::write(source_dir.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
+        fs::write(source_dir.join("notes.md"), "snapshot me").unwrap();
+        fs::write(source_dir.join("build/output/ignored.txt"), "ignore me").unwrap();
+
+        let result = save_as_version("v1.0.0".to_string(), source_dir.to_string_lossy().to_string()).unwrap();
+        let snapshot_dir = temp_dir.join("source_v1.0.0");
+
+        assert!(snapshot_dir.join("notes.md").exists());
+        assert!(!snapshot_dir.join(".git").exists());
+        assert!(!snapshot_dir.join("build").exists());
+        assert!(result.contains("saved successfully"));
     }
 
     #[test]
