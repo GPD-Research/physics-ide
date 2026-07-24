@@ -376,7 +376,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
     let model = if model.is_empty() {
         match provider.to_ascii_lowercase().as_str() {
             "openai" => "gpt-4o-mini".to_string(),
-            "gemini" => "gemini-1.5-flash".to_string(),
+            "gemini" => "gemini-2.0-flash".to_string(),
             _ => "llama3.2:3b".to_string(),
         }
     } else {
@@ -460,23 +460,89 @@ fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
         return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
     }
 
-    let client = reqwest::blocking::Client::new();
-    let response = client.post(format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"))
-        .json(&serde_json::json!({
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }]
-        }))
-        .send()
-        .map_err(|e| format!("Gemini request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Gemini request failed with status {}", response.status()));
+    fn normalize_gemini_model(model: &str) -> String {
+        let trimmed = model.trim().trim_start_matches("models/");
+        match trimmed {
+            // Legacy names are mapped to currently supported model families.
+            "gemini-1.5-flash" => "gemini-2.0-flash".to_string(),
+            "gemini-1.5-pro" => "gemini-2.5-pro".to_string(),
+            other if other.is_empty() => "gemini-2.0-flash".to_string(),
+            other => other.to_string(),
+        }
     }
 
-    let body = response.text().map_err(|e| format!("Gemini response parsing failed: {e}"))?;
-    let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Gemini response parsing failed: {e}"))?;
-    parsed.get("candidates").and_then(|candidates| candidates.get(0)).and_then(|candidate| candidate.get("content")).and_then(|content| content.get("parts")).and_then(|parts| parts.get(0)).and_then(|part| part.get("text")).and_then(|value| value.as_str()).map(str::to_string).ok_or_else(|| "Gemini returned no response content".to_string())
+    fn gemini_model_candidates(model: &str) -> Vec<String> {
+        let normalized = normalize_gemini_model(model);
+        let mut candidates = vec![normalized];
+        for fallback in ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"] {
+            if !candidates.iter().any(|existing| existing == fallback) {
+                candidates.push(fallback.to_string());
+            }
+        }
+        candidates
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    });
+
+    let mut last_error = "Gemini request failed before receiving a response".to_string();
+
+    for candidate_model in gemini_model_candidates(model) {
+        let response = client
+            .post(format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={api_key}"
+            ))
+            .json(&body)
+            .send()
+            .map_err(|e| format!("Gemini request failed: {e}"))?;
+
+        let status = response.status();
+        let response_text = response
+            .text()
+            .map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+
+        if status.is_success() {
+            let parsed: serde_json::Value = serde_json::from_str(&response_text)
+                .map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+
+            return parsed
+                .get("candidates")
+                .and_then(|candidates| candidates.get(0))
+                .and_then(|candidate| candidate.get("content"))
+                .and_then(|content| content.get("parts"))
+                .and_then(|parts| parts.get(0))
+                .and_then(|part| part.get("text"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| "Gemini returned no response content".to_string());
+        }
+
+        let parsed_error = serde_json::from_str::<serde_json::Value>(&response_text)
+            .ok()
+            .and_then(|json| {
+                json.get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(|message| message.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| response_text.clone());
+
+        last_error = format!(
+            "Gemini request failed for model '{}' with status {}: {}",
+            candidate_model, status, parsed_error
+        );
+
+        // Retry only on not-found to handle legacy/deprecated model IDs.
+        if status != reqwest::StatusCode::NOT_FOUND {
+            return Err(last_error);
+        }
+    }
+
+    Err(last_error)
 }
 
 fn recursive_markdown_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
@@ -847,28 +913,43 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
     );
 
     let client = reqwest::blocking::Client::new();
-    let response = client
-        .post(format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={}", api_key))
-        .json(&serde_json::json!({
-            "contents": [{
-                "parts": [{ "text": prompt }]
-            }]
-        }))
-        .send()
-        .ok()?;
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [{ "text": prompt }]
+        }]
+    });
 
-    if !response.status().is_success() {
-        return None;
+    for candidate_model in ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] {
+        let response = client
+            .post(format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={}",
+                api_key
+            ))
+            .json(&body)
+            .send()
+            .ok()?;
+
+        if !response.status().is_success() {
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                continue;
+            }
+            return None;
+        }
+
+        let text_body = response.text().ok()?;
+        let parsed: GeminiApiResponse = serde_json::from_str(&text_body).ok()?;
+        if let Some(result) = parsed.candidates.into_iter().find_map(|candidate| {
+            candidate.content.parts.into_iter().find_map(|part| {
+                let text = part.text.trim();
+                if text.is_empty() { None } else { Some(text.to_string()) }
+            })
+        })
+        {
+            return Some(result);
+        }
     }
 
-    let body = response.text().ok()?;
-    let parsed: GeminiApiResponse = serde_json::from_str(&body).ok()?;
-    parsed.candidates.into_iter().find_map(|candidate| {
-        candidate.content.parts.into_iter().find_map(|part| {
-            let text = part.text.trim();
-            if text.is_empty() { None } else { Some(text.to_string()) }
-        })
-    })
+    None
 }
 
 #[tauri::command]
@@ -973,7 +1054,7 @@ fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: Stri
 
     if let Some(ai_content) = try_generate_with_gemini(&config.gemini_api_key, &effective_theory_dir, &scan, &fallback_template) {
         final_content = ai_content;
-        status = "Generated with Gemini 1.5 Pro".to_string();
+        status = "Generated with Gemini".to_string();
     }
 
     let output_path = PathBuf::from(&effective_output_path);

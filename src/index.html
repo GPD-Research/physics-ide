@@ -997,8 +997,9 @@
 	              <label>Model Tier</label>
 	              <div id="left-model-container">
 	                <select id="settings-left-model">
-	                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (Light / Fast)</option>
-					  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Heavy / Deep Analysis)</option>	                </select>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Light / Fast)</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Heavy / Deep Analysis)</option>
+                  </select>
 	              </div>
 	            </div>
 	          </div>
@@ -1017,8 +1018,8 @@
 	              <label>Model Tier</label>
 	              <div id="right-model-container">
 	                <select id="settings-right-model"> 
-	                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (Light / Fast)</option>
-	                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Heavy / Deep Analysis)</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Light / Fast)</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Heavy / Deep Analysis)</option>
 	                </select>
 	              </div>
 	            </div>
@@ -2113,11 +2114,11 @@ async function restoreVersion() {
 		  const tag = prompt("Enter a version tag (e.g., v1.0.0):");
 		  if (!tag) return;
 	
-		  try {
-	        // 2. Pass BOTH the tag and the rootPath down the bridge
+      try {
+          // 2. Pass BOTH the tag and the root_path down the bridge
 		    const result = await invoke('save_as_version', { 
 	            tag: tag,
-	            rootPath: currentWorkspacePath 
+	            root_path: currentWorkspacePath 
 	        });
 	        
 		    appendTerminalLog(result);
@@ -2135,8 +2136,8 @@ async function restoreVersion() {
 		    if (provider === 'gemini') {
 		        container.innerHTML = `
 		            <select id="settings-${side}-model">
-		                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Light / Fast)</option>
-		                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Heavy / Deep Analysis)</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Light / Fast)</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Heavy / Deep Analysis)</option>
 		            </select>`;
 		    } else if (provider === 'openai') {
 		        container.innerHTML = `
