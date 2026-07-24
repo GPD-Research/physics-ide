@@ -69,7 +69,7 @@ fn compute_cosmology_metrics(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, 
 }
 
 // --- PERSISTENT DISK CONFIGURATION ---
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     last_root_dir: String,
     editor: String,
@@ -87,6 +87,29 @@ pub struct AppConfig {
     theme: String,           // <-- NEW
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            last_root_dir: String::new(),
+            editor: String::new(),
+            terminal_app: String::new(),
+            gemini_api_key: String::new(),
+            openai_api_key: String::new(),
+            ollama_url: "http://127.0.0.1:11434".to_string(),
+            left_provider: "ollama".to_string(),
+            left_model: "deepseek-r1:14b".to_string(),
+            right_provider: "ollama".to_string(),
+            right_model: "qwen2.5:7b-instruct".to_string(),
+            project_root_dir: String::new(),
+            theory_md_dir: String::new(),
+            master_axiom_file: String::new(),
+            theme: "dark".to_string(),
+            custom_accent: String::new(),
+            custom_bg_panel: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -369,6 +392,7 @@ mod llm_prompt_tests {
 fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
+    let temperature = ollama_temperature_for_pane(&pane);
 
     let prompt = build_prompt_from_history(&history);
     let prompt_for_model = if provider.eq_ignore_ascii_case("ollama") {
@@ -378,7 +402,7 @@ fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::Ap
     };
 
     match provider.to_ascii_lowercase().as_str() {
-        "ollama" => call_ollama(&config.ollama_url, &model, &prompt_for_model),
+        "ollama" => call_ollama(&config.ollama_url, &model, &prompt_for_model, temperature),
         "openai" => call_openai(&config.openai_api_key, &model, &prompt_for_model),
         "gemini" => call_gemini(&config.gemini_api_key, &model, &prompt_for_model),
         other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
@@ -407,17 +431,38 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
     };
 
     let provider = if provider.is_empty() { "ollama" } else { provider };
+    let pane_is_left = pane.eq_ignore_ascii_case("left");
     let model = if model.is_empty() {
         match provider.to_ascii_lowercase().as_str() {
-            "openai" => "gpt-4o-mini".to_string(),
+            "openai" => {
+                if pane_is_left {
+                    "gpt-4o".to_string()
+                } else {
+                    "gpt-4o-mini".to_string()
+                }
+            }
             "gemini" => "gemini-2.5-flash".to_string(),
-            _ => "llama3.2:3b".to_string(),
+            _ => {
+                if pane_is_left {
+                    "deepseek-r1:14b".to_string()
+                } else {
+                    "qwen2.5:7b-instruct".to_string()
+                }
+            }
         }
     } else {
         model
     };
 
     (provider, model)
+}
+
+fn ollama_temperature_for_pane(pane: &str) -> f32 {
+    if pane.eq_ignore_ascii_case("left") {
+        0.3
+    } else {
+        0.7
+    }
 }
 
 fn normalize_model_for_provider(provider: &str, model: &str) -> String {
@@ -459,7 +504,7 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
     prompt.trim().to_string()
 }
 
-fn call_ollama(ollama_url: &str, model: &str, prompt: &str) -> Result<String, String> {
+fn call_ollama(ollama_url: &str, model: &str, prompt: &str, temperature: f32) -> Result<String, String> {
     let url = if ollama_url.trim().is_empty() {
         "http://127.0.0.1:11434/api/generate".to_string()
     } else {
@@ -470,7 +515,10 @@ fn call_ollama(ollama_url: &str, model: &str, prompt: &str) -> Result<String, St
     let body = serde_json::json!({
         "model": model,
         "prompt": prompt,
-        "stream": false
+        "stream": false,
+        "options": {
+            "temperature": temperature
+        }
     });
 
     let response = client.post(&url).json(&body).send().map_err(|e| format!("Ollama request failed: {e}"))?;

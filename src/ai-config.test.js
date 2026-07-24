@@ -15,3 +15,9 @@ test('provider labels are human-readable', () => {
   assert.equal(getProviderLabel('gemini'), 'Gemini');
   assert.equal(getProviderLabel('ollama'), 'Ollama');
 });
+
+test('ollama provider exposes deep reasoning and conversational local options', () => {
+  const models = getModelOptions('ollama');
+  assert.ok(models.some(model => model.value === 'deepseek-r1:14b'));
+  assert.ok(models.some(model => model.value === 'qwen2.5:7b-instruct'));
+});

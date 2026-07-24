@@ -1117,6 +1117,17 @@
       document.documentElement.style.setProperty(variableName, colorValue);
     }
 
+    function getDefaultModelForPane(side, provider) {
+      const normalizedProvider = (provider || '').toLowerCase();
+      if (normalizedProvider === 'ollama') {
+        return side === 'left' ? 'deepseek-r1:14b' : 'qwen2.5:7b-instruct';
+      }
+      if (normalizedProvider === 'openai') {
+        return side === 'left' ? 'gpt-4o' : 'gpt-4o-mini';
+      }
+      return 'gemini-2.5-flash';
+    }
+
     async function initializeApp() {
       try {
         currentConfig = await invoke('get_initial_state');
@@ -1135,12 +1146,17 @@
         
         document.getElementById('settings-editor').value = currentConfig.editor;
         document.getElementById('settings-terminal').value = currentConfig.terminal_app;
+        const leftProvider = currentConfig.left_provider || 'ollama';
+        const rightProvider = currentConfig.right_provider || 'ollama';
+        const leftModel = currentConfig.left_model || getDefaultModelForPane('left', leftProvider);
+        const rightModel = currentConfig.right_model || getDefaultModelForPane('right', rightProvider);
+
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
-        document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
-        document.getElementById('settings-left-provider').value = currentConfig.left_provider;
-        document.getElementById('settings-left-model').value = currentConfig.left_model;
-        document.getElementById('settings-right-provider').value = currentConfig.right_provider;
-        document.getElementById('settings-right-model').value = currentConfig.right_model;
+        document.getElementById('settings-ollama-url').value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
+        document.getElementById('settings-left-provider').value = leftProvider;
+        document.getElementById('settings-right-provider').value = rightProvider;
+        updateModelUI('left', leftModel);
+        updateModelUI('right', rightModel);
         document.getElementById('settings-project-root').value = currentConfig.project_root_dir || "";
         document.getElementById('settings-theory-dir').value = currentConfig.theory_md_dir || "";
         document.getElementById('settings-master-axiom').value = currentConfig.master_axiom_file || "";
@@ -1231,7 +1247,7 @@
     }
 
     function getPaneProvider(pane) {
-      return pane === 'left' ? (currentConfig?.left_provider || 'gemini') : (currentConfig?.right_provider || 'gemini');
+      return pane === 'left' ? (currentConfig?.left_provider || 'ollama') : (currentConfig?.right_provider || 'ollama');
     }
 
     function getPaneHistory(pane, index) {
@@ -2178,13 +2194,18 @@ async function restoreVersion() {
 		  }
 		}
 
-	function updateModelUI(side) {
-		    const provider = document.getElementById(`settings-${side}-provider`).value;
-		    const container = document.getElementById(`${side}-model-container`);
-		    const options = window.physicsIdeAiConfig?.getModelOptions?.(provider) || [];
-		    const optionsMarkup = options.map(({ value, label }) => `<option value="${value}">${label}</option>`).join('');
-		    container.innerHTML = `<select id="settings-${side}-model">${optionsMarkup}</select>`;
-	}
+  function updateModelUI(side, preferredModel = null) {
+        const provider = document.getElementById(`settings-${side}-provider`).value;
+        const container = document.getElementById(`${side}-model-container`);
+        const existingValue = document.getElementById(`settings-${side}-model`)?.value;
+        const targetValue = preferredModel || existingValue || getDefaultModelForPane(side, provider);
+        const options = window.physicsIdeAiConfig?.getModelOptions?.(provider) || [];
+        const optionsMarkup = options.map(({ value, label }) => `<option value="${value}">${label}</option>`).join('');
+        container.innerHTML = `<select id="settings-${side}-model">${optionsMarkup}</select>`;
+        const select = document.getElementById(`settings-${side}-model`);
+        const hasTarget = options.some(option => option.value === targetValue);
+        select.value = hasTarget ? targetValue : getDefaultModelForPane(side, provider);
+  }
 	
   </script>
   <script type="module">
