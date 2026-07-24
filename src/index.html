@@ -1196,10 +1196,19 @@
         }
 
         chatHistories[pane][index].push(responsePayload);
-        appendChatBubble(pane, index, provider === 'gemini' ? "Gemini" : "Ollama", reply);
+        appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
         appendChatBubble(pane, index, "System Error", err);
+      }
+    }
+
+    function getProviderDisplayName(provider) {
+      switch (provider) {
+        case 'gemini': return 'Gemini';
+        case 'openai': return 'OpenAI';
+        case 'ollama': return 'Ollama';
+        default: return 'Assistant';
       }
     }
 
@@ -2172,28 +2181,15 @@ async function restoreVersion() {
 	function updateModelUI(side) {
 		    const provider = document.getElementById(`settings-${side}-provider`).value;
 		    const container = document.getElementById(`${side}-model-container`);
-		        
-		    if (provider === 'gemini') {
-		        container.innerHTML = `
-		            <select id="settings-${side}-model">
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Light / Fast)</option>
-                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Heavy / Deep Analysis)</option>
-		            </select>`;
-		    } else if (provider === 'openai') {
-		        container.innerHTML = `
-		            <select id="settings-${side}-model">
-		                <option value="gpt-4o-mini">GPT-4o Mini (Light / Fast)</option>
-		                <option value="gpt-4o">GPT-4o Flagship (Heavy / Data Crunching)</option>
-		            </select>`;
-		    } else if (provider === 'ollama') {
-		        container.innerHTML = `
-		            <select id="settings-${side}-model">
-		                <option value="llama3:8b">Llama 3 8B (Light / Fast Local)</option>
-		                <option value="llama3:70b">Llama 3 70B / Mistral Large (Heavy Local)</option>
-		            </select>`;
-		    }
+		    const options = window.physicsIdeAiConfig?.getModelOptions?.(provider) || [];
+		    const optionsMarkup = options.map(({ value, label }) => `<option value="${value}">${label}</option>`).join('');
+		    container.innerHTML = `<select id="settings-${side}-model">${optionsMarkup}</select>`;
 	}
 	
+  </script>
+  <script type="module">
+    import { getModelOptions } from './ai-config.js';
+    window.physicsIdeAiConfig = { getModelOptions };
   </script>
 </body>
 </html>
