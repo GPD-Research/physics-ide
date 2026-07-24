@@ -1614,9 +1614,12 @@ async function restoreVersion() {
 	    // Dialogue File Browser Helper
 	    async function browseForFile(targetInputId, extensions = ['md']) {
 	      try {
+          const existingPath = document.getElementById(`settings-${targetInputId}`)?.value?.trim();
+          const defaultPath = existingPath || currentConfig?.theory_md_dir || currentConfig?.project_root_dir || currentConfig?.last_root_dir || currentWorkspacePath || undefined;
 	        const selected = await window.__TAURI__.dialog.open({
 	          directory: false,
 	          multiple: false,
+            defaultPath,
 	          filters: [{ name: 'Theory Files', extensions }],
 	          title: "Choose File Path"
 	        });

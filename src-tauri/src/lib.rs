@@ -174,6 +174,10 @@ fn apply_unset_path_defaults(config: &mut AppConfig) {
     if config.project_root_dir.trim().is_empty() {
         config.project_root_dir = home_dir;
     }
+
+    if config.theory_md_dir.trim().is_empty() {
+        config.theory_md_dir = config.project_root_dir.clone();
+    }
 }
 
 // --- TAURI COMMANDS ---
