@@ -1060,8 +1060,27 @@
       </div>
   </div>
 
+  <!-- One-time API key transparency note -->
+  <div id="security-note-modal" class="modal" style="z-index: 1100;">
+    <div class="modal-content" style="width: 560px;">
+      <div class="modal-header">Security Note: API Keys</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+        This app is local-first and stores your provider keys in local application settings.
+      </p>
+      <ul style="font-size: 0.82rem; color: var(--text); margin: 0 0 14px 18px; line-height: 1.45;">
+        <li>API keys are stored locally on this device as plain text in app config.</li>
+        <li>Keys are sent only to the provider you select for model requests.</li>
+        <li>For stronger secret handling, use environment variables or an OS keychain flow.</li>
+      </ul>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="dismissSecurityNote()">Understood</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const { invoke } = window.__TAURI__.core;
+    const SECURITY_NOTE_DISMISSED_KEY = 'physics-ide-security-note-dismissed-v1';
 
     let currentConfig = null;
     const chatHistories = {
@@ -1466,15 +1485,27 @@ async function restoreVersion() {
 
     function openSettingsModal() {
       document.getElementById('settings-modal').style.display = 'flex';
+      showSecurityNoteIfNeeded();
     }
 
     function closeSettingsModal() {
       document.getElementById('settings-modal').style.display = 'none';
+      document.getElementById('security-note-modal').style.display = 'none';
       const saveBtn = document.getElementById("save-prefs-btn");
       const saveBtnText = document.getElementById("save-btn-text");
       saveBtn.classList.remove("success");
       saveBtn.disabled = false;
       saveBtnText.textContent = "Save Configuration";
+    }
+
+    function showSecurityNoteIfNeeded() {
+      if (localStorage.getItem(SECURITY_NOTE_DISMISSED_KEY) === 'true') return;
+      document.getElementById('security-note-modal').style.display = 'flex';
+    }
+
+    function dismissSecurityNote() {
+      localStorage.setItem(SECURITY_NOTE_DISMISSED_KEY, 'true');
+      document.getElementById('security-note-modal').style.display = 'none';
     }
 
 	// Tab switcher logic

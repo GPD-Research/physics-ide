@@ -60,3 +60,9 @@ This repository is under active development. The current implementation is inten
 
 - Desktop stabilization toward v6.0.0 is tracked in docs/releases/v6-desktop-checklist.md.
 - UI-to-function mapping coverage is tracked in docs/releases/v6-control-map.md.
+
+## API Key Transparency
+
+- Provider API keys entered in settings are stored locally on the device in application config as plain text.
+- Keys are used only to send requests to the provider selected in the UI.
+- For stronger secret handling, prefer environment variables or an OS keychain-backed workflow.
