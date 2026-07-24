@@ -55,3 +55,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ## Notes
 
 This repository is under active development. The current implementation is intentionally modular so new theory parsers, empirical evaluators, and scientific workflows can be added over time.
+
+## Release Tracking
+
+- Desktop stabilization toward v6.0.0 is tracked in docs/releases/v6-desktop-checklist.md.
+- UI-to-function mapping coverage is tracked in docs/releases/v6-control-map.md.
