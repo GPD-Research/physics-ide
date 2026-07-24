@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 // --- RUNTIME MEMORY STATE ---
@@ -271,15 +271,162 @@ fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>) -> Result<Stri
     Ok(format!("Backend placeholder: Acknowledged prompt for the {} pane.", pane))
 }
 
+fn recursive_markdown_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let entries = fs::read_dir(dir)?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some("target") {
+                continue;
+            }
+            recursive_markdown_scan(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn scan_markdown_theory(theory_dir: &str) -> serde_json::Value {
+    let mut files = Vec::new();
+    let theory_path = Path::new(theory_dir);
+
+    if theory_path.exists() {
+        let _ = recursive_markdown_scan(theory_path, &mut files);
+    }
+
+    let mut headings = Vec::new();
+    let mut lagrangian_candidates = Vec::new();
+    let mut hypothesis_candidates = Vec::new();
+    let mut equation_candidates = Vec::new();
+    let mut file_summaries = Vec::new();
+
+    for path in &files {
+        if let Ok(content) = fs::read_to_string(path) {
+            let relative_path = path.strip_prefix(theory_path).unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+
+            if let Some(first_heading) = content.lines().find(|line| line.trim_start().starts_with('#')) {
+                headings.push(format!("{}: {}", relative_path, first_heading.trim().trim_start_matches('#').trim()));
+            }
+
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let lower = trimmed.to_lowercase();
+                if lower.contains("lagrangian") || lower.contains("\\mathcal{l}") || lower.contains("l =") || lower.contains("action") {
+                    lagrangian_candidates.push(format!("{}: {}", relative_path, trimmed));
+                }
+
+                if lower.contains("hypoth") || lower.contains("axiom") || lower.contains("postulat") {
+                    hypothesis_candidates.push(format!("{}: {}", relative_path, trimmed));
+                }
+
+                if lower.contains("$$") || lower.contains("\\begin") || lower.contains("\\frac") || lower.contains("\\partial") || lower.contains("\\mathcal") {
+                    equation_candidates.push(format!("{}: {}", relative_path, trimmed));
+                }
+            }
+
+            if let Some(summary_line) = content.lines().find_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    Some(trimmed.to_string())
+                } else {
+                    None
+                }
+            }) {
+                file_summaries.push(format!("{}: {}", relative_path, summary_line));
+            }
+        }
+    }
+
+    serde_json::json!({
+        "theory_dir": theory_dir,
+        "files_scanned": files.len(),
+        "headings": headings,
+        "lagrangian_candidates": lagrangian_candidates,
+        "hypothesis_candidates": hypothesis_candidates,
+        "equation_candidates": equation_candidates,
+        "file_summaries": file_summaries
+    })
+}
+
+fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: &serde_json::Value) -> String {
+    let theory_label = scan["headings"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|value| value.as_str())
+        .unwrap_or("this cosmological model");
+
+    let lagrangian = scan["lagrangian_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|value| value.as_str())
+        .unwrap_or("Add the Lagrangian or action functional for the theory here.");
+
+    let hypothesis = scan["hypothesis_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|value| value.as_str())
+        .unwrap_or("State the core explanatory hypothesis here.");
+
+    format!(
+        "# Master Axiom\n\n## Core Axiom\nThe {} framework posits that cosmological structure emerges from a self-consistent relation between order, constraint, and recursive refinement.\n\n## Assumptions\n- Assumption 1: State the foundational conditions under which the model is expected to hold.\n- Assumption 2: State any symmetry, conservation law, or boundary condition that is required.\n\n## Hypothesis\n{}\n\n## Predictions\n1. Specify a measurable signature or scaling relation that follows from the hypothesis.\n2. State a limiting case or boundary condition that should produce a distinct outcome.\n3. Describe the expected observational or analytic difference from competing models.\n\n## Observational Consequences\n- Identify the observational patterns, data products, or simulation outputs implied by the theory.\n- Explain how those consequences would be distinguished from alternative interpretations.\n\n## Testable Criteria\n- What evidence would confirm the hypothesis?\n- What evidence would falsify or constrain it?\n\n## Lagrangian / Action\n{}\n\n## Source Context\n- Theory directory: {}\n- Master axiom file: {}\n- Files scanned: {}\n",
+        theory_label,
+        hypothesis,
+        lagrangian,
+        theory_dir,
+        master_axiom_path,
+        scan["files_scanned"].as_u64().unwrap_or(0)
+    )
+}
+
 #[tauri::command]
-fn compile_ai_briefing(state: tauri::State<AppState>) -> Result<String, String> {
-    // The frontend expects a stringified JSON object to parse for the tooltip
+fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
     let current_path = state.workspace_path.lock().unwrap_or_else(|_| panic!("Mutex poisoned")).clone();
-    
-    // TODO: Write logic to scan equations and structure
+
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+
+    let theory_dir = if !config.theory_md_dir.is_empty() {
+        config.theory_md_dir.clone()
+    } else if !config.project_root_dir.is_empty() {
+        config.project_root_dir.clone()
+    } else {
+        current_path.clone()
+    };
+
+    let scan = scan_markdown_theory(&theory_dir);
+    let template = build_master_axiom_template(&theory_dir, &config.master_axiom_file, &scan);
+
+    if !config.master_axiom_file.is_empty() {
+        let master_path = PathBuf::from(&config.master_axiom_file);
+        if let Some(parent) = master_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&master_path, &template);
+    }
+
     let briefing = serde_json::json!({
-        "status": "Ready (Mocked)",
-        "project_root": if current_path.is_empty() { "Not set" } else { &current_path }
+        "status": "Ready",
+        "project_root": if current_path.is_empty() { "Not set".to_string() } else { current_path.clone() },
+        "theory_directory": theory_dir,
+        "master_axiom_file": config.master_axiom_file,
+        "files_scanned": scan["files_scanned"],
+        "lagrangian_candidates": scan["lagrangian_candidates"],
+        "hypothesis_candidates": scan["hypothesis_candidates"],
+        "template": template
     });
 
     Ok(briefing.to_string())
@@ -558,6 +705,33 @@ mod tests {
     fn rejects_negative_redshift() {
         let result = compute_cosmology_metrics(70.0, 0.3, 0.7, 0.0, -0.1);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn builds_scientific_master_axiom_template_from_markdown_scan() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(
+            temp_dir.join("chapter1.md"),
+            "# Chapter 1\n\nThe theory uses a Lagrangian.\n\n$$\\mathcal{L} = \\frac{1}{2}\\partial_\\mu \\phi \\partial^\\mu \\phi - V(\\phi)$$\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("abstract.md"),
+            "## Abstract\n\nWe hypothesize that this theory fits the data.\n",
+        )
+        .unwrap();
+
+        let scan = scan_markdown_theory(temp_dir.to_str().unwrap());
+        assert_eq!(scan["files_scanned"].as_u64().unwrap(), 2);
+        assert!(scan["lagrangian_candidates"].as_array().unwrap().len() >= 1);
+
+        let template = build_master_axiom_template(temp_dir.to_str().unwrap(), "", &scan);
+        assert!(template.contains("## Hypothesis"));
+        assert!(template.contains("## Predictions"));
+        assert!(template.contains("## Observational Consequences"));
     }
 
     #[test]
