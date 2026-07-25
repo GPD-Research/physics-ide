@@ -1747,6 +1747,10 @@ async function restoreVersion() {
     async function saveSettings() {
       const saveBtn = document.getElementById("save-prefs-btn");
       const saveBtnText = document.getElementById("save-btn-text");
+      const previousLeftProvider = currentConfig?.left_provider;
+      const previousLeftModel = currentConfig?.left_model;
+      const previousRightProvider = currentConfig?.right_provider;
+      const previousRightModel = currentConfig?.right_model;
       
       saveBtn.disabled = true;
       saveBtnText.textContent = "Saving...";
@@ -1804,6 +1808,16 @@ async function restoreVersion() {
         currentConfig.theme = theme;
         currentConfig.custom_accent = customAccent;
         currentConfig.custom_bg_panel = customBgPanel;
+
+        if (previousLeftProvider !== leftProvider || previousLeftModel !== leftModel) {
+          chatHistories.left = [[], [], []];
+          appendTerminalLog('Left-pane chat history reset due to model/provider change.');
+        }
+
+        if (previousRightProvider !== rightProvider || previousRightModel !== rightModel) {
+          chatHistories.right = [[], [], []];
+          appendTerminalLog('Right-pane chat history reset due to model/provider change.');
+        }
 
         localStorage.setItem('physics-ide-settings-fallback', JSON.stringify(payload));
         document.getElementById('terminal-label').innerText = `${term} (~/projects/physics-ide)`;

@@ -627,7 +627,7 @@ fn fallback_to_ollama_cli(model: &str, messages: &[serde_json::Value]) -> Result
         {
             Ok(output) => {
                 if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let stdout = strip_ansi_sequences(&String::from_utf8_lossy(&output.stdout)).trim().to_string();
                     if stdout.is_empty() {
                         return Err("ollama CLI returned empty output".to_string());
                     }
@@ -648,6 +648,30 @@ fn fallback_to_ollama_cli(model: &str, messages: &[serde_json::Value]) -> Result
     }
 
     Err(last_error.unwrap_or_else(|| "ollama CLI is unavailable".to_string()))
+}
+
+fn strip_ansi_sequences(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if matches!(chars.peek(), Some('[')) {
+                let _ = chars.next();
+                while let Some(next) = chars.next() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+                continue;
+            }
+            continue;
+        }
+
+        output.push(ch);
+    }
+
+    output
 }
 
 fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
