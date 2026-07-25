@@ -867,8 +867,8 @@
         <div id="right-tab-context" class="right-wing-tab-panel active">
           <div class="panel-section">
             <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
-            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()">View/Edit Briefing Packet</button>
-            <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Review and edit the briefing packet before syncing context to AI threads.</div>
+            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()">View/Edit Primer</button>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Review and edit the primer before syncing context to AI threads.</div>
           </div>
 
           <div class="panel-section">
@@ -894,17 +894,20 @@
               <textarea id="analysis-hypothesis" rows="4" placeholder="Describe what the dataset should test or reveal."></textarea>
             </div>
             <div class="form-group">
-              <label for="analysis-primer-mode">Primer Mode</label>
+              <label for="analysis-primer-mode">Analysis Plan Mode</label>
               <select id="analysis-primer-mode">
                 <option value="focused">Focused</option>
                 <option value="expanded">Expanded</option>
               </select>
             </div>
             <div class="btn-group" style="margin-top: 5px;">
-              <button onclick="runEmpiricalAnalysis()">🧪 Build Primer</button>
-              <button onclick="openEmpiricalPrimer()">Open Primer</button>
+              <button onclick="runEmpiricalAnalysis()">🧪 Create Analysis Plan</button>
+              <button onclick="openEmpiricalPrimer()">Edit Analysis Plan</button>
             </div>
-            <textarea id="analysis-primer-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="The generated empirical-analysis primer will appear here."></textarea>
+            <div id="analysis-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
+              Ready to create or edit analysis plan.
+            </div>
+            <textarea id="analysis-primer-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="The generated analysis plan will appear here."></textarea>
           </div>
         </div>
 
@@ -964,6 +967,7 @@
             <div class="btn-group" style="margin-top: 5px;">
               <button onclick="saveScratchpad(false)">💾 Save</button>
               <button onclick="saveScratchpad(true)">💾 Save As...</button>
+              <button class="btn-large" onclick="passScratchpadIntoPrimer()">➡ Pass Into Primer</button>
             </div>
           </div>
         </div>
@@ -1221,13 +1225,13 @@
 
   <div id="briefing-packet-modal" class="modal" style="z-index: 1140;">
     <div class="modal-content" style="width: 700px; max-height: 82vh; display: flex; flex-direction: column;">
-      <div class="modal-header">Briefing Packet Editor</div>
+      <div class="modal-header">Primer Editor</div>
       <div id="briefing-packet-meta" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
-        Loading briefing packet...
+        Loading primer...
       </div>
-      <textarea id="briefing-packet-editor" rows="20" style="width: 100%; box-sizing: border-box; flex: 1; min-height: 220px;" placeholder="Briefing packet content will appear here."></textarea>
+      <textarea id="briefing-packet-editor" rows="20" style="width: 100%; box-sizing: border-box; flex: 1; min-height: 220px;" placeholder="Primer content will appear here."></textarea>
       <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
-        First-session note: if no briefing file exists yet, it will be generated after workspace context is available.
+        First-session note: if no primer file exists yet, it will be generated after workspace context is available.
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px;">
         <button onclick="refreshBriefingPacketEditor()">Refresh</button>
@@ -1353,7 +1357,7 @@
           : 'First-session bootstrap lane: critique/setup validation guidance.';
         const laneFocus = lane === 'theory'
           ? 'Greet the user and offer practical setup help. Prioritize project import, markdown output directory, and master axiom setup.'
-          : 'Greet the user and verify setup quality. Prioritize path correctness, file readiness, and briefing completeness checks.';
+          : 'Greet the user and verify setup quality. Prioritize path correctness, file readiness, and primer completeness checks.';
 
         return [
           'First-session starter packet is active.',
@@ -1431,11 +1435,11 @@
           ? '🤖 AI Synced (Partial Sources)'
           : '🤖 AI Synced (Ready)';
 
-        appendTerminalLog(`Briefing packet synced (${briefing.status || 'unknown'}).`);
+        appendTerminalLog(`Primer synced (${briefing.status || 'unknown'}).`);
         if (Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0) {
-          appendTerminalLog(`Briefing diagnostics: ${briefing.diagnostics.join(' | ')}`);
+          appendTerminalLog(`Primer diagnostics: ${briefing.diagnostics.join(' | ')}`);
         }
-        appendTerminalLog(`Briefing file: ${briefing?.generated_files?.ai_briefing || 'not generated'}`);
+        appendTerminalLog(`Primer file: ${briefing?.generated_files?.ai_briefing || 'not generated'}`);
 
         if (isStartup) {
           startupPrimerInjected = true;
@@ -1878,7 +1882,7 @@ async function restoreVersion() {
       const editor = document.getElementById('briefing-packet-editor');
       if (!meta || !editor) return;
 
-      meta.textContent = 'Loading briefing packet...';
+      meta.textContent = 'Loading primer...';
       editor.value = '';
 
       try {
@@ -1890,13 +1894,13 @@ async function restoreVersion() {
         editor.value = content;
         meta.textContent = `Status: ${briefing.status || 'unknown'} | File: ${briefingFilePath || 'unavailable'}`;
         if (Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0) {
-          appendTerminalLog(`Briefing diagnostics: ${briefing.diagnostics.join(' | ')}`);
+          appendTerminalLog(`Primer diagnostics: ${briefing.diagnostics.join(' | ')}`);
         }
       } catch (err) {
         activeBriefingPacketPath = currentWorkspacePath ? `${currentWorkspacePath}/ai_briefing.md` : 'ai_briefing.md';
-        meta.textContent = `Unable to compile briefing packet: ${err}`;
+        meta.textContent = `Unable to compile primer: ${err}`;
         editor.value = [
-          '# AI Briefing Packet',
+          '# AI Primer',
           '',
           '## Session Summary',
           '- Workspace is not fully initialized yet.',
@@ -1915,7 +1919,7 @@ async function restoreVersion() {
 
       const content = editor.value.trim();
       if (!content) {
-        appendTerminalLog('Briefing packet save skipped: editor is empty.');
+        appendTerminalLog('Primer save skipped: editor is empty.');
         return;
       }
 
@@ -1926,11 +1930,11 @@ async function restoreVersion() {
         await invoke('save_scratchpad_content', { content, path: targetPath });
         activeBriefingPacketPath = targetPath;
         if (meta) {
-          meta.textContent = `Saved briefing packet to ${targetPath}`;
+          meta.textContent = `Saved primer to ${targetPath}`;
         }
-        appendTerminalLog(`Briefing packet saved: ${targetPath}`);
+        appendTerminalLog(`Primer saved: ${targetPath}`);
       } catch (err) {
-        appendTerminalLog(`Briefing save error: ${err}`);
+        appendTerminalLog(`Primer save error: ${err}`);
       }
     }
 
@@ -1940,28 +1944,28 @@ async function restoreVersion() {
 
       const packetText = editor.value.trim();
       if (!packetText) {
-        appendTerminalLog('Briefing sync skipped: packet is empty.');
+        appendTerminalLog('Primer sync skipped: packet is empty.');
         return;
       }
 
       await saveBriefingPacketEdits();
 
       const leftPrompt = [
-        'Briefing packet synced for theory lane.',
+        'Primer synced for theory lane.',
         packetText,
         'Focus: clarify assumptions and plan the highest-value model-development tasks first.'
       ].join('\n\n');
 
       const rightPrompt = [
-        'Briefing packet synced for critique lane.',
+        'Primer synced for critique lane.',
         packetText,
         'Focus: identify empirical checkpoints, uncertainty risks, and falsification paths.'
       ].join('\n\n');
 
-      injectSystemPrimerMessage('left', leftIndex, 'Briefing Packet', leftPrompt);
-      injectSystemPrimerMessage('right', rightIndex, 'Briefing Packet', rightPrompt);
+      injectSystemPrimerMessage('left', leftIndex, 'Primer', leftPrompt);
+      injectSystemPrimerMessage('right', rightIndex, 'Primer', rightPrompt);
       document.getElementById('briefing-indicator').innerText = '🤖 AI Synced (Packet Edited)';
-      appendTerminalLog('Edited briefing packet synced to both AI threads.');
+      appendTerminalLog('Edited primer synced to both AI threads.');
     }
 
     async function closeAppWindow() {
@@ -2496,6 +2500,39 @@ async function restoreVersion() {
       }
     }
 
+    function passScratchpadIntoPrimer() {
+      const scratchpadText = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
+      const outputEl = document.getElementById('analysis-primer-output');
+      const statusEl = document.getElementById('analysis-status');
+
+      if (!outputEl) {
+        appendTerminalLog('Primer output field is not available.');
+        return;
+      }
+
+      if (!scratchpadText) {
+        if (statusEl) statusEl.textContent = 'Scratchpad is empty: nothing passed to primer.';
+        appendTerminalLog('Scratchpad is empty: no content passed into primer.');
+        return;
+      }
+
+      const sectionHeader = '## Session Goals from Notepad';
+      const sectionText = `${sectionHeader}\n${scratchpadText}`;
+      const existing = outputEl.value || '';
+
+      if (!existing.trim()) {
+        outputEl.value = ['# Empirical Analysis Primer', '', sectionText].join('\n');
+      } else if (existing.includes(`${sectionHeader}\n`)) {
+        const beforeSection = existing.split(`${sectionHeader}\n`)[0].trimEnd();
+        outputEl.value = `${beforeSection}\n\n${sectionText}`;
+      } else {
+        outputEl.value = `${existing.trimEnd()}\n\n${sectionText}`;
+      }
+
+      if (statusEl) statusEl.textContent = 'Scratchpad goals passed into primer output.';
+      appendTerminalLog('Scratchpad content inserted into empirical primer output.');
+    }
+
     async function runEmpiricalAnalysis() {
       const datasetPath = document.getElementById('analysis-dataset-path').value.trim();
       const instrument = document.getElementById('analysis-instrument').value.trim();
@@ -2503,10 +2540,15 @@ async function restoreVersion() {
       const targetVariable = document.getElementById('analysis-target').value.trim();
       const hypothesis = document.getElementById('analysis-hypothesis').value.trim();
       const primerMode = document.getElementById('analysis-primer-mode').value;
+      const statusEl = document.getElementById('analysis-status');
+      const outputEl = document.getElementById('analysis-primer-output');
 
-      if (!datasetPath && !hypothesis) {
-        appendTerminalLog('Please enter a dataset path or a working hypothesis before generating a primer.');
-        return;
+      if (statusEl) statusEl.textContent = 'Generating analysis plan...';
+      if (outputEl) outputEl.value = '';
+
+      if (!currentWorkspacePath) {
+        appendTerminalLog('No workspace root selected. Analysis plan will be generated in the active runtime directory unless you open a workspace.');
+        if (statusEl) statusEl.textContent = 'No workspace selected: using fallback path for analysis plan output.';
       }
 
       try {
@@ -2523,8 +2565,9 @@ async function restoreVersion() {
         });
 
         const parsed = typeof response === 'string' ? JSON.parse(response) : response;
-        document.getElementById('analysis-primer-output').value = parsed.content || '';
-        appendTerminalLog(`Empirical primer saved to ${parsed.path || 'workspace'}`);
+        if (outputEl) outputEl.value = parsed.content || '';
+        if (statusEl) statusEl.textContent = `Analysis plan saved at ${parsed.path || 'workspace path'}`;
+        appendTerminalLog(`Analysis plan saved to ${parsed.path || 'workspace'}`);
 
         const theoryPrompt = [
           'Theory thread activated for the current empirical test.',
@@ -2547,14 +2590,22 @@ async function restoreVersion() {
         advanceToAnalysisThread('left', 'Theory', theoryPrompt);
         advanceToAnalysisThread('right', 'Empirical Critique', critiquePrompt);
       } catch (err) {
-        appendTerminalLog(`Empirical Analysis Error: ${err}`);
+        if (outputEl) {
+          outputEl.value = `Analysis plan generation failed:\n${err}`;
+        }
+        if (statusEl) statusEl.textContent = `Generation failed: ${err}`;
+        appendTerminalLog(`Analysis Plan Error: ${err}`);
       }
     }
 
     function openEmpiricalPrimer() {
+      const statusEl = document.getElementById('analysis-status');
+
       const primerPath = currentWorkspacePath
         ? `${currentWorkspacePath}/empirical_analysis_primer.md`
         : 'empirical_analysis_primer.md';
+
+      if (statusEl) statusEl.textContent = `Opening analysis plan file: ${primerPath}`;
       openEditor(primerPath);
     }
 
