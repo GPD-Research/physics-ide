@@ -518,7 +518,7 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
 fn build_ollama_messages(history: &[serde_json::Value]) -> Vec<serde_json::Value> {
     let mut messages = vec![serde_json::json!({
         "role": "system",
-        "content": "You are a helpful scientific assistant. Respond concisely and use the repository context."
+        "content": "You are a helpful scientific assistant. Respond concisely and use the repository context. Return only the final answer. Do not output internal reasoning, scratch work, or thinking traces unless explicitly requested."
     })];
 
     for entry in history {
@@ -587,12 +587,14 @@ fn call_ollama(ollama_url: &str, model: &str, messages: &[serde_json::Value], te
     }
 
     let parsed: serde_json::Value = response.json().map_err(|e| format!("Ollama response parsing failed: {e}"))?;
-    parsed
+    let content = parsed
         .get("message")
         .and_then(|message| message.get("content"))
         .and_then(|value| value.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "Ollama returned no response text".to_string())
+        .ok_or_else(|| "Ollama returned no response text".to_string())?;
+
+    Ok(normalize_ollama_reply(model, &content))
 }
 
 fn fallback_to_ollama_cli(model: &str, messages: &[serde_json::Value]) -> Result<String, String> {
@@ -631,7 +633,7 @@ fn fallback_to_ollama_cli(model: &str, messages: &[serde_json::Value]) -> Result
                     if stdout.is_empty() {
                         return Err("ollama CLI returned empty output".to_string());
                     }
-                    return Ok(stdout);
+                    return Ok(normalize_ollama_reply(model, &stdout));
                 }
 
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -672,6 +674,40 @@ fn strip_ansi_sequences(input: &str) -> String {
     }
 
     output
+}
+
+fn normalize_ollama_reply(model: &str, raw: &str) -> String {
+    let mut cleaned = strip_ansi_sequences(raw).trim().to_string();
+
+    if model.to_ascii_lowercase().starts_with("deepseek-r1") {
+        cleaned = strip_think_tags(&cleaned);
+        cleaned = strip_done_thinking_prefix(&cleaned);
+    }
+
+    cleaned.trim().to_string()
+}
+
+fn strip_think_tags(input: &str) -> String {
+    let mut text = input.to_string();
+    while let Some(start) = text.find("<think>") {
+        if let Some(end_relative) = text[start..].find("</think>") {
+            let end = start + end_relative + "</think>".len();
+            text.replace_range(start..end, "");
+        } else {
+            text.replace_range(start..text.len(), "");
+            break;
+        }
+    }
+    text
+}
+
+fn strip_done_thinking_prefix(input: &str) -> String {
+    let marker = "...done thinking.";
+    if let Some(position) = input.to_ascii_lowercase().find(marker) {
+        let start = position + marker.len();
+        return input[start..].trim().to_string();
+    }
+    input.to_string()
 }
 
 fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
