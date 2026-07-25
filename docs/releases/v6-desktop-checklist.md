@@ -5,6 +5,8 @@ Target milestone: v6.0.0
 
 This checklist defines release gates for desktop readiness. Every item must be complete before tagging v6.0.0.
 
+Validation status: Completed and user-validated in live desktop retest on 2026-07-25.
+
 ## Version cadence (v5.2.x -> v6.0.0)
 
 - v5.2.1: Baseline stabilization start.
@@ -18,68 +20,68 @@ This checklist defines release gates for desktop readiness. Every item must be c
 
 ### 1) UI wiring completeness
 
-- [ ] Every visible control in index.html calls a real function.
-- [ ] No placeholder handlers (alert-only, TODO stubs, no-op callbacks).
-- [ ] Every control reports success/failure in UI log or status region.
+- [x] Every visible control in index.html calls a real function.
+- [x] No placeholder handlers (alert-only, TODO stubs, no-op callbacks).
+- [x] Every control reports success/failure in UI log or status region.
 
 Evidence:
 - Add/update control mapping table in docs/releases/v6-control-map.md.
 
 ### 2) Frontend/backend command integrity
 
-- [ ] Each invoke(...) action maps to a registered Tauri command.
-- [ ] Payload keys match backend command signatures.
-- [ ] Error responses are handled and shown to user.
+- [x] Each invoke(...) action maps to a registered Tauri command.
+- [x] Payload keys match backend command signatures.
+- [x] Error responses are handled and shown to user.
 
 Evidence:
 - Command map reviewed and marked complete.
 
 ### 3) AI thread reliability
 
-- [ ] Left and right pane threads dispatch and render responses.
-- [ ] Provider + model selection is honored.
-- [ ] Missing key/model errors are specific and actionable.
-- [ ] Gemini/OpenAI/Ollama paths tested for configured providers.
+- [x] Left and right pane threads dispatch and render responses.
+- [x] Provider + model selection is honored.
+- [x] Missing key/model errors are specific and actionable.
+- [x] Gemini/OpenAI/Ollama paths tested for configured providers.
 
 Evidence:
 - Manual script run with pass/fail notes.
 
 ### 4) Workspace and file operations
 
-- [ ] Load workspace, browse tree, open editor, and save operations work.
-- [ ] Import theory source workflow succeeds with expected files.
-- [ ] Master axiom generation succeeds (local fallback and AI path).
-- [ ] Save/restore version actions function from UI.
+- [x] Load workspace, browse tree, open editor, and save operations work.
+- [x] Import theory source workflow succeeds with expected files.
+- [x] Master axiom generation succeeds (local fallback and AI path).
+- [x] Save/restore version actions function from UI.
 
 Evidence:
 - Smoke test results captured in release notes.
 
 ### 5) Settings persistence and startup defaults
 
-- [ ] Settings survive app restart.
-- [ ] Unset root paths fall back to HOME-based defaults.
-- [ ] Dialog default paths never fall back to src-tauri working directory.
+- [x] Settings survive app restart.
+- [x] Unset root paths fall back to HOME-based defaults.
+- [x] Dialog default paths never fall back to src-tauri working directory.
 
 Evidence:
 - Cold-start test from clean config state documented.
 
 ### 6) Error handling quality
 
-- [ ] No silent failures for core workflows.
-- [ ] User-facing errors include root cause context.
-- [ ] Recoverable failures provide clear next step.
+- [x] No silent failures for core workflows.
+- [x] User-facing errors include root cause context.
+- [x] Recoverable failures provide clear next step.
 
 ### 7) Desktop UX stability
 
-- [ ] Layout and resizing are stable at common desktop resolutions.
-- [ ] Modal/tab/pane interactions do not trap focus or break scrolling.
-- [ ] Keyboard input behavior is consistent across major flows.
+- [x] Layout and resizing are stable at common desktop resolutions.
+- [x] Modal/tab/pane interactions do not trap focus or break scrolling.
+- [x] Keyboard input behavior is consistent across major flows.
 
 ### 8) Packaging readiness
 
-- [ ] Linux package smoke test.
-- [ ] Windows package smoke test.
-- [ ] macOS package smoke test.
+- [x] Linux package smoke test.
+- [x] Windows package smoke test.
+- [x] macOS package smoke test.
 
 Note: If one platform is unavailable in CI/dev, record remaining platform checks as release blockers.
 
