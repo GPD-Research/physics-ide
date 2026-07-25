@@ -88,6 +88,7 @@ pub struct AppConfig {
     theme: String,           // <-- NEW
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
+    reuse_notes_next_session: bool,
 }
 
 impl Default for AppConfig {
@@ -109,8 +110,20 @@ impl Default for AppConfig {
             theme: "dark".to_string(),
             custom_accent: String::new(),
             custom_bg_panel: String::new(),
+            reuse_notes_next_session: false,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct ExitSessionOptions {
+    pub create_new_axiom: bool,
+    pub create_recap_md: bool,
+    pub reuse_existing_notes_next_session: bool,
+    pub scratchpad_content: String,
+    pub workspace_path: String,
+    pub recap_content_override: String,
+    pub notes_content_override: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -204,6 +217,259 @@ fn apply_unset_path_defaults(config: &mut AppConfig) {
     }
 }
 
+fn build_workspace_tree_string(root: &Path) -> Result<String, String> {
+    if !root.exists() {
+        return Err(format!("Root path does not exist: {}", root.to_string_lossy()));
+    }
+
+    fn build_tree(dir: &Path, prefix: &str, output: &mut String) -> std::io::Result<()> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+
+        for (i, entry) in entries.iter().enumerate() {
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+
+            if name_str == "target" || name_str.starts_with('.') {
+                continue;
+            }
+
+            let is_last = i == entries.len() - 1;
+            let pointer = if is_last { "└── " } else { "├── " };
+
+            output.push_str(&format!("{}{}{}\n", prefix, pointer, name_str));
+
+            if entry.file_type()?.is_dir() {
+                let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+                build_tree(&entry.path(), &new_prefix, output)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    let root_label = root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.to_string_lossy().to_string());
+    let mut tree_string = format!("{}\n", root_label);
+    build_tree(root, "", &mut tree_string).map_err(|e| e.to_string())?;
+    Ok(tree_string)
+}
+
+fn resolve_workspace_root(current_path: &str, config: &AppConfig) -> Option<PathBuf> {
+    let candidates = [
+        current_path.trim(),
+        config.project_root_dir.trim(),
+        config.last_root_dir.trim(),
+    ];
+
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+
+        let path = PathBuf::from(candidate);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+fn read_source_payload(source_name: &str, path: &Path, max_chars: usize) -> (serde_json::Value, Option<String>) {
+    if !path.exists() {
+        return (
+            serde_json::json!({
+                "name": source_name,
+                "path": path.to_string_lossy().to_string(),
+                "exists": false,
+                "content": "",
+                "bytes": 0,
+                "lines": 0,
+                "truncated": false
+            }),
+            Some(format!("Missing source: {} ({})", source_name, path.to_string_lossy())),
+        );
+    }
+
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let full_char_count = raw.chars().count();
+            let truncated = full_char_count > max_chars;
+            let content = if truncated {
+                let head: String = raw.chars().take(max_chars).collect();
+                format!(
+                    "{}\n\n[...truncated {} chars from {} source for transport safety...]",
+                    head,
+                    full_char_count.saturating_sub(max_chars),
+                    source_name
+                )
+            } else {
+                raw
+            };
+
+            (
+                serde_json::json!({
+                    "name": source_name,
+                    "path": path.to_string_lossy().to_string(),
+                    "exists": true,
+                    "content": content,
+                    "bytes": fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+                    "lines": content.lines().count(),
+                    "truncated": truncated
+                }),
+                None,
+            )
+        }
+        Err(e) => (
+            serde_json::json!({
+                "name": source_name,
+                "path": path.to_string_lossy().to_string(),
+                "exists": false,
+                "content": "",
+                "bytes": 0,
+                "lines": 0,
+                "truncated": false
+            }),
+            Some(format!("Unreadable source: {} ({})", source_name, e)),
+        ),
+    }
+}
+
+fn build_session_recap_markdown(
+    project_root: &Path,
+    theory_dir: &str,
+    master_axiom_path: &Path,
+    scan: &serde_json::Value,
+) -> String {
+    let files_scanned = scan["files_scanned"].as_u64().unwrap_or(0);
+    let lagrangian_hint = scan["lagrangian_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| item.as_str())
+        .unwrap_or("No Lagrangian/action marker detected yet.");
+    let hypothesis_hint = scan["hypothesis_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| item.as_str())
+        .unwrap_or("No explicit hypothesis marker detected yet.");
+
+    format!(
+        "# Session Recap\n\n## Progress Snapshot\n- Workspace root: {}\n- Theory directory: {}\n- Files scanned in theory corpus: {}\n\n## Theory Anchor\n- Master axiom path: {}\n- Lagrangian/action cue: {}\n- Hypothesis cue: {}\n- Equation continuity marker: keep $\\mathcal{{L}}$ references aligned with the active branch assumptions.\n\n## Next Session Tasks\n1. Confirm today\'s primary research goal before opening new analysis branches.\n2. Identify one testable prediction to stress against incoming data.\n3. Record unresolved assumptions so the next startup primer can stay concise.\n",
+        project_root.to_string_lossy(),
+        theory_dir,
+        files_scanned,
+        master_axiom_path.to_string_lossy(),
+        lagrangian_hint,
+        hypothesis_hint
+    )
+}
+
+fn build_ai_briefing_markdown(
+    project_root: &Path,
+    summary: &str,
+    primer_path: &Path,
+    recap_path: &Path,
+    tree_path: &Path,
+    master_axiom_path: &Path,
+) -> String {
+    format!(
+        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
+        summary,
+        primer_path.to_string_lossy(),
+        recap_path.to_string_lossy(),
+        tree_path.to_string_lossy(),
+        master_axiom_path.to_string_lossy(),
+        project_root.to_string_lossy()
+    )
+}
+
+fn build_first_session_briefing_markdown(project_root: &Path) -> String {
+    format!(
+        "# First Session Briefing Packet\n\n## Welcome\n- Greet the user and explain that this first run will establish the project context for future sessions.\n- Ask for the theory/model title so the session language remains aligned with the user\'s framework.\n\n## Setup Checklist\n1. Import or open the project workspace folder.\n2. Confirm the theory markdown output directory in settings.\n3. Set or generate the master axiom file path.\n4. Save starter notes describing today\'s goals in the scratchpad.\n5. Export the workspace tree so source structure is visible.\n6. Build or refresh the briefing packet and verify both AI lanes received it.\n\n## Assistant Behavior\n- Offer step-by-step guidance instead of waiting idle.\n- Keep prompts concise and practical for first-session setup.\n- Ask one clarifying question at a time when configuration details are missing.\n- Remind the user that end-of-session recap can produce the next briefing packet automatically.\n\n## Expected Outcome\n- By the end of this first session, documentation should be strong enough to replace this starter packet with a session-specific packet.\n\n## Workspace Context\n- Project root: {}\n- Note: this starter packet is intended for first-run onboarding only.\n",
+        project_root.to_string_lossy()
+    )
+}
+
+fn save_app_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
+    let config_path = get_config_path(app)?;
+    let config_json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    fs::write(config_path, config_json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn generate_exit_session_draft(
+    workspace_path: String,
+    scratchpad_content: String,
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let current_path = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?
+        .clone();
+
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+    apply_unset_path_defaults(&mut config);
+
+    let preferred_workspace = if workspace_path.trim().is_empty() {
+        current_path
+    } else {
+        workspace_path.trim().to_string()
+    };
+
+    let project_root = resolve_workspace_root(&preferred_workspace, &config)
+        .ok_or_else(|| "No valid workspace root available. Load a workspace first.".to_string())?;
+
+    let theory_dir = if !config.theory_md_dir.is_empty() {
+        config.theory_md_dir.clone()
+    } else {
+        project_root.to_string_lossy().to_string()
+    };
+
+    let master_axiom_path = if config.master_axiom_file.trim().is_empty() {
+        project_root.join("master_axiom.md")
+    } else {
+        PathBuf::from(&config.master_axiom_file)
+    };
+
+    let scan = scan_markdown_theory(&theory_dir);
+    let mut recap = build_session_recap_markdown(&project_root, &theory_dir, &master_axiom_path, &scan);
+
+    let scratchpad_trimmed = scratchpad_content.trim();
+    if !scratchpad_trimmed.is_empty() {
+        recap.push_str("\n## User Notes Snapshot\n");
+        recap.push_str(scratchpad_trimmed);
+        recap.push('\n');
+    }
+
+    let notes_path = project_root.join("next_session_notes.md");
+    let existing_notes = fs::read_to_string(&notes_path).unwrap_or_default();
+    let notes_draft = if !scratchpad_trimmed.is_empty() {
+        scratchpad_trimmed.to_string()
+    } else {
+        existing_notes
+    };
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "project_root": project_root.to_string_lossy().to_string(),
+        "recap_draft": recap,
+        "notes_draft": notes_draft,
+        "reuse_notes_next_session": config.reuse_notes_next_session
+    });
+
+    Ok(payload.to_string())
+}
+
 // --- TAURI COMMANDS ---
 
 #[tauri::command]
@@ -249,45 +515,13 @@ fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
 #[allow(non_snake_case)]
 fn export_workspace_tree(rootPath: String) -> Result<String, String> {
     let root = std::path::Path::new(&rootPath);
-    if !root.exists() {
-        return Err(format!("Root path does not exist: {}", rootPath));
-    }
-
-    fn build_tree(dir: &std::path::Path, prefix: &str, output: &mut String) -> std::io::Result<()> {
-        let entries = std::fs::read_dir(dir)?;
-        let entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-        
-        for (i, entry) in entries.iter().enumerate() {
-            let file_name = entry.file_name();
-            let name_str = file_name.to_string_lossy();
-            
-            // Skip target or hidden configuration folders to keep tree clean
-            if name_str == "target" || name_str.starts_with('.') {
-                continue;
-            }
-
-            let is_last = i == entries.len() - 1;
-            let pointer = if is_last { "└── " } else { "├── " };
-            
-            output.push_str(&format!("{}{}{}\n", prefix, pointer, name_str));
-
-            if entry.file_type()?.is_dir() {
-                let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-                build_tree(&entry.path(), &new_prefix, output)?;
-            }
-        }
-        Ok(())
-    }
-
-    let mut tree_string = format!("{}\n", root.file_name().unwrap_or_default().to_string_lossy());
-    build_tree(root, "", &mut tree_string).map_err(|e| e.to_string())?;
+    let tree_string = build_workspace_tree_string(root)?;
     
-    // Save to file instead of returning the massive string
+    // Save to workspace root for easy discovery.
     let output_file_path = root.join("workspace_tree.txt");
     std::fs::write(&output_file_path, tree_string).map_err(|e| format!("Failed to write file: {}", e))?;
     
-    // Return a short, safe string to the frontend UI
-    Ok(format!("File Tree txt document generated: {:?}", output_file_path))
+    Ok(format!("Workspace tree generated: {}", output_file_path.to_string_lossy()))
 }
 
 #[tauri::command]
@@ -1224,7 +1458,11 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
 
 #[tauri::command]
 fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
-    let current_path = state.workspace_path.lock().unwrap_or_else(|_| panic!("Mutex poisoned")).clone();
+    let current_path = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?
+        .clone();
 
     let mut config = AppConfig::default();
     if let Ok(config_path) = get_config_path(&app) {
@@ -1233,37 +1471,305 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         }
     }
 
+    apply_unset_path_defaults(&mut config);
+
+    let project_root = resolve_workspace_root(&current_path, &config)
+        .ok_or_else(|| "No valid workspace root available. Load a workspace first.".to_string())?;
+
     let theory_dir = if !config.theory_md_dir.is_empty() {
         config.theory_md_dir.clone()
     } else if !config.project_root_dir.is_empty() {
         config.project_root_dir.clone()
     } else {
-        current_path.clone()
+        project_root.to_string_lossy().to_string()
     };
 
     let scan = scan_markdown_theory(&theory_dir);
-    let template = build_master_axiom_template(&theory_dir, &config.master_axiom_file, &scan);
+    let master_axiom_path = if config.master_axiom_file.trim().is_empty() {
+        project_root.join("master_axiom.md")
+    } else {
+        PathBuf::from(&config.master_axiom_file)
+    };
 
-    if !config.master_axiom_file.is_empty() {
-        let master_path = PathBuf::from(&config.master_axiom_file);
-        if let Some(parent) = master_path.parent() {
+    let template = build_master_axiom_template(
+        &theory_dir,
+        master_axiom_path.to_string_lossy().as_ref(),
+        &scan,
+    );
+
+    if !master_axiom_path.exists() {
+        if let Some(parent) = master_axiom_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(&master_path, &template);
+        let _ = fs::write(&master_axiom_path, &template);
     }
 
+    let tree_path = project_root.join("workspace_tree.txt");
+    if let Ok(tree) = build_workspace_tree_string(&project_root) {
+        let _ = fs::write(&tree_path, tree);
+    }
+
+    let primer_path = project_root.join("next_session_notes.md");
+    let recap_path = project_root.join("session_recap.md");
+    let briefing_path = project_root.join("ai_briefing.md");
+    let recap_existed_before = recap_path.exists();
+    let briefing_existed_before = briefing_path.exists();
+    let first_session_bootstrap = !briefing_existed_before && !recap_existed_before;
+
+    if !recap_path.exists() {
+        let recap = build_session_recap_markdown(&project_root, &theory_dir, &master_axiom_path, &scan);
+        let _ = fs::write(&recap_path, recap);
+    }
+
+    let mut diagnostics: Vec<String> = Vec::new();
+    let (primer_payload, primer_diag) = if config.reuse_notes_next_session {
+        read_source_payload("primer", &primer_path, 12_000)
+    } else {
+        (
+            serde_json::json!({
+                "name": "primer",
+                "path": primer_path.to_string_lossy().to_string(),
+                "exists": false,
+                "content": "",
+                "bytes": 0,
+                "lines": 0,
+                "truncated": false,
+                "disabled": true
+            }),
+            None,
+        )
+    };
+    let (recap_payload, recap_diag) = read_source_payload("session_recap", &recap_path, 12_000);
+    let (tree_payload, tree_diag) = read_source_payload("workspace_tree", &tree_path, 20_000);
+    let (axiom_payload, axiom_diag) = read_source_payload("master_axiom", &master_axiom_path, 16_000);
+
+    if let Some(diag) = primer_diag {
+        diagnostics.push(diag);
+    }
+    if let Some(diag) = recap_diag {
+        diagnostics.push(diag);
+    }
+    if let Some(diag) = tree_diag {
+        diagnostics.push(diag);
+    }
+    if let Some(diag) = axiom_diag {
+        diagnostics.push(diag);
+    }
+
+    let files_scanned = scan["files_scanned"].as_u64().unwrap_or(0);
+    let lagrangian_count = scan["lagrangian_candidates"].as_array().map(|a| a.len()).unwrap_or(0);
+    let hypothesis_count = scan["hypothesis_candidates"].as_array().map(|a| a.len()).unwrap_or(0);
+
+    let summary = format!(
+        "{}",
+        if first_session_bootstrap {
+            format!(
+                "First-session bootstrap active for {}. Greet the user, help configure project import/theory markdown output/master axiom path, and guide setup until the first recap-driven packet can replace this starter.",
+                project_root.to_string_lossy()
+            )
+        } else {
+            format!(
+                "Startup primer assembled for {} with {} scanned markdown files, {} Lagrangian/action cues, and {} hypothesis cues. Keep responses concise, anchor in current axioms, and align today\'s goals before deeper analysis.",
+                project_root.to_string_lossy(),
+                files_scanned,
+                lagrangian_count,
+                hypothesis_count
+            )
+        }
+    );
+
+    let ai_briefing_markdown = if first_session_bootstrap {
+        build_first_session_briefing_markdown(&project_root)
+    } else {
+        build_ai_briefing_markdown(
+            &project_root,
+            &summary,
+            &primer_path,
+            &recap_path,
+            &tree_path,
+            &master_axiom_path,
+        )
+    };
+    if !briefing_path.exists() {
+        let _ = fs::write(&briefing_path, ai_briefing_markdown);
+    }
+
+    let (briefing_payload, briefing_diag) = read_source_payload("ai_briefing", &briefing_path, 12_000);
+    if let Some(diag) = briefing_diag {
+        diagnostics.push(diag);
+    }
+
+    let status = if diagnostics.is_empty() { "Ready" } else { "Partial" };
+
     let briefing = serde_json::json!({
-        "status": "Ready",
-        "project_root": if current_path.is_empty() { "Not set".to_string() } else { current_path.clone() },
+        "status": status,
+        "project_root": project_root.to_string_lossy().to_string(),
         "theory_directory": theory_dir,
-        "master_axiom_file": config.master_axiom_file,
+        "master_axiom_file": master_axiom_path.to_string_lossy().to_string(),
         "files_scanned": scan["files_scanned"],
         "lagrangian_candidates": scan["lagrangian_candidates"],
         "hypothesis_candidates": scan["hypothesis_candidates"],
-        "template": template
+        "template": template,
+        "summary": summary,
+        "diagnostics": diagnostics,
+        "primer": primer_payload,
+        "session_recap": recap_payload,
+        "workspace_tree": tree_payload,
+        "master_axiom": axiom_payload,
+        "ai_briefing": briefing_payload,
+        "generated_files": {
+            "session_recap": recap_path.to_string_lossy().to_string(),
+            "ai_briefing": briefing_path.to_string_lossy().to_string(),
+            "workspace_tree": tree_path.to_string_lossy().to_string(),
+            "scratchpad": primer_path.to_string_lossy().to_string(),
+            "master_axiom": master_axiom_path.to_string_lossy().to_string()
+        },
+        "reuse_notes_next_session": config.reuse_notes_next_session,
+        "first_session_bootstrap": first_session_bootstrap,
+        "onboarding_steps": [
+            "Import or open project workspace",
+            "Set theory markdown output directory",
+            "Set or generate master axiom file",
+            "Capture goals in scratchpad notes",
+            "Export workspace tree",
+            "Refresh and sync briefing packet to both AI lanes"
+        ]
     });
 
     Ok(briefing.to_string())
+}
+
+#[tauri::command]
+fn prepare_exit_session(
+    options: ExitSessionOptions,
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let current_path = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?
+        .clone();
+
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+    apply_unset_path_defaults(&mut config);
+
+    let preferred_workspace = if options.workspace_path.trim().is_empty() {
+        current_path
+    } else {
+        options.workspace_path.trim().to_string()
+    };
+
+    let project_root = resolve_workspace_root(&preferred_workspace, &config)
+        .ok_or_else(|| "No valid workspace root available. Load a workspace first.".to_string())?;
+
+    let theory_dir = if !config.theory_md_dir.is_empty() {
+        config.theory_md_dir.clone()
+    } else {
+        project_root.to_string_lossy().to_string()
+    };
+
+    let master_axiom_path = if config.master_axiom_file.trim().is_empty() {
+        project_root.join("master_axiom.md")
+    } else {
+        PathBuf::from(&config.master_axiom_file)
+    };
+
+    let recap_path = project_root.join("session_recap.md");
+    let notes_path = project_root.join("next_session_notes.md");
+    let tree_path = project_root.join("workspace_tree.txt");
+    let briefing_path = project_root.join("ai_briefing.md");
+
+    let mut actions: Vec<String> = Vec::new();
+
+    if options.create_new_axiom {
+        let scan = scan_markdown_theory(&theory_dir);
+        let template = build_master_axiom_template(
+            &theory_dir,
+            master_axiom_path.to_string_lossy().as_ref(),
+            &scan,
+        );
+        if let Some(parent) = master_axiom_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create master axiom parent directory: {e}"))?;
+        }
+        fs::write(&master_axiom_path, template).map_err(|e| format!("Failed to write master axiom: {e}"))?;
+        actions.push(format!("Master axiom refreshed: {}", master_axiom_path.to_string_lossy()));
+    }
+
+    if options.create_recap_md {
+        let recap_override = options.recap_content_override.trim();
+        let recap = if !recap_override.is_empty() {
+            recap_override.to_string()
+        } else {
+            let scan = scan_markdown_theory(&theory_dir);
+            let mut generated = build_session_recap_markdown(&project_root, &theory_dir, &master_axiom_path, &scan);
+            let scratchpad_trimmed = options.scratchpad_content.trim();
+            if !scratchpad_trimmed.is_empty() {
+                generated.push_str("\n## User Notes Snapshot\n");
+                generated.push_str(scratchpad_trimmed);
+                generated.push('\n');
+            }
+            generated
+        };
+        fs::write(&recap_path, recap).map_err(|e| format!("Failed to write session recap: {e}"))?;
+        actions.push(format!("Session recap saved: {}", recap_path.to_string_lossy()));
+
+        // Replace first-run packet with session-derived briefing once recap exists.
+        if let Ok(tree) = build_workspace_tree_string(&project_root) {
+            let _ = fs::write(&tree_path, tree);
+        }
+        let exit_summary = "Post-session briefing packet generated from latest session recap and workspace context.";
+        let packet = build_ai_briefing_markdown(
+            &project_root,
+            exit_summary,
+            &notes_path,
+            &recap_path,
+            &tree_path,
+            &master_axiom_path,
+        );
+        fs::write(&briefing_path, packet).map_err(|e| format!("Failed to write briefing packet: {e}"))?;
+        actions.push(format!("Briefing packet updated: {}", briefing_path.to_string_lossy()));
+    }
+
+    config.reuse_notes_next_session = options.reuse_existing_notes_next_session;
+    if options.reuse_existing_notes_next_session {
+        let notes_override = options.notes_content_override.trim();
+        let notes_to_save = if !notes_override.is_empty() {
+            notes_override
+        } else {
+            options.scratchpad_content.trim()
+        };
+        if !notes_to_save.is_empty() {
+            fs::write(&notes_path, notes_to_save)
+                .map_err(|e| format!("Failed to write next-session notes: {e}"))?;
+            actions.push(format!("Carry-over notes saved: {}", notes_path.to_string_lossy()));
+        } else {
+            actions.push("Carry-over notes enabled, but scratchpad was empty.".to_string());
+        }
+    } else if notes_path.exists() {
+        let _ = fs::remove_file(&notes_path);
+        actions.push("Carry-over notes cleared for next session.".to_string());
+    }
+
+    save_app_config(&app, &config)?;
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "project_root": project_root.to_string_lossy().to_string(),
+        "actions": actions,
+        "options": {
+            "create_new_axiom": options.create_new_axiom,
+            "create_recap_md": options.create_recap_md,
+            "reuse_existing_notes_next_session": options.reuse_existing_notes_next_session
+        }
+    });
+
+    Ok(payload.to_string())
 }
 
 #[tauri::command]
@@ -1831,7 +2337,9 @@ pub fn run() {
             launch_file_editor,
             detach_terminal_shell,
             git_pull,
-            git_push
+            git_push,
+            prepare_exit_session,
+            generate_exit_session_draft
             // Add your other commands here...
         ])
         .run(tauri::generate_context!())

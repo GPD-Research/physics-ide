@@ -16,6 +16,13 @@ The long-term vision for physics-IDE is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Today's progress (2026-07-25)
+
+- successfully deployed and validated two Ollama AI threads for local concurrent usage;
+- enabled local save and run workflow for two Ollama models directly from the desktop environment;
+- tweaked the integrated terminal behavior for a smoother development and model-execution workflow;
+- completed additional stability and usability improvements across the desktop experience.
+
 ### Implemented so far
 
 - a Tauri desktop app shell with a configurable interface and integrated terminal;

@@ -266,7 +266,7 @@
   
       /* Resizers */
       .resizer {
-        width: 4px;
+        width: 8px;
         cursor: col-resize;
         background-color: var(--border-color);
         transition: background-color 0.2s ease;
@@ -390,6 +390,44 @@
         border-bottom: 1px solid var(--border-color);
         padding-bottom: 5px;
         margin-bottom: 10px;
+      }
+
+      .project-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .project-title-inline {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: 1;
+        min-width: 0;
+      }
+
+      #project-title-display {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .project-title-edit-btn {
+        border: 1px solid var(--border-color);
+        background: var(--bg-dark);
+        color: var(--accent);
+        padding: 2px 6px;
+        font-size: 0.72rem;
+        line-height: 1;
+      }
+
+      #project-title-input {
+        display: none;
+        width: 100%;
+        font-size: 0.78rem;
+        padding: 5px 6px;
+        box-sizing: border-box;
       }
   
       .file-tree {
@@ -639,7 +677,7 @@
         <a href="#" onclick="restoreVersion()">Restore Version</a>
         <a href="#" onclick="saveHypothesis()">Save as Hypothesis</a>
         <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 4px 0;">
-        <a href="#" onclick="window.close()">Exit</a>
+        <a href="#" onclick="openExitDialog(); return false;">Exit</a>
       </div>
     </div>
     <div class="menu-item">
@@ -681,7 +719,13 @@
         
         <!-- Top Part: Tree -->
         <div class="panel-section" style="flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
-            <div class="panel-section-title">Cosmology Workspace</div>
+            <div class="panel-section-title project-title-row">
+              <div class="project-title-inline">
+                <span id="project-title-display">Cosmology Workspace</span>
+                <button class="project-title-edit-btn" onclick="beginEditProjectTitle()" title="Edit project title">✎</button>
+              </div>
+            </div>
+            <input id="project-title-input" type="text" value="Cosmology Workspace" onkeydown="handleProjectTitleKeydown(event)" onblur="commitProjectTitle()">
             <button id="select-dir-btn" onclick="loadWorkspace()" style="width: 100%; margin-bottom: 10px;">📂 Open Folder</button>
             
             <div class="file-tree" id="file-tree-container" style="flex: 1; overflow-y: auto; min-height: 0;">
@@ -823,8 +867,8 @@
         <div id="right-tab-context" class="right-wing-tab-panel active">
           <div class="panel-section">
             <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
-            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="sendAIStateBriefing()">⚡ Send Briefing Packet</button>
-            <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Updates current state of equations and folder structure to AI context.</div>
+            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()">View/Edit Briefing Packet</button>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Review and edit the briefing packet before syncing context to AI threads.</div>
           </div>
 
           <div class="panel-section">
@@ -1133,9 +1177,71 @@
     </div>
   </div>
 
+  <div id="exit-session-modal" class="modal" style="z-index: 1150;">
+    <div class="modal-content" style="width: 560px;">
+      <div class="modal-header">Exit Session Options</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+        Select what should be prepared before closing the app.
+      </p>
+      <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+        <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 0.85rem; color: var(--text);">
+          <input type="checkbox" id="exit-create-axiom" style="margin-top: 3px;">
+          <span>Create a new master axiom file from current project scan (default: off).</span>
+        </label>
+        <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 0.85rem; color: var(--text);">
+          <input type="checkbox" id="exit-create-recap" checked style="margin-top: 3px;">
+          <span>Create session recap markdown in project root (default: on).</span>
+        </label>
+        <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 0.85rem; color: var(--text);">
+          <input type="checkbox" id="exit-reuse-notes" style="margin-top: 3px;">
+          <span>Reuse existing user notes for next session startup primer (default: off).</span>
+        </label>
+      </div>
+      <div class="form-group" style="margin-bottom: 10px;">
+        <label for="exit-recap-editor">Session recap draft (editable)</label>
+        <textarea id="exit-recap-editor" rows="10" style="width: 100%; box-sizing: border-box;" placeholder="Exit recap draft will appear here."></textarea>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+          Trim, expand, or rewrite this summary before saving.
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label for="exit-notes-editor">Next-session carry-over notes (editable)</label>
+        <textarea id="exit-notes-editor" rows="5" style="width: 100%; box-sizing: border-box;" placeholder="Optional carry-over notes for next startup primer."></textarea>
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+          Saved only when "Reuse existing user notes" is checked.
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button onclick="refreshExitDraft()">Refresh Draft</button>
+        <button onclick="closeExitDialog()">Cancel</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="confirmExitSession()">Prepare & Exit</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="briefing-packet-modal" class="modal" style="z-index: 1140;">
+    <div class="modal-content" style="width: 700px; max-height: 82vh; display: flex; flex-direction: column;">
+      <div class="modal-header">Briefing Packet Editor</div>
+      <div id="briefing-packet-meta" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+        Loading briefing packet...
+      </div>
+      <textarea id="briefing-packet-editor" rows="20" style="width: 100%; box-sizing: border-box; flex: 1; min-height: 220px;" placeholder="Briefing packet content will appear here."></textarea>
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
+        First-session note: if no briefing file exists yet, it will be generated after workspace context is available.
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px;">
+        <button onclick="refreshBriefingPacketEditor()">Refresh</button>
+        <button onclick="saveBriefingPacketEdits()">Save Packet</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="syncBriefingPacketToThreads()">Sync To AI Threads</button>
+        <button onclick="closeBriefingPacketEditor()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const { invoke } = window.__TAURI__.core;
     const SECURITY_NOTE_DISMISSED_KEY = 'physics-ide-security-note-dismissed-v1';
+    const PROJECT_TITLE_KEY = 'physics-ide-project-title';
 
     let currentConfig = null;
     const chatHistories = {
@@ -1146,6 +1252,8 @@
     let currentWorkspacePath = "";
     let leftIndex = 0;
     let rightIndex = 0;
+    let startupPrimerInjected = false;
+    let activeBriefingPacketPath = "";
     let terminalDetached = false;
     let terminalDockHost = null;
 
@@ -1187,6 +1295,7 @@
 
     async function initializeApp() {
       try {
+        loadProjectTitle();
         currentConfig = await invoke('get_initial_state');
         const savedTheme = currentConfig.theme || "dark";
                 document.getElementById('settings-theme').value = savedTheme;
@@ -1227,11 +1336,115 @@
           currentWorkspacePath = initialWorkspaceRoot;
           await fetchAndRenderDirectory(currentWorkspacePath);
         }
+
+        await injectPrimerIntoThreads(true);
       } catch (err) {
         appendTerminalLog(`Initialization runtime failure: ${err}`);
       }
     }
     window.addEventListener('DOMContentLoaded', initializeApp);
+
+    function buildPanePrimerText(briefing, lane) {
+      const onboardingSteps = Array.isArray(briefing.onboarding_steps) ? briefing.onboarding_steps : [];
+
+      if (briefing.first_session_bootstrap === true) {
+        const intro = lane === 'theory'
+          ? 'First-session bootstrap lane: theory/model setup guidance.'
+          : 'First-session bootstrap lane: critique/setup validation guidance.';
+        const laneFocus = lane === 'theory'
+          ? 'Greet the user and offer practical setup help. Prioritize project import, markdown output directory, and master axiom setup.'
+          : 'Greet the user and verify setup quality. Prioritize path correctness, file readiness, and briefing completeness checks.';
+
+        return [
+          'First-session starter packet is active.',
+          intro,
+          `Project root: ${briefing.project_root || 'unset'}`,
+          `Summary: ${briefing.summary || 'Starter setup mode active.'}`,
+          laneFocus,
+          onboardingSteps.length > 0 ? `Checklist:\n${onboardingSteps.map((step, idx) => `${idx + 1}. ${step}`).join('\n')}` : 'Checklist unavailable.',
+          'Start by greeting the user and asking for the project/theory title before stepping through setup.'
+        ].join('\n');
+      }
+
+      const diagnostics = Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0
+        ? `Diagnostics: ${briefing.diagnostics.join(' | ')}`
+        : 'Diagnostics: none';
+
+      const sourceNote = [
+        briefing?.generated_files?.scratchpad,
+        briefing?.generated_files?.session_recap,
+        briefing?.generated_files?.workspace_tree,
+        briefing?.generated_files?.master_axiom
+      ].filter(Boolean).join(', ');
+
+      if (lane === 'theory') {
+        return [
+          'Startup primer injected at application load.',
+          'Role: theory development and model-structure reasoning.',
+          `Project root: ${briefing.project_root || 'unset'}`,
+          `Summary: ${briefing.summary || 'No summary available.'}`,
+          diagnostics,
+          `Source files: ${sourceNote || 'none'}`,
+          'Begin by clarifying today\'s goal and keeping assumptions explicit before opening new branches.'
+        ].join('\n');
+      }
+
+      return [
+        'Startup primer injected at application load.',
+        'Role: empirical critique and test design guardrails.',
+        `Project root: ${briefing.project_root || 'unset'}`,
+        `Summary: ${briefing.summary || 'No summary available.'}`,
+        diagnostics,
+        `Source files: ${sourceNote || 'none'}`,
+        'Begin by clarifying what evidence would constrain or falsify the active hypothesis in this session.'
+      ].join('\n');
+    }
+
+    function injectSystemPrimerMessage(pane, index, heading, promptText) {
+      const provider = getPaneProvider(pane);
+      const systemMessage = provider === 'gemini'
+        ? { role: 'system', parts: [{ text: promptText }] }
+        : { role: 'system', content: promptText };
+
+      getPaneHistory(pane, index).push(systemMessage);
+      appendChatBubble(pane, index, heading, promptText);
+    }
+
+    async function injectPrimerIntoThreads(isStartup = false) {
+      if (isStartup && startupPrimerInjected) {
+        return;
+      }
+
+      document.getElementById('briefing-indicator').innerText = isStartup
+        ? '🤖 Startup Primer Syncing...'
+        : '🤖 Syncing Briefing...';
+
+      try {
+        const briefing = JSON.parse(await invoke('compile_ai_briefing'));
+        const leftPrompt = buildPanePrimerText(briefing, 'theory');
+        const rightPrompt = buildPanePrimerText(briefing, 'critique');
+
+        injectSystemPrimerMessage('left', leftIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', leftPrompt);
+        injectSystemPrimerMessage('right', rightIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', rightPrompt);
+
+        document.getElementById('briefing-indicator').innerText = briefing.status === 'Partial'
+          ? '🤖 AI Synced (Partial Sources)'
+          : '🤖 AI Synced (Ready)';
+
+        appendTerminalLog(`Briefing packet synced (${briefing.status || 'unknown'}).`);
+        if (Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0) {
+          appendTerminalLog(`Briefing diagnostics: ${briefing.diagnostics.join(' | ')}`);
+        }
+        appendTerminalLog(`Briefing file: ${briefing?.generated_files?.ai_briefing || 'not generated'}`);
+
+        if (isStartup) {
+          startupPrimerInjected = true;
+        }
+      } catch (err) {
+        document.getElementById('briefing-indicator').innerText = '🤖 Briefing Sync Failed';
+        appendTerminalLog(`Briefing sync error: ${err}`);
+      }
+    }
 
     async function submitPrompt(pane) {
       if (!currentConfig) return;
@@ -1550,15 +1763,64 @@ async function restoreVersion() {
     }
 
     function rotateLeft(direction) {
-      leftIndex = Math.max(0, Math.min(2, leftIndex + direction));
+      leftIndex = ((leftIndex + direction) % 3 + 3) % 3;
       document.getElementById('left-strip').style.transform = `translateY(-${leftIndex * 33.333}%)`;
       updatePaneTitles();
     }
 
     function rotateRight(direction) {
-      rightIndex = Math.max(0, Math.min(2, rightIndex + direction));
+      rightIndex = ((rightIndex + direction) % 3 + 3) % 3;
       document.getElementById('right-strip').style.transform = `translateY(-${rightIndex * 33.333}%)`;
       updatePaneTitles();
+    }
+
+    function loadProjectTitle() {
+      const savedTitle = localStorage.getItem(PROJECT_TITLE_KEY) || 'Cosmology Workspace';
+      const titleDisplay = document.getElementById('project-title-display');
+      const titleInput = document.getElementById('project-title-input');
+      if (titleDisplay) titleDisplay.innerText = savedTitle;
+      if (titleInput) titleInput.value = savedTitle;
+    }
+
+    function beginEditProjectTitle() {
+      const titleDisplay = document.getElementById('project-title-display');
+      const titleInput = document.getElementById('project-title-input');
+      if (!titleDisplay || !titleInput) return;
+
+      titleDisplay.style.display = 'none';
+      titleInput.style.display = 'block';
+      titleInput.focus();
+      titleInput.select();
+    }
+
+    function commitProjectTitle() {
+      const titleDisplay = document.getElementById('project-title-display');
+      const titleInput = document.getElementById('project-title-input');
+      if (!titleDisplay || !titleInput) return;
+
+      const nextTitle = titleInput.value.trim() || 'Cosmology Workspace';
+      titleDisplay.innerText = nextTitle;
+      titleInput.value = nextTitle;
+      localStorage.setItem(PROJECT_TITLE_KEY, nextTitle);
+      titleInput.style.display = 'none';
+      titleDisplay.style.display = 'inline';
+    }
+
+    function handleProjectTitleKeydown(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commitProjectTitle();
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        loadProjectTitle();
+        const titleInput = document.getElementById('project-title-input');
+        const titleDisplay = document.getElementById('project-title-display');
+        if (titleInput && titleDisplay) {
+          titleInput.style.display = 'none';
+          titleDisplay.style.display = 'inline';
+        }
+      }
     }
 
     function insertClipboard(math) {
@@ -1588,6 +1850,195 @@ async function restoreVersion() {
     function dismissSecurityNote() {
       localStorage.setItem(SECURITY_NOTE_DISMISSED_KEY, 'true');
       document.getElementById('security-note-modal').style.display = 'none';
+    }
+
+    function openExitDialog() {
+      document.getElementById('exit-create-axiom').checked = false;
+      document.getElementById('exit-create-recap').checked = true;
+      document.getElementById('exit-reuse-notes').checked = false;
+      document.getElementById('exit-session-modal').style.display = 'flex';
+      refreshExitDraft();
+    }
+
+    function closeExitDialog() {
+      document.getElementById('exit-session-modal').style.display = 'none';
+    }
+
+    async function openBriefingPacketEditor() {
+      document.getElementById('briefing-packet-modal').style.display = 'flex';
+      await refreshBriefingPacketEditor();
+    }
+
+    function closeBriefingPacketEditor() {
+      document.getElementById('briefing-packet-modal').style.display = 'none';
+    }
+
+    async function refreshBriefingPacketEditor() {
+      const meta = document.getElementById('briefing-packet-meta');
+      const editor = document.getElementById('briefing-packet-editor');
+      if (!meta || !editor) return;
+
+      meta.textContent = 'Loading briefing packet...';
+      editor.value = '';
+
+      try {
+        const briefing = JSON.parse(await invoke('compile_ai_briefing'));
+        const briefingFilePath = briefing?.generated_files?.ai_briefing || '';
+        activeBriefingPacketPath = briefingFilePath;
+        const content = briefing?.ai_briefing?.content || briefing?.summary || '';
+
+        editor.value = content;
+        meta.textContent = `Status: ${briefing.status || 'unknown'} | File: ${briefingFilePath || 'unavailable'}`;
+        if (Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0) {
+          appendTerminalLog(`Briefing diagnostics: ${briefing.diagnostics.join(' | ')}`);
+        }
+      } catch (err) {
+        activeBriefingPacketPath = currentWorkspacePath ? `${currentWorkspacePath}/ai_briefing.md` : 'ai_briefing.md';
+        meta.textContent = `Unable to compile briefing packet: ${err}`;
+        editor.value = [
+          '# AI Briefing Packet',
+          '',
+          '## Session Summary',
+          '- Workspace is not fully initialized yet.',
+          '- Load your project root and generate baseline context.',
+          '',
+          '## Today\'s Goals',
+          '- Add goals here...'
+        ].join('\n');
+      }
+    }
+
+    async function saveBriefingPacketEdits() {
+      const editor = document.getElementById('briefing-packet-editor');
+      const meta = document.getElementById('briefing-packet-meta');
+      if (!editor) return;
+
+      const content = editor.value.trim();
+      if (!content) {
+        appendTerminalLog('Briefing packet save skipped: editor is empty.');
+        return;
+      }
+
+      const fallbackPath = currentWorkspacePath ? `${currentWorkspacePath}/ai_briefing.md` : 'ai_briefing.md';
+      const targetPath = activeBriefingPacketPath || fallbackPath;
+
+      try {
+        await invoke('save_scratchpad_content', { content, path: targetPath });
+        activeBriefingPacketPath = targetPath;
+        if (meta) {
+          meta.textContent = `Saved briefing packet to ${targetPath}`;
+        }
+        appendTerminalLog(`Briefing packet saved: ${targetPath}`);
+      } catch (err) {
+        appendTerminalLog(`Briefing save error: ${err}`);
+      }
+    }
+
+    async function syncBriefingPacketToThreads() {
+      const editor = document.getElementById('briefing-packet-editor');
+      if (!editor) return;
+
+      const packetText = editor.value.trim();
+      if (!packetText) {
+        appendTerminalLog('Briefing sync skipped: packet is empty.');
+        return;
+      }
+
+      await saveBriefingPacketEdits();
+
+      const leftPrompt = [
+        'Briefing packet synced for theory lane.',
+        packetText,
+        'Focus: clarify assumptions and plan the highest-value model-development tasks first.'
+      ].join('\n\n');
+
+      const rightPrompt = [
+        'Briefing packet synced for critique lane.',
+        packetText,
+        'Focus: identify empirical checkpoints, uncertainty risks, and falsification paths.'
+      ].join('\n\n');
+
+      injectSystemPrimerMessage('left', leftIndex, 'Briefing Packet', leftPrompt);
+      injectSystemPrimerMessage('right', rightIndex, 'Briefing Packet', rightPrompt);
+      document.getElementById('briefing-indicator').innerText = '🤖 AI Synced (Packet Edited)';
+      appendTerminalLog('Edited briefing packet synced to both AI threads.');
+    }
+
+    async function closeAppWindow() {
+      try {
+        const currentWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+        if (currentWindow) {
+          await currentWindow.close();
+          return;
+        }
+      } catch (err) {
+        appendTerminalLog(`Window close API fallback: ${err}`);
+      }
+
+      window.close();
+    }
+
+    async function confirmExitSession() {
+      const createNewAxiom = document.getElementById('exit-create-axiom').checked;
+      const createRecap = document.getElementById('exit-create-recap').checked;
+      const reuseNotes = document.getElementById('exit-reuse-notes').checked;
+      const scratchpadText = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
+      const recapOverride = document.getElementById('exit-recap-editor')?.value || '';
+      const notesOverride = document.getElementById('exit-notes-editor')?.value || '';
+
+      try {
+        const response = await invoke('prepare_exit_session', {
+          options: {
+            create_new_axiom: createNewAxiom,
+            create_recap_md: createRecap,
+            reuse_existing_notes_next_session: reuseNotes,
+            scratchpad_content: scratchpadText,
+            workspace_path: currentWorkspacePath,
+            recap_content_override: recapOverride,
+            notes_content_override: notesOverride
+          }
+        });
+
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        if (Array.isArray(payload.actions)) {
+          payload.actions.forEach(action => appendTerminalLog(action));
+        }
+        appendTerminalLog('Session preparation complete. Closing application window...');
+        closeExitDialog();
+        await closeAppWindow();
+      } catch (err) {
+        appendTerminalLog(`Exit preparation error: ${err}`);
+        alert(`Exit preparation failed: ${err}`);
+      }
+    }
+
+    async function refreshExitDraft() {
+      const scratchpadText = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
+      const recapEditor = document.getElementById('exit-recap-editor');
+      const notesEditor = document.getElementById('exit-notes-editor');
+      if (!recapEditor || !notesEditor) return;
+
+      recapEditor.value = 'Loading draft...';
+      notesEditor.value = 'Loading notes...';
+
+      try {
+        const response = await invoke('generate_exit_session_draft', {
+          workspace_path: currentWorkspacePath,
+          scratchpad_content: scratchpadText
+        });
+
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        recapEditor.value = payload.recap_draft || '';
+        notesEditor.value = payload.notes_draft || '';
+
+        if (payload.reuse_notes_next_session === true) {
+          document.getElementById('exit-reuse-notes').checked = true;
+        }
+      } catch (err) {
+        recapEditor.value = '';
+        notesEditor.value = '';
+        appendTerminalLog(`Exit draft generation error: ${err}`);
+      }
     }
 
 	// Tab switcher logic
@@ -2167,14 +2618,7 @@ async function restoreVersion() {
     }
 
     function sendAIStateBriefing() {
-      document.getElementById('briefing-indicator').innerText = "🤖 Syncing Briefing...";
-      
-      invoke('compile_ai_briefing')
-        .then((briefingStr) => {
-          appendTerminalLog("AI state compiled cleanly! Sent JSON manifest.");
-          document.getElementById('briefing-indicator').innerText = "🤖 AI Synced (Ready)";
-          alert("Daily State Briefing Generated:\n\n" + briefingStr);
-        });
+      openBriefingPacketEditor();
     }
 
     function appendTerminalLog(line) {
