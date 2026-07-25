@@ -100,7 +100,7 @@ impl Default for AppConfig {
             openai_api_key: String::new(),
             ollama_url: "http://127.0.0.1:11434".to_string(),
             left_provider: "ollama".to_string(),
-            left_model: "deepseek-r1:14b".to_string(),
+            left_model: "deepseek-r1:7b".to_string(),
             right_provider: "ollama".to_string(),
             right_model: "qwen2.5:7b".to_string(),
             project_root_dir: String::new(),
@@ -455,7 +455,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
             "gemini" => "gemini-2.5-flash".to_string(),
             _ => {
                 if pane_is_left {
-                    "deepseek-r1:14b".to_string()
+                    "deepseek-r1:7b".to_string()
                 } else {
                     "qwen2.5:7b".to_string()
                 }
