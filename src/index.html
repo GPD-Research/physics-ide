@@ -1387,9 +1387,17 @@
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
 
-        const initialWorkspaceRoot = currentConfig.last_root_dir || currentConfig.project_root_dir || "";
+        const configuredProjectRoot = (currentConfig.project_root_dir || '').trim();
+        const rememberedRoot = (currentConfig.last_root_dir || '').trim();
+        const initialWorkspaceRoot = configuredProjectRoot || rememberedRoot || "";
         if (initialWorkspaceRoot) {
           currentWorkspacePath = initialWorkspaceRoot;
+          try {
+            // Keep backend state aligned so startup primer compilation uses this workspace.
+            await invoke('save_root_directory', { path: currentWorkspacePath });
+          } catch (err) {
+            appendTerminalLog(`Workspace state sync warning: ${err}`);
+          }
           await fetchAndRenderDirectory(currentWorkspacePath);
         }
 
@@ -2103,7 +2111,7 @@ async function restoreVersion() {
 
       try {
         const response = await invoke('generate_exit_session_draft', {
-          workspace_path: currentWorkspacePath,
+          workspacePath: currentWorkspacePath,
           scratchpad_content: scratchpadText
         });
 
@@ -2592,7 +2600,7 @@ async function restoreVersion() {
 
       try {
         const response = await invoke('get_master_axiom_snapshot', {
-          workspace_path: currentWorkspacePath
+          workspacePath: currentWorkspacePath
         });
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         latexEl.value = payload.content || '';
@@ -2610,7 +2618,7 @@ async function restoreVersion() {
 
       try {
         const response = await invoke('get_master_axiom_snapshot', {
-          workspace_path: currentWorkspacePath
+          workspacePath: currentWorkspacePath
         });
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         const path = payload.path || (currentWorkspacePath ? `${currentWorkspacePath}/master_axiom.md` : 'master_axiom.md');

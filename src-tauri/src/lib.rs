@@ -1858,7 +1858,9 @@ fn prepare_exit_session(
                 .map_err(|e| format!("Failed to write next-session notes: {e}"))?;
             actions.push(format!("Carry-over notes saved: {}", notes_path.to_string_lossy()));
         } else {
-            actions.push("Carry-over notes enabled, but scratchpad was empty.".to_string());
+            fs::write(&notes_path, "No carry-over notes were saved in the previous session.")
+                .map_err(|e| format!("Failed to write empty carry-over note placeholder: {e}"))?;
+            actions.push("Carry-over notes enabled, but scratchpad was empty. Added placeholder note file.".to_string());
         }
     } else if notes_path.exists() {
         let _ = fs::remove_file(&notes_path);
