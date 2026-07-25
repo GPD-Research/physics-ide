@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tauri::{AppHandle, Manager};
 
 #[derive(Deserialize, Default)]
@@ -573,7 +574,14 @@ fn call_ollama(ollama_url: &str, model: &str, messages: &[serde_json::Value], te
         }
     });
 
-    let response = client.post(&url).json(&body).send().map_err(|e| format!("Ollama request failed: {e}"))?;
+    let response = match client.post(&url).json(&body).send() {
+        Ok(response) => response,
+        Err(http_error) => {
+            return fallback_to_ollama_cli(model, messages).map_err(|cli_error| {
+                format!("Ollama request failed: {http_error}; CLI fallback failed: {cli_error}")
+            });
+        }
+    };
     if !response.status().is_success() {
         return Err(format!("Ollama request failed with status {}", response.status()));
     }
@@ -585,6 +593,61 @@ fn call_ollama(ollama_url: &str, model: &str, messages: &[serde_json::Value], te
         .and_then(|value| value.as_str())
         .map(str::to_string)
         .ok_or_else(|| "Ollama returned no response text".to_string())
+}
+
+fn fallback_to_ollama_cli(model: &str, messages: &[serde_json::Value]) -> Result<String, String> {
+    let prompt = messages
+        .iter()
+        .filter_map(|message| {
+            let role = message.get("role").and_then(|value| value.as_str())?;
+            let content = message.get("content").and_then(|value| value.as_str())?.trim();
+            if content.is_empty() {
+                None
+            } else {
+                let label = match role {
+                    "system" => "System",
+                    "assistant" => "Assistant",
+                    _ => "User",
+                };
+                Some(format!("{label}: {content}"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let ollama_binaries = ["ollama", "/usr/local/bin/ollama", "/usr/bin/ollama"];
+    let mut last_error = None;
+
+    for binary in ollama_binaries {
+        match Command::new(binary)
+            .arg("run")
+            .arg(model)
+            .arg(&prompt)
+            .output()
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if stdout.is_empty() {
+                        return Err("ollama CLI returned empty output".to_string());
+                    }
+                    return Ok(stdout);
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                last_error = Some(if stderr.is_empty() {
+                    format!("ollama CLI exited with status {}", output.status)
+                } else {
+                    stderr
+                });
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "ollama CLI is unavailable".to_string()))
 }
 
 fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
