@@ -306,6 +306,39 @@
         color: var(--accent);
         font-size: 0.9rem;
       }
+
+      .pane-header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .ai-activity-led {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 1px solid var(--border-color);
+        background: #4c4f69;
+        box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+        transition: background-color 0.2s ease;
+        flex: 0 0 auto;
+      }
+
+      .ai-activity-led.busy {
+        background: #33d17a;
+        animation: ai-busy-blink 1.15s linear infinite;
+      }
+
+      @keyframes ai-busy-blink {
+        0% { opacity: 0.2; box-shadow: 0 0 0 rgba(51, 209, 122, 0.0); }
+        12% { opacity: 1.0; box-shadow: 0 0 8px rgba(51, 209, 122, 0.85); }
+        24% { opacity: 0.35; box-shadow: 0 0 1px rgba(51, 209, 122, 0.15); }
+        49% { opacity: 0.95; box-shadow: 0 0 6px rgba(51, 209, 122, 0.55); }
+        63% { opacity: 0.25; box-shadow: 0 0 1px rgba(51, 209, 122, 0.05); }
+        81% { opacity: 0.9; box-shadow: 0 0 7px rgba(51, 209, 122, 0.65); }
+        100% { opacity: 0.2; box-shadow: 0 0 0 rgba(51, 209, 122, 0.0); }
+      }
   
       .stack-viewport {
         flex-grow: 1;
@@ -771,7 +804,10 @@
       <!-- Left Cylinder -->
       <div class="cylinder-pane" id="left-cylinder">
         <div class="pane-header">
-          <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
+          <div class="pane-header-left">
+            <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
+            <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
+          </div>
           <div>
             <button onclick="rotateLeft(-1)">▲</button>
             <button onclick="rotateLeft(1)">▼</button>
@@ -812,7 +848,10 @@
       <!-- Right Cylinder -->
       <div class="cylinder-pane" id="right-cylinder">
         <div class="pane-header">
-          <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
+          <div class="pane-header-left">
+            <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
+            <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
+          </div>
           <div>
             <button onclick="rotateRight(-1)">▲</button>
             <button onclick="rotateRight(1)">▼</button>
@@ -948,7 +987,12 @@
             <div class="btn-group" style="margin-top: 5px;">
               <button onclick="cleanLaTeX()">🧹 Quick Clean</button>
               <button onclick="previewEquation()">Render Preview</button>
+              <button onclick="loadMasterAxiomIntoEquationPanel()">View Axiom File</button>
+              <button onclick="openMasterAxiomEditor()">Edit Axiom File</button>
               <button class="btn-large btn-special" onclick="saveEquation()">💾 Save to Workspace</button>
+            </div>
+            <div id="equation-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
+              Equation tools ready.
             </div>
           </div>
         </div>
@@ -1215,6 +1259,13 @@
           Saved only when "Reuse existing user notes" is checked.
         </div>
       </div>
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label for="exit-primer-preview">Current primer preview</label>
+        <textarea id="exit-primer-preview" rows="8" style="width: 100%; box-sizing: border-box;" readonly placeholder="Primer preview will appear after refresh."></textarea>
+      </div>
+      <div id="exit-draft-status" style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px; min-height: 16px;">
+        Draft status: ready.
+      </div>
       <div style="display: flex; justify-content: flex-end; gap: 10px;">
         <button onclick="refreshExitDraft()">Refresh Draft</button>
         <button onclick="closeExitDialog()">Cancel</button>
@@ -1258,6 +1309,7 @@
     let rightIndex = 0;
     let startupPrimerInjected = false;
     let activeBriefingPacketPath = "";
+    const paneBusyCounter = { left: 0, right: 0 };
     let terminalDetached = false;
     let terminalDockHost = null;
 
@@ -1414,6 +1466,23 @@
       appendChatBubble(pane, index, heading, promptText);
     }
 
+    function setPaneBusy(pane, busy) {
+      if (!Object.prototype.hasOwnProperty.call(paneBusyCounter, pane)) return;
+
+      if (busy) {
+        paneBusyCounter[pane] += 1;
+      } else {
+        paneBusyCounter[pane] = Math.max(0, paneBusyCounter[pane] - 1);
+      }
+
+      const led = document.getElementById(`${pane}-activity-led`);
+      if (!led) return;
+
+      const isBusy = paneBusyCounter[pane] > 0;
+      led.classList.toggle('busy', isBusy);
+      led.title = isBusy ? 'AI busy' : 'AI idle';
+    }
+
     async function injectPrimerIntoThreads(isStartup = false) {
       if (isStartup && startupPrimerInjected) {
         return;
@@ -1471,6 +1540,7 @@
       chatHistories[pane][index].push(messagePayload);
       appendChatBubble(pane, index, "Gregory", text);
       appendTerminalLog(`Dispatching payload via active connection string to [${provider}]...`);
+      setPaneBusy(pane, true);
 
       try {
         const reply = await invoke('send_llm_prompt', {
@@ -1490,6 +1560,8 @@
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
         appendChatBubble(pane, index, "System Error", err);
+      } finally {
+        setPaneBusy(pane, false);
       }
     }
 
@@ -2020,10 +2092,14 @@ async function restoreVersion() {
       const scratchpadText = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
       const recapEditor = document.getElementById('exit-recap-editor');
       const notesEditor = document.getElementById('exit-notes-editor');
-      if (!recapEditor || !notesEditor) return;
+      const primerPreview = document.getElementById('exit-primer-preview');
+      const statusEl = document.getElementById('exit-draft-status');
+      if (!recapEditor || !notesEditor || !primerPreview) return;
 
       recapEditor.value = 'Loading draft...';
       notesEditor.value = 'Loading notes...';
+      primerPreview.value = 'Loading primer preview...';
+      if (statusEl) statusEl.textContent = 'Draft status: refreshing...';
 
       try {
         const response = await invoke('generate_exit_session_draft', {
@@ -2034,13 +2110,20 @@ async function restoreVersion() {
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         recapEditor.value = payload.recap_draft || '';
         notesEditor.value = payload.notes_draft || '';
+        primerPreview.value = payload.primer_preview || '';
 
         if (payload.reuse_notes_next_session === true) {
           document.getElementById('exit-reuse-notes').checked = true;
         }
+
+        if (statusEl) {
+          statusEl.textContent = `Draft status: refreshed from ${payload.primer_path || 'primer path unknown'}.`;
+        }
       } catch (err) {
         recapEditor.value = '';
         notesEditor.value = '';
+        primerPreview.value = `Failed to load primer preview:\n${err}`;
+        if (statusEl) statusEl.textContent = `Draft status: refresh failed (${err}).`;
         appendTerminalLog(`Exit draft generation error: ${err}`);
       }
     }
@@ -2497,6 +2580,45 @@ async function restoreVersion() {
         appendTerminalLog(result);
       } catch (err) {
         appendTerminalLog(`Scratchpad Save Error: ${err}`);
+      }
+    }
+
+    async function loadMasterAxiomIntoEquationPanel() {
+      const latexEl = document.getElementById('latex-input');
+      const statusEl = document.getElementById('equation-status');
+      if (!latexEl) return;
+
+      if (statusEl) statusEl.textContent = 'Loading master axiom file...';
+
+      try {
+        const response = await invoke('get_master_axiom_snapshot', {
+          workspace_path: currentWorkspacePath
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        latexEl.value = payload.content || '';
+        if (statusEl) statusEl.textContent = `Loaded master axiom from ${payload.path || 'configured path'}.`;
+        appendTerminalLog(`Master axiom loaded into equation panel from ${payload.path || 'configured path'}.`);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Failed to load master axiom: ${err}`;
+        appendTerminalLog(`Master axiom load error: ${err}`);
+      }
+    }
+
+    async function openMasterAxiomEditor() {
+      const statusEl = document.getElementById('equation-status');
+      if (statusEl) statusEl.textContent = 'Opening master axiom file in external editor...';
+
+      try {
+        const response = await invoke('get_master_axiom_snapshot', {
+          workspace_path: currentWorkspacePath
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        const path = payload.path || (currentWorkspacePath ? `${currentWorkspacePath}/master_axiom.md` : 'master_axiom.md');
+        openEditor(path);
+        if (statusEl) statusEl.textContent = `Editing master axiom: ${path}`;
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Failed to open master axiom: ${err}`;
+        appendTerminalLog(`Master axiom editor open error: ${err}`);
       }
     }
 

@@ -89,6 +89,7 @@ pub struct AppConfig {
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
     reuse_notes_next_session: bool,
+    first_session_completed: bool,
 }
 
 impl Default for AppConfig {
@@ -111,6 +112,7 @@ impl Default for AppConfig {
             custom_accent: String::new(),
             custom_bg_panel: String::new(),
             reuse_notes_next_session: false,
+            first_session_completed: false,
         }
     }
 }
@@ -375,13 +377,31 @@ fn build_ai_briefing_markdown(
     tree_path: &Path,
     master_axiom_path: &Path,
 ) -> String {
+    let axiom_excerpt = fs::read_to_string(master_axiom_path)
+        .map(|content| {
+            let max_chars = 2400usize;
+            let char_count = content.chars().count();
+            if char_count > max_chars {
+                let head: String = content.chars().take(max_chars).collect();
+                format!(
+                    "{}\n\n[...truncated {} chars from master axiom snapshot...]",
+                    head,
+                    char_count.saturating_sub(max_chars)
+                )
+            } else {
+                content
+            }
+        })
+        .unwrap_or_else(|_| "Master axiom file is not readable yet.".to_string());
+
     format!(
-        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
+        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
         summary,
         primer_path.to_string_lossy(),
         recap_path.to_string_lossy(),
         tree_path.to_string_lossy(),
         master_axiom_path.to_string_lossy(),
+        axiom_excerpt,
         project_root.to_string_lossy()
     )
 }
@@ -391,6 +411,22 @@ fn build_first_session_briefing_markdown(project_root: &Path) -> String {
         "# First Session Briefing Packet\n\n## Welcome\n- Greet the user and explain that this first run will establish the project context for future sessions.\n- Ask for the theory/model title so the session language remains aligned with the user\'s framework.\n\n## What the Primer Is\n- In this app, a \"primer\" and the \"briefing packet\" are the same practical concept: a compact context document for AI lanes.\n- The entity being briefed is the AI.\n- Purpose: keep AI aware of your current project state, assumptions, goals, and recent progress without replaying full chat history every time.\n- If you maintain this packet well, continuity stays strong across long sessions and across days.\n\n## Setup Checklist\n1. Import or open the project workspace folder.\n2. Confirm the theory markdown output directory in settings.\n3. Set or generate the master axiom file path.\n4. Save starter notes describing today\'s goals in the scratchpad.\n5. Export the workspace tree so source structure is visible.\n6. Build or refresh the briefing packet and verify both AI lanes received it.\n\n## Assistant Behavior\n- Offer step-by-step guidance instead of waiting idle.\n- Keep prompts concise and practical for first-session setup.\n- Ask one clarifying question at a time when configuration details are missing.\n- Explain setup terms briefly when needed (for example: primer, master axiom, theory markdown folder).\n- Remind the user that end-of-session recap can produce the next briefing packet automatically.\n\n## Expected Outcome\n- By the end of this first session, documentation should be strong enough to replace this starter packet with a session-specific packet.\n\n## Workspace Context\n- Project root: {}\n- Note: this starter packet is intended for first-run onboarding only.\n",
         project_root.to_string_lossy()
     )
+}
+
+fn resolve_startup_guide_path(project_root: &Path, theory_dir: &str) -> PathBuf {
+    let preferred_dir = theory_dir.trim();
+    let mut target_dir = if preferred_dir.is_empty() {
+        project_root.to_path_buf()
+    } else {
+        PathBuf::from(preferred_dir)
+    };
+
+    if fs::create_dir_all(&target_dir).is_err() {
+        target_dir = project_root.to_path_buf();
+        let _ = fs::create_dir_all(&target_dir);
+    }
+
+    target_dir.join("first_session_startup_guide.md")
 }
 
 fn save_app_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -459,12 +495,84 @@ fn generate_exit_session_draft(
         existing_notes
     };
 
+    let primer_path = project_root.join("ai_briefing.md");
+    let primer_preview = fs::read_to_string(&primer_path)
+        .unwrap_or_else(|_| "Primer file has not been generated yet for this workspace.".to_string());
+
     let payload = serde_json::json!({
         "status": "ok",
         "project_root": project_root.to_string_lossy().to_string(),
         "recap_draft": recap,
         "notes_draft": notes_draft,
-        "reuse_notes_next_session": config.reuse_notes_next_session
+        "reuse_notes_next_session": config.reuse_notes_next_session,
+        "primer_path": primer_path.to_string_lossy().to_string(),
+        "primer_preview": primer_preview
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn get_master_axiom_snapshot(
+    workspace_path: String,
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let current_path = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?
+        .clone();
+
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+    apply_unset_path_defaults(&mut config);
+
+    let preferred_workspace = if workspace_path.trim().is_empty() {
+        current_path
+    } else {
+        workspace_path.trim().to_string()
+    };
+
+    let project_root = resolve_workspace_root(&preferred_workspace, &config)
+        .ok_or_else(|| "No valid workspace root available. Load a workspace first.".to_string())?;
+
+    let theory_dir = if !config.theory_md_dir.is_empty() {
+        config.theory_md_dir.clone()
+    } else {
+        project_root.to_string_lossy().to_string()
+    };
+
+    let master_axiom_path = if config.master_axiom_file.trim().is_empty() {
+        project_root.join("master_axiom.md")
+    } else {
+        PathBuf::from(&config.master_axiom_file)
+    };
+
+    if !master_axiom_path.exists() {
+        let scan = scan_markdown_theory(&theory_dir);
+        let template = build_master_axiom_template(
+            &theory_dir,
+            master_axiom_path.to_string_lossy().as_ref(),
+            &scan,
+        );
+        if let Some(parent) = master_axiom_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create axiom directory: {e}"))?;
+        }
+        fs::write(&master_axiom_path, template).map_err(|e| format!("Failed to create master axiom file: {e}"))?;
+    }
+
+    let content = fs::read_to_string(&master_axiom_path)
+        .map_err(|e| format!("Failed to read master axiom file: {e}"))?;
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "path": master_axiom_path.to_string_lossy().to_string(),
+        "content": content
     });
 
     Ok(payload.to_string())
@@ -1514,7 +1622,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
     let briefing_path = project_root.join("ai_briefing.md");
     let recap_existed_before = recap_path.exists();
     let briefing_existed_before = briefing_path.exists();
-    let first_session_bootstrap = !briefing_existed_before && !recap_existed_before;
+    let first_session_bootstrap = !config.first_session_completed && !briefing_existed_before && !recap_existed_before;
 
     if !recap_path.exists() {
         let recap = build_session_recap_markdown(&project_root, &theory_dir, &master_axiom_path, &scan);
@@ -1684,6 +1792,7 @@ fn prepare_exit_session(
     let notes_path = project_root.join("next_session_notes.md");
     let tree_path = project_root.join("workspace_tree.txt");
     let briefing_path = project_root.join("ai_briefing.md");
+    let startup_guide_path = resolve_startup_guide_path(&project_root, &theory_dir);
 
     let mut actions: Vec<String> = Vec::new();
 
@@ -1755,6 +1864,18 @@ fn prepare_exit_session(
         let _ = fs::remove_file(&notes_path);
         actions.push("Carry-over notes cleared for next session.".to_string());
     }
+
+    // Mark onboarding as complete after first full exit workflow so startup
+    // instruction prompts do not reappear in AI lanes on subsequent launches.
+    config.first_session_completed = true;
+
+    let startup_guide = build_first_session_briefing_markdown(&project_root);
+    fs::write(&startup_guide_path, startup_guide)
+        .map_err(|e| format!("Failed to write startup guide: {e}"))?;
+    actions.push(format!(
+        "Startup guide saved for reference: {}",
+        startup_guide_path.to_string_lossy()
+    ));
 
     save_app_config(&app, &config)?;
 
@@ -2339,7 +2460,8 @@ pub fn run() {
             git_pull,
             git_push,
             prepare_exit_session,
-            generate_exit_session_draft
+            generate_exit_session_draft,
+            get_master_axiom_snapshot
             // Add your other commands here...
         ])
         .run(tauri::generate_context!())
