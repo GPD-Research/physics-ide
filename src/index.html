@@ -506,13 +506,16 @@
         padding: 8px 10px;
         font-size: 0.75rem;
         display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
         border-bottom: 1px solid var(--border-color);
+        min-width: 0;
       }
 
       .terminal-session {
+        flex: 1 1 auto;
         min-width: 0;
         color: var(--text-muted);
         white-space: nowrap;
@@ -522,14 +525,16 @@
 
       .terminal-controls {
         display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        gap: 4px;
       }
 
       .terminal-action {
-        padding: 6px 8px;
-        font-size: 0.75rem;
-        line-height: 1.2;
+        padding: 4px 7px;
+        font-size: 0.68rem;
+        line-height: 1;
+        white-space: nowrap;
       }
 
       .terminal-action.secondary {
@@ -696,14 +701,13 @@
             </div>
         </div>
 
-        <div id="left-terminal-panel" class="panel-section" style="flex: 0 0 auto; margin-top: 15px;">
-            <div class="panel-section-title">Activity Console</div>
+        <div id="left-terminal-panel" class="panel-section" style="flex: 0 0 auto; margin-top: 15px; min-width: 0;">
             <div class="terminal-panel">
               <div class="terminal-header">
                 <div class="terminal-session" id="terminal-label">bash (~/projects/physics-ide)</div>
                 <div class="terminal-controls">
-                  <button class="terminal-action secondary" id="terminal-detach-btn" onclick="toggleTerminalDetached()">Pop Out</button>
-                  <button class="terminal-action" onclick="openExternalTerminal()">Open Shell ↗</button>
+                  <button class="terminal-action secondary" id="terminal-detach-btn" onclick="toggleTerminalDetached()">Detach</button>
+                  <button class="terminal-action" onclick="openExternalTerminal()">Shell</button>
                 </div>
               </div>
               <div class="terminal-body" id="terminal-output">
