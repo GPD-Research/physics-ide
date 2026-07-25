@@ -395,10 +395,11 @@ async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tau
     let temperature = ollama_temperature_for_pane(&pane);
 
     let prompt = build_prompt_from_history(&history);
-    let prompt_for_model = if provider.eq_ignore_ascii_case("ollama") {
-        format!("You are a helpful scientific assistant. Respond concisely and use the repository context.\n\n{}", prompt)
+    let prompt_for_model = prompt;
+    let ollama_messages = if provider.eq_ignore_ascii_case("ollama") {
+        build_ollama_messages(&history)
     } else {
-        prompt
+        Vec::new()
     };
 
     let provider_name = provider.to_ascii_lowercase();
@@ -408,7 +409,7 @@ async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tau
 
     tauri::async_runtime::spawn_blocking(move || {
         match provider_name.as_str() {
-            "ollama" => call_ollama(&ollama_url, &model, &prompt_for_model, temperature),
+            "ollama" => call_ollama(&ollama_url, &model, &ollama_messages, temperature),
             "openai" => call_openai(&openai_api_key, &model, &prompt_for_model),
             "gemini" => call_gemini(&gemini_api_key, &model, &prompt_for_model),
             other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
@@ -513,17 +514,59 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
     prompt.trim().to_string()
 }
 
-fn call_ollama(ollama_url: &str, model: &str, prompt: &str, temperature: f32) -> Result<String, String> {
+fn build_ollama_messages(history: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut messages = vec![serde_json::json!({
+        "role": "system",
+        "content": "You are a helpful scientific assistant. Respond concisely and use the repository context."
+    })];
+
+    for entry in history {
+        let Some(role) = entry.get("role").and_then(|value| value.as_str()) else {
+            continue;
+        };
+
+        let normalized_role = match role.to_ascii_lowercase().as_str() {
+            "assistant" | "model" => "assistant",
+            "system" => "system",
+            _ => "user",
+        };
+
+        let content = if let Some(text) = entry.get("content").and_then(|value| value.as_str()) {
+            text.trim().to_string()
+        } else if let Some(parts) = entry.get("parts").and_then(|value| value.as_array()) {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string()
+        } else {
+            String::new()
+        };
+
+        if !content.is_empty() {
+            messages.push(serde_json::json!({
+                "role": normalized_role,
+                "content": content,
+            }));
+        }
+    }
+
+    messages
+}
+
+fn call_ollama(ollama_url: &str, model: &str, messages: &[serde_json::Value], temperature: f32) -> Result<String, String> {
     let url = if ollama_url.trim().is_empty() {
-        "http://127.0.0.1:11434/api/generate".to_string()
+        "http://127.0.0.1:11434/api/chat".to_string()
     } else {
-        format!("{}/api/generate", ollama_url.trim_end_matches('/'))
+        format!("{}/api/chat", ollama_url.trim_end_matches('/'))
     };
 
     let client = reqwest::blocking::Client::new();
     let body = serde_json::json!({
         "model": model,
-        "prompt": prompt,
+        "messages": messages,
         "stream": false,
         "options": {
             "temperature": temperature
@@ -536,7 +579,12 @@ fn call_ollama(ollama_url: &str, model: &str, prompt: &str, temperature: f32) ->
     }
 
     let parsed: serde_json::Value = response.json().map_err(|e| format!("Ollama response parsing failed: {e}"))?;
-    parsed.get("response").and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| "Ollama returned no response text".to_string())
+    parsed
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "Ollama returned no response text".to_string())
 }
 
 fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
