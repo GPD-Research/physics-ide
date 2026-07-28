@@ -916,6 +916,7 @@
           <div class="panel-section">
             <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
             <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()">View/Edit Primer</button>
+            <button style="width: 100%; margin-top: 6px;" onclick="injectPrimerIntoThreads(false)">Sync AI Context Now</button>
             <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Review and edit the primer before syncing context to AI threads.</div>
           </div>
 
@@ -1519,6 +1520,18 @@
 
     function buildPanePrimerText(briefing, lane) {
       const onboardingSteps = Array.isArray(briefing.onboarding_steps) ? briefing.onboarding_steps : [];
+      const lagrangianCue = Array.isArray(briefing?.lagrangian_candidates) && briefing.lagrangian_candidates.length > 0
+        ? briefing.lagrangian_candidates[0]
+        : 'No explicit Lagrangian/action cue detected yet.';
+      const hypothesisCue = Array.isArray(briefing?.hypothesis_candidates) && briefing.hypothesis_candidates.length > 0
+        ? briefing.hypothesis_candidates[0]
+        : 'No explicit hypothesis cue detected yet.';
+      const masterAxiomContent = (briefing?.master_axiom?.content || '').trim();
+      const axiomExcerpt = masterAxiomContent
+        ? (masterAxiomContent.length > 1500
+          ? `${masterAxiomContent.slice(0, 1500)}\n\n[...truncated master axiom excerpt...]`
+          : masterAxiomContent)
+        : 'Master axiom snapshot unavailable.';
 
       if (briefing.first_session_bootstrap === true) {
         const intro = lane === 'theory'
@@ -1533,6 +1546,8 @@
           intro,
           `Project root: ${briefing.project_root || 'unset'}`,
           `Summary: ${briefing.summary || 'Starter setup mode active.'}`,
+          `Lagrangian/action cue: ${lagrangianCue}`,
+          `Hypothesis cue: ${hypothesisCue}`,
           laneFocus,
           onboardingSteps.length > 0 ? `Checklist:\n${onboardingSteps.map((step, idx) => `${idx + 1}. ${step}`).join('\n')}` : 'Checklist unavailable.',
           'Start by greeting the user and asking for the project/theory title before stepping through setup.'
@@ -1556,8 +1571,12 @@
           'Role: theory development and model-structure reasoning.',
           `Project root: ${briefing.project_root || 'unset'}`,
           `Summary: ${briefing.summary || 'No summary available.'}`,
+          `Lagrangian/action cue: ${lagrangianCue}`,
+          `Hypothesis cue: ${hypothesisCue}`,
           diagnostics,
           `Source files: ${sourceNote || 'none'}`,
+          'Master axiom excerpt:',
+          axiomExcerpt,
           'Begin by clarifying today\'s goal and keeping assumptions explicit before opening new branches.'
         ].join('\n');
       }
@@ -1567,8 +1586,12 @@
         'Role: empirical critique and test design guardrails.',
         `Project root: ${briefing.project_root || 'unset'}`,
         `Summary: ${briefing.summary || 'No summary available.'}`,
+        `Lagrangian/action cue: ${lagrangianCue}`,
+        `Hypothesis cue: ${hypothesisCue}`,
         diagnostics,
         `Source files: ${sourceNote || 'none'}`,
+        'Master axiom excerpt:',
+        axiomExcerpt,
         'Begin by clarifying what evidence would constrain or falsify the active hypothesis in this session.'
       ].join('\n');
     }
