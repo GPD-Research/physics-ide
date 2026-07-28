@@ -809,7 +809,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
                     "gpt-4o-mini".to_string()
                 }
             }
-            "gemini" => "gemini-3-flash".to_string(),
+            "gemini" => "gemini-2.0-flash".to_string(),
             _ => {
                 if pane_is_left {
                     "deepseek-r1:7b".to_string()
@@ -837,10 +837,11 @@ fn normalize_model_for_provider(provider: &str, model: &str) -> String {
     let trimmed = model.trim().trim_start_matches("models/");
     match provider.to_ascii_lowercase().as_str() {
         "gemini" => match trimmed {
-            "gemini-1.5-flash" | "gemini-2.0-flash" | "gemini-2.0-flash-lite" => "gemini-3-flash".to_string(),
-            "gemini-1.5-pro" | "gemini-2.5-pro" => "gemini-3.6-flash".to_string(),
-            "gemini-3-flash" | "gemini-3.6-flash" => trimmed.to_string(),
-            other if other.is_empty() => "gemini-3-flash".to_string(),
+            "gemini-2.0-flash" | "gemini-2.0-flash-lite" => trimmed.to_string(),
+            "gemini-1.5-flash" | "gemini-2.5-flash" => "gemini-2.0-flash".to_string(),
+            "gemini-1.5-pro" | "gemini-2.5-pro" | "gemini-3.6-flash" => "gemini-2.0-flash-lite".to_string(),
+            "gemini-3-flash" => "gemini-2.0-flash".to_string(),
+            other if other.is_empty() => "gemini-2.0-flash".to_string(),
             other => other.to_string(),
         },
         "openai" => match trimmed {
@@ -1698,7 +1699,7 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
         }]
     });
 
-    for candidate_model in ["gemini-3-flash"] {
+    for candidate_model in ["gemini-2.0-flash", "gemini-2.0-flash-lite"] {
         let response = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={}",
@@ -2414,11 +2415,11 @@ mod tests {
 
     #[test]
     fn normalizes_unsupported_gemini_models_to_supported_flash_models() {
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-3-flash"), "gemini-3-flash");
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-3.6-flash"), "gemini-3.6-flash");
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash"), "gemini-3-flash");
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash-lite"), "gemini-3-flash");
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-3.6-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash"), "gemini-2.0-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash-lite"), "gemini-2.0-flash-lite");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-3-flash"), "gemini-2.0-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-3.6-flash"), "gemini-2.0-flash-lite");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-2.0-flash-lite");
     }
 
     #[test]
@@ -2536,7 +2537,7 @@ mod tests {
             "openaiKey": "openai",
             "ollamaUrl": "http://127.0.0.1:11434",
             "leftProvider": "gemini",
-            "leftModel": "gemini-3-flash",
+            "leftModel": "gemini-2.0-flash",
             "rightProvider": "ollama",
             "rightModel": "qwen2.5",
             "projectRootDir": "/tmp/project",
@@ -2554,7 +2555,7 @@ mod tests {
             "openai_key": "openai",
             "ollama_url": "http://127.0.0.1:11434",
             "left_provider": "gemini",
-            "left_model": "gemini-3-flash",
+            "left_model": "gemini-2.0-flash",
             "right_provider": "ollama",
             "right_model": "qwen2.5",
             "project_root_dir": "/tmp/project",
