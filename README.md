@@ -1,8 +1,10 @@
 # physics-IDE
 
-physics-IDE is a local-first desktop research environment for developing, comparing, and testing scientific theories in a structured workspace. It combines a Tauri-based desktop shell with a lightweight web frontend and Rust-backed analysis utilities.
+physics-IDE is a Linux-first desktop research environment for developing, comparing, and testing scientific theories in a structured workspace. It combines a Tauri-based desktop shell with a lightweight web frontend and Rust-backed analysis utilities.
 
 ## Project Goals
+
+The immediate direction for physics-IDE is to focus on a Linux-exclusive build and Debian-based deployment workflow. Windows support is currently deferred while the compilation process remains too complex to maintain effectively.
 
 The long-term vision for physics-IDE is to provide a flexible environment for:
 
@@ -10,7 +12,8 @@ The long-term vision for physics-IDE is to provide a flexible environment for:
 - ingesting theory sources from different paradigms without rejecting them up front;
 - generating master-axiom documents from theory markdown folders;
 - supporting educational and exploratory workflows across mainstream, hybrid, and non-standard theory families;
-- connecting theory content to empirical data and transparent evaluation workflows.
+- connecting theory content to empirical data and transparent evaluation workflows;
+- shipping a polished Linux desktop experience with reliable .deb packaging and installation.
 
 ## Current Progress
 
