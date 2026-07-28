@@ -61,6 +61,8 @@ The project has moved from a simple desktop shell toward a more practical theory
    - Allow the user to reorder imported markdown files into a preferred master-document sequence.
    - Support logical sorting for numbered sections and appendix-style files.
    - Render a combined markdown document from the chosen order.
+   - Export the result as Markdown, PDF, or DOCX from a new Tools menu workflow.
+   - Support an optional AI training export that writes a replacement training artifact for project-aware AI context.
 
 4. Tool and experiment registry
    - Add a project-level registry of reusable scripts, notebooks, and analysis tools.
@@ -69,10 +71,12 @@ The project has moved from a simple desktop shell toward a more practical theory
 5. AI awareness integration
    - Inject the project digest, topic index, and tool registry into the AI briefing pipeline.
    - Make the AI prefer existing tools and previous analyses before proposing new ones.
+   - Support in-thread file attachment so users can provide a selected document or image directly to an AI lane.
 
 6. UI polish and workflow consolidation
    - Add the new Tools menu and move version-7 functions into that drop-down as they are introduced.
    - Keep the Customize menu focused on configuration paths and app settings.
+   - Expand the terminal area in the left wing to make the workspace tools more usable.
 
 ## Development
 

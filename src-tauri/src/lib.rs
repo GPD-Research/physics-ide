@@ -1452,6 +1452,90 @@ fn identify_theory_mode(scan: &serde_json::Value) -> &'static str {
     }
 }
 
+fn collect_markdown_files(directory_path: &str) -> Result<Vec<String>, String> {
+    let path = Path::new(directory_path);
+    if !path.exists() || !path.is_dir() {
+        return Err(format!("Directory does not exist: {}", directory_path));
+    }
+
+    let mut files = Vec::new();
+    for entry in fs::read_dir(path).map_err(|e| format!("Failed to read directory: {e}"))? {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+        let file_path = entry.path();
+        if file_path.is_file() {
+            if let Some(ext) = file_path.extension().and_then(|ext| ext.to_str()) {
+                if ext.eq_ignore_ascii_case("md") {
+                    files.push(file_path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn render_manuscript_content(mode: &str, source_file: &str, files: &[String], output_dir: &str, format: &str, use_for_training: bool) -> Result<serde_json::Value, String> {
+    let output_path = PathBuf::from(output_dir);
+    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output directory: {e}"))?;
+
+    let content = if mode == "combine" {
+        let selected_files = if files.is_empty() {
+            collect_markdown_files(&output_path.to_string_lossy().to_string())?
+        } else {
+            files.to_vec()
+        };
+
+        let mut combined = String::new();
+        for file in &selected_files {
+            let path = Path::new(file);
+            if !path.exists() {
+                continue;
+            }
+            let text = fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+            combined.push_str(&format!("# {}\n\n{}\n\n", path.file_stem().unwrap_or_default().to_string_lossy(), text));
+        }
+        combined
+    } else {
+        let path = Path::new(source_file);
+        if !path.exists() {
+            return Err(format!("Source file does not exist: {}", source_file));
+        }
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?
+    };
+
+    let output_name = if mode == "combine" {
+        "master_manuscript".to_string()
+    } else {
+        let path = Path::new(source_file);
+        path.file_stem().unwrap_or_default().to_string_lossy().to_string()
+    };
+
+    let output_ext = match format {
+        "pdf" => "pdf",
+        "docx" => "docx",
+        _ => "md",
+    };
+    let rendered_path = output_path.join(format!("{}.{}", output_name, output_ext));
+    fs::write(&rendered_path, &content).map_err(|e| format!("Failed to write rendered artifact: {e}"))?;
+
+    let training_path = if use_for_training {
+        let training_dir = output_path.join("ai_training");
+        fs::create_dir_all(&training_dir).map_err(|e| format!("Failed to create training directory: {e}"))?;
+        let training_file = training_dir.join(format!("{}.{}", output_name, output_ext));
+        fs::copy(&rendered_path, &training_file).map_err(|e| format!("Failed to copy training artifact: {e}"))?;
+        Some(training_file.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    Ok(serde_json::json!({
+        "output_path": rendered_path.to_string_lossy().to_string(),
+        "format": output_ext,
+        "training_path": training_path
+    }))
+}
+
 fn import_theory_source(source_path: &Path, output_dir: &Path) -> Result<serde_json::Value, String> {
     if !source_path.exists() {
         return Err(format!("Source path does not exist: {}", source_path.display()));
@@ -2205,6 +2289,18 @@ fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: Stri
 }
 
 #[tauri::command]
+fn list_markdown_files(directory_path: String) -> Result<String, String> {
+    let files = collect_markdown_files(&directory_path).map_err(|e| e.to_string())?;
+    Ok(serde_json::to_string(&files).map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+fn render_manuscript(mode: String, source_file: String, files: Vec<String>, output_dir: String, format: String, use_for_training: bool) -> Result<String, String> {
+    let result = render_manuscript_content(&mode, &source_file, &files, &output_dir, &format, use_for_training).map_err(|e| e.to_string())?;
+    Ok(result.to_string())
+}
+
+#[tauri::command]
 fn launch_file_editor(payload: LaunchFileEditorPayload) -> Result<String, String> {
     let (program, args) = build_file_editor_command(&payload)?;
     let mut cmd = std::process::Command::new(&program);
@@ -2727,6 +2823,8 @@ pub fn run() {
             compile_ai_briefing,
             import_theory_source_command,
             generate_master_axiom_from_theory,
+            list_markdown_files,
+            render_manuscript,
             launch_file_editor,
             detach_terminal_shell,
             git_pull,

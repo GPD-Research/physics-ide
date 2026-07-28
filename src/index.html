@@ -695,6 +695,8 @@
       #save-prefs-btn.success { background-color: #2e7d32 !important; color: #ffffff; border-color: #2e7d32; }
       .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.1); }
       .pane-config-block h4 { margin: 0 0 8px 0; font-size: 0.85rem; color: var(--accent-dim); }
+      .chat-attach-btn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border-color); background: var(--bg-darker); color: var(--accent); font-size: 1.15rem; cursor: pointer; }
+      .chat-attach-btn:hover { background: var(--bg-panel); }
     </style>
 </head>
 <body>
@@ -731,6 +733,12 @@
         <div class="menu-section">Navigation</div>
         <a href="#" onclick="rotateLeft(1); return false;">Next Analytical Slot</a>
         <a href="#" onclick="rotateRight(1); return false;">Next Creative Slot</a>
+      </div>
+    </div>
+    <div class="menu-item">
+      Tools
+      <div class="dropdown-content">
+        <a href="#" onclick="openManuscriptToolsModal(); return false;">Manuscript Tools</a>
       </div>
     </div>
     <div class="menu-item" onclick="openSettingsModal()">Customize</div>
@@ -773,8 +781,7 @@
                 <button class="btn-special" onclick="exportWorkspaceTree()">🌳 Export ASCII Tree</button>
                 <button onclick="executeGitPull()">Pull</button>
                 <button onclick="executeGitPush()">Push</button>
-                <button class="btn-large" onclick="alert('Compiling Markdown to TeX & PDF...')">Render PDF</button>
-                <button class="btn-large" onclick="alert('Converting workspace to Word format...')">Render DOCX</button>
+                <button class="btn-large" onclick="openManuscriptToolsModal()">Manuscript Tools</button>
             </div>
         </div>
 
@@ -840,6 +847,7 @@
         </div>
 
         <div class="chat-input-wrapper">
+          <button class="chat-attach-btn" onclick="attachFileToThread('left')" title="Attach a file to this thread">+</button>
           <input type="text" id="left-chat-input" class="chat-input" placeholder="Query analytical stack..." onkeydown="if(event.key === 'Enter') submitPrompt('left')">
           <button onclick="submitPrompt('left')">Send</button>
         </div>
@@ -883,6 +891,7 @@
         </div>
 
         <div class="chat-input-wrapper">
+          <button class="chat-attach-btn" onclick="attachFileToThread('right')" title="Attach a file to this thread">+</button>
           <input type="text" id="right-chat-input" class="chat-input" placeholder="Query speculation engine..." onkeydown="if(event.key === 'Enter') submitPrompt('right')">
           <button onclick="submitPrompt('right')">Send</button>
         </div>
@@ -1207,6 +1216,73 @@
       </div>
   </div>
 
+  <div id="manuscript-tools-modal" class="modal" style="z-index: 1100;">
+    <div class="modal-content" style="width: 760px; max-width: 92vw;">
+      <div class="modal-header">Manuscript Tools</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+        Render a single markdown file or combine theory markdown files into a master manuscript, then export it as Markdown, PDF, or DOCX.
+      </p>
+
+      <div class="form-group">
+        <label>Mode</label>
+        <select id="manuscript-mode" onchange="toggleManuscriptMode(this.value)">
+          <option value="single">Render a single file</option>
+          <option value="combine">Combine files into a master manuscript</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="manuscript-source-file">Source File</label>
+        <div style="display: flex; gap: 5px;">
+          <input type="text" id="manuscript-source-file" placeholder="Choose a markdown file to render">
+          <button onclick="browseForFile('manuscript-source-file', ['md'])">Browse</button>
+        </div>
+      </div>
+
+      <div id="combined-files-panel" style="display: none;">
+        <div class="form-group">
+          <label>Ordered Files</label>
+          <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; max-height:220px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
+        </div>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button onclick="moveManuscriptSelection(-1)">↑ Move Up</button>
+          <button onclick="moveManuscriptSelection(1)">↓ Move Down</button>
+          <button onclick="refreshManuscriptFileList()">↻ Refresh List</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="manuscript-output-dir">Output Directory</label>
+        <div style="display: flex; gap: 5px;">
+          <input type="text" id="manuscript-output-dir" placeholder="Choose where to save the rendered file">
+          <button onclick="browseForDirectory('manuscript-output-dir')">Browse</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="manuscript-format">Output Format</label>
+        <select id="manuscript-format">
+          <option value="md">Markdown</option>
+          <option value="pdf">PDF</option>
+          <option value="docx">DOCX</option>
+        </select>
+      </div>
+
+      <div id="train-ai-panel" class="form-group" style="display: none;">
+        <label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="manuscript-use-for-training">
+          <span>Use this file to train the AI</span>
+        </label>
+        <div style="font-size:0.8rem; color:var(--accent-dim); margin-top:4px;">This saves a replacement copy for the project knowledge training artifact.</div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button onclick="closeManuscriptToolsModal()">Cancel</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()">Render</button>
+      </div>
+    </div>
+  </div>
+
   <!-- One-time API key transparency note -->
   <div id="security-note-modal" class="modal" style="z-index: 1100;">
     <div class="modal-content" style="width: 560px;">
@@ -1312,6 +1388,7 @@
     const paneBusyCounter = { left: 0, right: 0 };
     let terminalDetached = false;
     let terminalDockHost = null;
+    let manuscriptFileOrder = [];
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -1924,6 +2001,118 @@ async function restoreVersion() {
       saveBtn.classList.remove("success");
       saveBtn.disabled = false;
       saveBtnText.textContent = "Save Configuration";
+    }
+
+    function openManuscriptToolsModal() {
+      document.getElementById('manuscript-tools-modal').style.display = 'flex';
+      refreshManuscriptFileList();
+      toggleManuscriptMode(document.getElementById('manuscript-mode').value);
+    }
+
+    function closeManuscriptToolsModal() {
+      document.getElementById('manuscript-tools-modal').style.display = 'none';
+    }
+
+    function toggleManuscriptMode(mode) {
+      const combinedPanel = document.getElementById('combined-files-panel');
+      const trainPanel = document.getElementById('train-ai-panel');
+      const isCombine = mode === 'combine';
+      if (combinedPanel) combinedPanel.style.display = isCombine ? 'block' : 'none';
+      if (trainPanel) trainPanel.style.display = isCombine ? 'block' : 'none';
+      if (!isCombine) {
+        const trainingCheckbox = document.getElementById('manuscript-use-for-training');
+        if (trainingCheckbox) trainingCheckbox.checked = false;
+      }
+      if (isCombine) {
+        refreshManuscriptFileList();
+      }
+    }
+
+    async function refreshManuscriptFileList() {
+      const theoryDir = currentConfig?.theory_md_dir?.trim() || currentWorkspacePath || '';
+      const container = document.getElementById('manuscript-file-list');
+      if (!container) return;
+      if (!theoryDir) {
+        container.innerHTML = '<div style="color:var(--text-muted)">Set the theory markdown directory first.</div>';
+        manuscriptFileOrder = [];
+        return;
+      }
+
+      try {
+        const entries = await invoke('list_markdown_files', { directoryPath: theoryDir });
+        const files = typeof entries === 'string' ? JSON.parse(entries) : entries;
+        manuscriptFileOrder = Array.isArray(files) ? files : [];
+        container.innerHTML = manuscriptFileOrder.length
+          ? manuscriptFileOrder.map((file, index) => `<div style="padding:4px 0; display:flex; align-items:center; gap:8px;"><span>${index + 1}.</span><span>${file}</span></div>`).join('')
+          : '<div style="color:var(--text-muted)">No markdown files found in the theory directory.</div>';
+      } catch (err) {
+        container.innerHTML = `<div style="color:var(--accent)">Unable to read files: ${err}</div>`;
+        manuscriptFileOrder = [];
+      }
+    }
+
+    function moveManuscriptSelection(step) {
+      if (manuscriptFileOrder.length < 2) return;
+      const selectedIndex = 0;
+      const nextIndex = Math.min(manuscriptFileOrder.length - 1, Math.max(0, selectedIndex + step));
+      if (nextIndex === selectedIndex) return;
+      const [moved] = manuscriptFileOrder.splice(selectedIndex, 1);
+      manuscriptFileOrder.splice(nextIndex, 0, moved);
+      const list = document.getElementById('manuscript-file-list');
+      if (list) {
+        list.innerHTML = manuscriptFileOrder.map((file, index) => `<div style="padding:4px 0; display:flex; align-items:center; gap:8px;"><span>${index + 1}.</span><span>${file}</span></div>`).join('');
+      }
+    }
+
+    async function renderManuscript() {
+      const mode = document.getElementById('manuscript-mode').value;
+      const sourceFile = document.getElementById('manuscript-source-file').value.trim();
+      const outputDir = document.getElementById('manuscript-output-dir').value.trim();
+      const format = document.getElementById('manuscript-format').value;
+      const useForTraining = document.getElementById('manuscript-use-for-training').checked;
+
+      if (!outputDir) {
+        appendTerminalLog('Manuscript Error: choose an output directory first.');
+        return;
+      }
+
+      try {
+        const payload = {
+          mode,
+          sourceFile,
+          files: manuscriptFileOrder,
+          outputDir,
+          format,
+          useForTraining
+        };
+        const response = await invoke('render_manuscript', payload);
+        const result = typeof response === 'string' ? JSON.parse(response) : response;
+        appendTerminalLog(`Manuscript render complete: ${result.output_path || 'done'}`);
+        if (result.training_path) {
+          appendTerminalLog(`AI training artifact updated: ${result.training_path}`);
+        }
+      } catch (err) {
+        appendTerminalLog(`Manuscript Error: ${err}`);
+      }
+    }
+
+    async function attachFileToThread(pane) {
+      try {
+        const selected = await window.__TAURI__.dialog.open({
+          directory: false,
+          multiple: false,
+          title: 'Select a file to attach'
+        });
+        if (!selected) return;
+        const inputId = pane === 'left' ? 'left-chat-input' : 'right-chat-input';
+        const input = document.getElementById(inputId);
+        if (input) {
+          input.value = `${input.value} [attachment:${selected}]`.trim();
+          input.focus();
+        }
+      } catch (err) {
+        appendTerminalLog(`Attachment Error: ${err}`);
+      }
     }
 
     function showSecurityNoteIfNeeded() {
