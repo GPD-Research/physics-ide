@@ -2023,6 +2023,10 @@ async function restoreVersion() {
     }
 
     function openManuscriptToolsModal() {
+      const sourceDirInput = document.getElementById('manuscript-source-dir');
+      if (sourceDirInput && !sourceDirInput.value.trim()) {
+        sourceDirInput.value = currentConfig?.theory_md_dir?.trim() || currentWorkspacePath || '';
+      }
       document.getElementById('manuscript-tools-modal').style.display = 'flex';
       refreshManuscriptFileList();
       toggleManuscriptMode(document.getElementById('manuscript-mode').value);
@@ -2507,10 +2511,17 @@ async function restoreVersion() {
       switchRightWingTab('context');
     }
 	
+	    function getInputElement(targetInputId) {
+	      const directId = targetInputId.startsWith('settings-') ? targetInputId : targetInputId;
+	      const prefixedId = targetInputId.startsWith('settings-') ? targetInputId : `settings-${targetInputId}`;
+	      return document.getElementById(directId) || document.getElementById(prefixedId);
+	    }
+
 	    // Dialogue Directory Browser Helper
 	    async function browseForDirectory(targetInputId) {
 	      try {
-          const existingPath = document.getElementById(`settings-${targetInputId}`)?.value?.trim();
+          const inputElement = getInputElement(targetInputId);
+          const existingPath = inputElement?.value?.trim();
           const defaultPath = existingPath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || currentWorkspacePath || undefined;
 	        const selected = await window.__TAURI__.dialog.open({
 	          directory: true,
@@ -2518,8 +2529,11 @@ async function restoreVersion() {
             defaultPath,
 	          title: "Choose Folder Path"
 	        });
-	        if (selected) {
-	          document.getElementById(`settings-${targetInputId}`).value = selected;
+	        if (selected && inputElement) {
+	          inputElement.value = selected;
+	          if (targetInputId === 'manuscript-source-dir') {
+            refreshManuscriptFileList();
+          }
 	        }
 	      } catch (err) {
 	        appendTerminalLog(`Directory Browse Dialog Error: ${err}`);
@@ -2529,7 +2543,8 @@ async function restoreVersion() {
 	    // Dialogue File Browser Helper
 	    async function browseForFile(targetInputId, extensions = ['md']) {
 	      try {
-          const existingPath = document.getElementById(`settings-${targetInputId}`)?.value?.trim();
+          const inputElement = getInputElement(targetInputId);
+          const existingPath = inputElement?.value?.trim();
           const defaultPath = existingPath || currentConfig?.theory_md_dir || currentConfig?.project_root_dir || currentConfig?.last_root_dir || currentWorkspacePath || undefined;
 	        const selected = await window.__TAURI__.dialog.open({
 	          directory: false,
@@ -2538,8 +2553,8 @@ async function restoreVersion() {
 	          filters: [{ name: 'Theory Files', extensions }],
 	          title: "Choose File Path"
 	        });
-	        if (selected) {
-	          document.getElementById(`settings-${targetInputId}`).value = selected;
+	        if (selected && inputElement) {
+	          inputElement.value = selected;
 	        }
 	      } catch (err) {
 	        appendTerminalLog(`File Browse Dialog Error: ${err}`);
