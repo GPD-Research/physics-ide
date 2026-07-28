@@ -43,6 +43,44 @@ pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct LaunchFileEditorPayload {
+    #[serde(default, alias = "filePath")]
+    file_path: String,
+    #[serde(default, alias = "terminalApp")]
+    terminal_app: String,
+    #[serde(default, alias = "editor")]
+    editor: String,
+}
+
+fn build_file_editor_command(payload: &LaunchFileEditorPayload) -> Result<(String, Vec<String>), String> {
+    let file_path = payload.file_path.trim();
+    if file_path.is_empty() {
+        return Err("No file path provided".to_string());
+    }
+
+    if !payload.editor.trim().is_empty() {
+        let terminal_app = if payload.terminal_app.trim().is_empty() {
+            "x-terminal-emulator"
+        } else {
+            payload.terminal_app.trim()
+        };
+
+        let editor = payload.editor.trim();
+        let mut args = Vec::new();
+        if terminal_app.contains("gnome-terminal") {
+            args.push("--".to_string());
+        } else {
+            args.push("-e".to_string());
+        }
+        args.push(editor.to_string());
+        args.push(file_path.to_string());
+        return Ok((terminal_app.to_string(), args));
+    }
+
+    Ok(("xdg-open".to_string(), vec![file_path.to_string()]))
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct CosmologyMetrics {
     pub scale_factor: f64,
@@ -2167,21 +2205,15 @@ fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: Stri
 }
 
 #[tauri::command]
-fn launch_file_editor(file_path: String, terminal_app: String, editor: String) -> Result<String, String> {
-    let mut cmd = std::process::Command::new(&terminal_app);
-
-    // Handle argument flag differences based on the chosen terminal app
-    if terminal_app.contains("gnome-terminal") {
-        cmd.arg("--").arg(&editor).arg(&file_path);
-    } else {
-        // Standard flag for Alacritty, Konsole, XTerm, etc.
-        cmd.arg("-e").arg(&editor).arg(&file_path);
-    }
+fn launch_file_editor(payload: LaunchFileEditorPayload) -> Result<String, String> {
+    let (program, args) = build_file_editor_command(&payload)?;
+    let mut cmd = std::process::Command::new(&program);
+    cmd.args(&args);
 
     cmd.spawn()
-        .map_err(|e| format!("Failed to spawn {} with {}: {}", terminal_app, editor, e))?;
+        .map_err(|e| format!("Failed to launch {} with args {:?}: {}", program, args, e))?;
 
-    Ok(format!("Editor successfully launched in {} using {}: {}", terminal_app, editor, file_path))
+    Ok(format!("Editor successfully launched with {}: {}", program, payload.file_path))
 }
 
 #[tauri::command]
@@ -2599,6 +2631,31 @@ mod tests {
         assert_eq!(snake.terminal_app, "gnome-terminal");
         assert_eq!(camel.project_root_dir, "/tmp/project");
         assert_eq!(snake.project_root_dir, "/tmp/project");
+    }
+
+    #[test]
+    fn build_file_editor_command_uses_configured_cli_editor() {
+        let payload = LaunchFileEditorPayload {
+            file_path: "/tmp/readme.md".to_string(),
+            terminal_app: "gnome-terminal".to_string(),
+            editor: "micro".to_string(),
+        };
+
+        let (program, args) = build_file_editor_command(&payload).unwrap();
+        assert_eq!(program, "gnome-terminal");
+        assert_eq!(args, vec!["--", "micro", "/tmp/readme.md"]);
+    }
+
+    #[test]
+    fn build_file_editor_command_falls_back_to_xdg_open_when_editor_missing() {
+        let payload = LaunchFileEditorPayload {
+            file_path: "/tmp/readme.md".to_string(),
+            ..Default::default()
+        };
+
+        let (program, args) = build_file_editor_command(&payload).unwrap();
+        assert_eq!(program, "xdg-open");
+        assert_eq!(args, vec!["/tmp/readme.md"]);
     }
 
     #[test]

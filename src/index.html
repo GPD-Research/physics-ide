@@ -2518,16 +2518,18 @@ async function restoreVersion() {
     });
 
     function openEditor(filePath) {
-          if (!currentConfig) return;
+          if (!filePath) {
+            appendTerminalLog('Editor Error: no file path provided');
+            return;
+          }
     
-          const terminalApp = currentConfig.terminal_app || "gnome-terminal";
-          const editor = currentConfig.editor || "micro";
-    
-          invoke('launch_file_editor', { 
+          const payload = {
             file_path: filePath,
-            terminal_app: terminalApp,
-            editor
-          })
+            terminal_app: currentConfig?.terminal_app || "gnome-terminal",
+            editor: currentConfig?.editor || ""
+          };
+    
+          invoke('launch_file_editor', payload)
             .then(msg => appendTerminalLog(msg))
             .catch(err => appendTerminalLog(`Editor Error: ${err}`));
     }

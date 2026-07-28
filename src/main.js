@@ -457,7 +457,18 @@ async function saveSettings() {
 // --- Native Action Bridges ---
 
 function openEditor(filePath) {
-  invoke('launch_file_editor', { filePath })
+  if (!filePath) {
+    appendTerminalLog('Editor Error: no file path provided');
+    return;
+  }
+
+  const payload = {
+    file_path: filePath,
+    terminal_app: currentConfig?.terminal_app || 'gnome-terminal',
+    editor: currentConfig?.editor || ''
+  };
+
+  invoke('launch_file_editor', payload)
     .then(msg => appendTerminalLog(msg))
     .catch(err => appendTerminalLog(`Editor Error: ${err}`));
 }
