@@ -1239,7 +1239,7 @@
         </select>
       </div>
 
-      <div class="form-group">
+      <div id="single-file-controls" class="form-group" style="display: none;">
         <label for="manuscript-source-file">Source File</label>
         <div style="display: flex; gap: 5px;">
           <input type="text" id="manuscript-source-file" placeholder="Choose a markdown file to render">
@@ -2039,9 +2039,11 @@ async function restoreVersion() {
     function toggleManuscriptMode(mode) {
       const combinedPanel = document.getElementById('combined-files-panel');
       const trainPanel = document.getElementById('train-ai-panel');
+      const singleFileControls = document.getElementById('single-file-controls');
       const isCombine = mode === 'combine';
       if (combinedPanel) combinedPanel.style.display = isCombine ? 'block' : 'none';
       if (trainPanel) trainPanel.style.display = isCombine ? 'block' : 'none';
+      if (singleFileControls) singleFileControls.style.display = isCombine ? 'none' : 'block';
       if (!isCombine) {
         const trainingCheckbox = document.getElementById('manuscript-use-for-training');
         if (trainingCheckbox) trainingCheckbox.checked = false;
@@ -2061,10 +2063,11 @@ async function restoreVersion() {
             const isActive = index === manuscriptSelectedIndex;
             const statusLabel = selected ? 'Included' : 'Excluded';
             const rowStyle = isActive ? 'background: rgba(255,255,255,0.12); border-radius: 4px; padding: 4px 6px;' : 'padding: 4px 6px;';
+            const displayName = file.split(/[\\/]/).pop() || file;
             return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; ${rowStyle}">
               <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1;" onclick="selectManuscriptEntry(${index})">
                 <span>${index + 1}.</span>
-                <span>${file}</span>
+                <span>${displayName}</span>
               </div>
               <div style="display:flex; align-items:center; gap:6px;">
                 <span style="font-size:0.75rem; color:${selected ? 'var(--accent)' : 'var(--text-muted)'};">${statusLabel}</span>
