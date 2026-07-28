@@ -497,6 +497,124 @@ fn collect_tool_inventory(project_root: &Path, tools_dir: &str) -> Vec<String> {
     inventory
 }
 
+fn tokenize_keywords(text: &str) -> Vec<String> {
+    let stop_words = [
+        "the", "and", "for", "with", "that", "this", "into", "from", "then", "than", "have", "has", "been",
+        "were", "was", "are", "is", "it", "in", "on", "of", "to", "a", "an", "or", "as", "by", "be", "our",
+        "your", "their", "will", "can", "could", "should", "may", "about", "using", "used", "chapter", "section",
+        "project", "file", "tool", "data", "analysis", "theory", "model",
+    ];
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            current.push(ch.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            let word = current.trim();
+            if word.len() >= 3 && !stop_words.contains(&word) {
+                tokens.push(word.to_string());
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        let word = current.trim();
+        if word.len() >= 3 && !stop_words.contains(&word) {
+            tokens.push(word.to_string());
+        }
+    }
+    tokens
+}
+
+fn collect_keyword_tokens(path: &Path, content: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+        tokens.extend(tokenize_keywords(stem));
+    }
+
+    let mut saw_body = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            let title = trimmed.trim_start_matches('#').trim();
+            if !title.is_empty() {
+                tokens.extend(tokenize_keywords(title));
+            }
+            continue;
+        }
+        if !saw_body {
+            tokens.extend(tokenize_keywords(trimmed));
+            saw_body = true;
+        }
+    }
+
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn build_document_tool_links(project_root: &Path, theory_dir: &str, tools_dir: &str) -> Vec<String> {
+    let theory_path = Path::new(theory_dir);
+    let tools_path = if tools_dir.trim().is_empty() {
+        project_root.to_path_buf()
+    } else {
+        PathBuf::from(tools_dir)
+    };
+
+    let mut theory_files = Vec::new();
+    let _ = recursive_markdown_scan(theory_path, &mut theory_files);
+
+    let mut tool_files = Vec::new();
+    if tools_path.exists() {
+        let _ = recursive_file_scan(&tools_path, &mut tool_files);
+    }
+
+    let mut docs = Vec::new();
+    for path in theory_files {
+        if let Ok(content) = fs::read_to_string(&path) {
+            let relative = path.strip_prefix(project_root).unwrap_or(&path).to_string_lossy().to_string();
+            let keywords = collect_keyword_tokens(&path, &content);
+            if !keywords.is_empty() {
+                docs.push((relative, keywords));
+            }
+        }
+    }
+
+    let mut matches = Vec::new();
+    for (doc_rel, doc_keywords) in docs {
+        let mut tool_matches = Vec::new();
+        for path in &tool_files {
+            let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_lowercase();
+            if !matches!(extension.as_str(), "py" | "sh" | "ipynb" | "m" | "jl") {
+                continue;
+            }
+            let tool_rel = path.strip_prefix(project_root).unwrap_or(path).to_string_lossy().to_string();
+            if let Ok(content) = fs::read_to_string(path) {
+                let tool_keywords = collect_keyword_tokens(path, &content);
+                let shared_terms: Vec<String> = doc_keywords
+                    .iter()
+                    .filter(|token| tool_keywords.contains(*token))
+                    .cloned()
+                    .collect();
+                if shared_terms.len() >= 1 || tool_keywords.iter().any(|token| token == "analyze" || token == "data") {
+                    tool_matches.push((tool_rel, shared_terms));
+                }
+            }
+        }
+        if !tool_matches.is_empty() {
+            tool_matches.sort_by(|a, b| a.1.len().cmp(&b.1.len()).reverse());
+            let top_tool = tool_matches.first().unwrap();
+            matches.push(format!("- {} -> {} (shared terms: {})", doc_rel, top_tool.0, top_tool.1.join(", ")));
+        }
+    }
+
+    matches.sort();
+    matches
+}
+
 fn build_project_awareness_markdown(
     project_root: &Path,
     theory_dir: &str,
@@ -506,6 +624,7 @@ fn build_project_awareness_markdown(
 ) -> String {
     let topic_index = collect_topic_index(theory_dir);
     let tool_inventory = collect_tool_inventory(project_root, tools_dir);
+    let document_tool_links = build_document_tool_links(project_root, theory_dir, tools_dir);
     let files_scanned = scan["files_scanned"].as_u64().unwrap_or(0);
     let lagrangian_hint = scan["lagrangian_candidates"]
         .as_array()
@@ -530,14 +649,21 @@ fn build_project_awareness_markdown(
         tool_inventory.join("\n")
     };
 
+    let document_tool_section = if document_tool_links.is_empty() {
+        "- No likely document-tool links were inferred yet; add shared terminology or richer tool headers to improve matching.".to_string()
+    } else {
+        document_tool_links.join("\n")
+    };
+
     format!(
-        "# Project Awareness Index\n\n## Theory Topic Map\n{}\n\n## Active Theory Anchors\n- Master axiom: {}\n- Theory files scanned: {}\n- Lagrangian/action cue: {}\n- Hypothesis cue: {}\n\n## Tool Awareness\n{}\n\n## Guidance\n- Use this index to locate relevant theory sections quickly without re-reading the entire manuscript each time.\n- Prefer existing tools and prior analyses before proposing brand-new implementations.\n- When the user asks about a specific topic, retrieve only the relevant node and its linked tool or experiment context.\n",
+        "# Project Awareness Index\n\n## Theory Topic Map\n{}\n\n## Active Theory Anchors\n- Master axiom: {}\n- Theory files scanned: {}\n- Lagrangian/action cue: {}\n- Hypothesis cue: {}\n\n## Tool Awareness\n{}\n\n## Suggested Document-Tool Links\n{}\n\n## Guidance\n- Use this index to locate relevant theory sections quickly without re-reading the entire manuscript each time.\n- Prefer existing tools and prior analyses before proposing brand-new implementations.\n- When the user asks about a specific topic, retrieve only the relevant node and its linked tool or experiment context.\n- When the user says a chapter used a specific analysis workflow, inspect the likely tool matches first and then verify the relevant document context.\n",
         topic_section,
         master_axiom_path.to_string_lossy(),
         files_scanned,
         lagrangian_hint,
         hypothesis_hint,
-        tool_section
+        tool_section,
+        document_tool_section
     )
 }
 
@@ -578,6 +704,7 @@ fn build_ai_briefing_markdown(
     tree_path: &Path,
     master_axiom_path: &Path,
     awareness_markdown: &str,
+    thread_context: Option<&str>,
 ) -> String {
     let axiom_excerpt = fs::read_to_string(master_axiom_path)
         .map(|content| {
@@ -596,8 +723,15 @@ fn build_ai_briefing_markdown(
         })
         .unwrap_or_else(|_| "Master axiom file is not readable yet.".to_string());
 
+    let thread_context_block = thread_context.unwrap_or_default().trim();
+    let thread_context_section = if thread_context_block.is_empty() {
+        "- No thread-specific retrieval hints were supplied yet.".to_string()
+    } else {
+        format!("- Thread focus: {}", thread_context_block)
+    };
+
     format!(
-        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
+        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n- When the user references a chapter, experiment, or tool, use the project awareness index and the thread focus to locate the most relevant files before answering.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Thread Retrieval Hints\n{}\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
         summary,
         primer_path.to_string_lossy(),
         recap_path.to_string_lossy(),
@@ -605,6 +739,7 @@ fn build_ai_briefing_markdown(
         master_axiom_path.to_string_lossy(),
         axiom_excerpt,
         awareness_markdown,
+        thread_context_section,
         project_root.to_string_lossy()
     )
 }
@@ -2208,6 +2343,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
             &tree_path,
             &master_axiom_path,
             &awareness_markdown,
+            None,
         )
     };
     if !awareness_path.exists() {
@@ -2371,6 +2507,7 @@ fn prepare_exit_session(
             &tree_path,
             &master_axiom_path,
             &awareness_markdown,
+            None,
         );
         let _ = fs::write(&awareness_path, &awareness_markdown);
         fs::write(&briefing_path, packet).map_err(|e| format!("Failed to write briefing packet: {e}"))?;
@@ -2916,11 +3053,11 @@ mod tests {
 
         fs::write(
             temp_dir.join("theory").join("chapter_one.md"),
-            "# Chapter One\n\nThis section explores the core axiom.\n",
+            "# Chapter One\n\nThis section explores the data and analysis workflow.\n",
         )
         .unwrap();
         fs::write(
-            temp_dir.join("tools").join("analyze.py"),
+            temp_dir.join("tools").join("analyze_data.py"),
             "# Analyze data\n\nprint('hello')\n",
         )
         .unwrap();
@@ -2936,7 +3073,9 @@ mod tests {
 
         assert!(awareness.contains("## Theory Topic Map"));
         assert!(awareness.contains("Chapter One"));
-        assert!(awareness.contains("analyze.py"));
+        assert!(awareness.contains("analyze_data.py"));
+        assert!(awareness.contains("Suggested Document-Tool Links"));
+        assert!(awareness.contains("shared terms"));
     }
 
     #[test]
