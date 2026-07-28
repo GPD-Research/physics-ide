@@ -615,13 +615,13 @@ fn build_document_tool_links(project_root: &Path, theory_dir: &str, tools_dir: &
             let relative = path.strip_prefix(project_root).unwrap_or(&path).to_string_lossy().to_string();
             let keywords = collect_keyword_tokens(&path, &content);
             if !keywords.is_empty() {
-                docs.push((relative, keywords, content));
+                docs.push((relative, keywords));
             }
         }
     }
 
     let mut ranked_matches = Vec::new();
-    for (doc_rel, doc_keywords, doc_content) in docs {
+    for (doc_rel, doc_keywords) in docs {
         let mut tool_matches = Vec::new();
         for path in &tool_files {
             let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_lowercase();
