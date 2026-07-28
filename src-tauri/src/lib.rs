@@ -24,6 +24,20 @@ struct GeminiPart {
     text: String,
 }
 
+#[derive(Deserialize, Default)]
+struct GeminiModelListResponse {
+    #[serde(default)]
+    models: Vec<GeminiModelInfo>,
+}
+
+#[derive(Deserialize, Default)]
+struct GeminiModelInfo {
+    #[serde(default)]
+    name: String,
+    #[serde(default, rename = "supportedGenerationMethods")]
+    supported_generation_methods: Vec<String>,
+}
+
 // --- RUNTIME MEMORY STATE ---
 pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
@@ -1119,6 +1133,118 @@ fn build_gemini_request_body(history: &[serde_json::Value]) -> Result<serde_json
     Ok(serde_json::json!({ "contents": contents }))
 }
 
+fn list_gemini_generate_content_models(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+) -> Result<Vec<String>, String> {
+    let response = client
+        .get(format!("https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"))
+        .send()
+        .map_err(|e| format!("Gemini model discovery failed: {e}"))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .map_err(|e| format!("Gemini model discovery response parsing failed: {e}"))?;
+
+    if !status.is_success() {
+        let parsed_error = serde_json::from_str::<serde_json::Value>(&response_text)
+            .ok()
+            .and_then(|json| {
+                json.get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(|message| message.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or(response_text);
+
+        return Err(format!(
+            "Gemini model discovery failed with status {}: {}",
+            status, parsed_error
+        ));
+    }
+
+    let parsed: GeminiModelListResponse = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Gemini model discovery response parsing failed: {e}"))?;
+
+    let mut models = Vec::new();
+    for model in parsed.models {
+        let supports_generate_content = model
+            .supported_generation_methods
+            .iter()
+            .any(|method| method.eq_ignore_ascii_case("generateContent"));
+
+        if supports_generate_content {
+            let normalized = model.name.trim().trim_start_matches("models/").to_string();
+            if !normalized.is_empty() {
+                models.push(normalized);
+            }
+        }
+    }
+
+    Ok(models)
+}
+
+fn gemini_model_candidates(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    model: &str,
+) -> Vec<String> {
+    let mut candidates = vec![model.to_string()];
+
+    if let Ok(discovered_models) = list_gemini_generate_content_models(client, api_key) {
+        let requested = model.to_ascii_lowercase();
+        let mut preferred = Vec::new();
+        let mut others = Vec::new();
+
+        for discovered in discovered_models {
+            if discovered.eq_ignore_ascii_case(model) {
+                continue;
+            }
+
+            let lower = discovered.to_ascii_lowercase();
+            let is_preferred = if requested.contains("pro") {
+                lower.contains("pro")
+            } else if requested.contains("flash") {
+                lower.contains("flash")
+            } else {
+                true
+            };
+
+            if is_preferred {
+                preferred.push(discovered);
+            } else {
+                others.push(discovered);
+            }
+        }
+
+        candidates.extend(preferred);
+        candidates.extend(others);
+    }
+
+    for fallback in [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+    ] {
+        if !candidates.iter().any(|existing| existing == fallback) {
+            candidates.push(fallback.to_string());
+        }
+    }
+
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if !deduped
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&candidate))
+        {
+            deduped.push(candidate);
+        }
+    }
+
+    deduped
+}
+
 fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
@@ -1126,16 +1252,14 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
 
     let normalized_model = normalize_model_for_provider("gemini", model);
 
-    fn gemini_model_candidates(model: &str) -> Vec<String> {
-        vec![model.to_string()]
-    }
-
     let client = reqwest::blocking::Client::new();
     let body = build_gemini_request_body(history).map_err(|e| format!("Gemini request body error: {e}"))?;
 
     let mut last_error = "Gemini request failed before receiving a response".to_string();
+    let mut attempted_models = Vec::new();
 
-    for candidate_model in gemini_model_candidates(&normalized_model) {
+    for candidate_model in gemini_model_candidates(&client, api_key, &normalized_model) {
+        attempted_models.push(candidate_model.clone());
         let response = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={api_key}"
@@ -1180,12 +1304,24 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
             candidate_model, status, parsed_error
         );
 
-        if status != reqwest::StatusCode::NOT_FOUND {
+        let retryable_model_error = status == reqwest::StatusCode::NOT_FOUND
+            || parsed_error
+                .to_ascii_lowercase()
+                .contains("not supported for generatecontent")
+            || parsed_error
+                .to_ascii_lowercase()
+                .contains("is not found for api version");
+
+        if !retryable_model_error {
             return Err(last_error);
         }
     }
 
-    Err(last_error)
+    Err(format!(
+        "{} | attempted models: {}",
+        last_error,
+        attempted_models.join(", ")
+    ))
 }
 
 fn recursive_markdown_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
