@@ -824,7 +824,7 @@ fn normalize_model_for_provider(provider: &str, model: &str) -> String {
     match provider.to_ascii_lowercase().as_str() {
         "gemini" => match trimmed {
             "gemini-1.5-flash" | "gemini-2.0-flash" | "gemini-2.0-flash-lite" => "gemini-2.5-flash".to_string(),
-            "gemini-1.5-pro" | "gemini-2.5-pro" | "gemini-2.5-flash" => "gemini-2.5-flash".to_string(),
+            "gemini-1.5-pro" | "gemini-2.5-pro" | "gemini-2.5-flash" => trimmed.to_string(),
             other if other.is_empty() => "gemini-2.5-flash".to_string(),
             other => other.to_string(),
         },
@@ -1126,13 +1126,7 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
     let normalized_model = normalize_model_for_provider("gemini", model);
 
     fn gemini_model_candidates(model: &str) -> Vec<String> {
-        let mut candidates = vec![model.to_string()];
-        for fallback in ["gemini-2.5-flash", "gemini-2.0-flash-lite"] {
-            if !candidates.iter().any(|existing| existing == fallback) {
-                candidates.push(fallback.to_string());
-            }
-        }
-        candidates
+        vec![model.to_string()]
     }
 
     let client = reqwest::blocking::Client::new();
@@ -1567,7 +1561,7 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
         }]
     });
 
-    for candidate_model in ["gemini-2.5-flash", "gemini-2.0-flash-lite"] {
+    for candidate_model in ["gemini-2.5-flash"] {
         let response = client
             .post(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={}",
@@ -2283,9 +2277,10 @@ mod tests {
 
     #[test]
     fn normalizes_unsupported_gemini_models_to_supported_flash_models() {
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.5-pro"), "gemini-2.5-flash");
-        assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-2.5-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.5-pro"), "gemini-2.5-pro");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-1.5-pro");
         assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash"), "gemini-2.5-flash");
+        assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash-lite"), "gemini-2.5-flash");
     }
 
     #[test]
