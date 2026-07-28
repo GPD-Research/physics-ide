@@ -575,11 +575,22 @@ fn extract_evidence_snippet(content: &str, query_terms: &[String], max_chars: us
             }
         }
     }
-    if best_len == 0 {
+
+    let effective_start = best_start.min(content.chars().count());
+    let effective_end = (best_start + best_len).min(content.chars().count());
+    let mut snippet = if best_len == 0 {
         let excerpt = content.lines().find(|line| !line.trim().is_empty()).unwrap_or_default();
-        return excerpt.trim().chars().take(max_chars).collect::<String>();
+        excerpt.trim().to_string()
+    } else {
+        content.chars().skip(effective_start).take(effective_end - effective_start).collect::<String>()
+    };
+
+    snippet = snippet.trim().to_string();
+    if snippet.chars().count() > max_chars {
+        let mut chars = snippet.chars();
+        snippet = chars.by_ref().take(max_chars).collect();
     }
-    content[best_start..best_start + best_len].trim().chars().take(max_chars).collect::<String>()
+    snippet
 }
 
 fn build_document_tool_links(project_root: &Path, theory_dir: &str, tools_dir: &str) -> Vec<String> {
@@ -3091,6 +3102,14 @@ mod tests {
         assert!(!snapshot_dir.join(".git").exists());
         assert!(!snapshot_dir.join("build").exists());
         assert!(result.contains("saved successfully"));
+    }
+
+    #[test]
+    fn extract_evidence_snippet_handles_multibyte_characters() {
+        let content = "A short intro with ✅ emoji before the analysis topic and some more words to pad the excerpt.";
+        let snippet = extract_evidence_snippet(content, &["analysis".to_string()], 120);
+        assert!(snippet.contains("analysis"));
+        assert!(!snippet.is_empty());
     }
 
     #[test]
