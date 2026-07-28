@@ -1645,13 +1645,22 @@ fn collect_markdown_files(directory_path: &str) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-fn render_manuscript_content(mode: &str, source_file: &str, files: &[String], output_dir: &str, format: &str, use_for_training: bool) -> Result<serde_json::Value, String> {
+fn render_manuscript_content(
+    mode: &str,
+    source_file: &str,
+    files: &[String],
+    output_dir: &str,
+    format: &str,
+    use_for_training: bool,
+    source_dir: Option<&str>,
+) -> Result<serde_json::Value, String> {
     let output_path = PathBuf::from(output_dir);
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output directory: {e}"))?;
 
     let content = if mode == "combine" {
         let selected_files = if files.is_empty() {
-            collect_markdown_files(&output_path.to_string_lossy().to_string())?
+            let directory_to_use = source_dir.filter(|value| !value.trim().is_empty()).unwrap_or(output_dir);
+            collect_markdown_files(directory_to_use)?
         } else {
             files.to_vec()
         };
@@ -2502,8 +2511,16 @@ fn list_markdown_files(directory_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn render_manuscript(mode: String, source_file: String, files: Vec<String>, output_dir: String, format: String, use_for_training: bool) -> Result<String, String> {
-    let result = render_manuscript_content(&mode, &source_file, &files, &output_dir, &format, use_for_training).map_err(|e| e.to_string())?;
+fn render_manuscript(
+    mode: String,
+    source_file: String,
+    files: Vec<String>,
+    output_dir: String,
+    format: String,
+    use_for_training: bool,
+    source_dir: Option<String>,
+) -> Result<String, String> {
+    let result = render_manuscript_content(&mode, &source_file, &files, &output_dir, &format, use_for_training, source_dir.as_deref()).map_err(|e| e.to_string())?;
     Ok(result.to_string())
 }
 

@@ -1249,6 +1249,14 @@
 
       <div id="combined-files-panel" style="display: none;">
         <div class="form-group">
+          <label for="manuscript-source-dir">Source Documents Directory</label>
+          <div style="display: flex; gap: 5px;">
+            <input type="text" id="manuscript-source-dir" placeholder="Choose the folder that contains the markdown files to combine">
+            <button onclick="browseForDirectory('manuscript-source-dir')">Browse</button>
+          </div>
+          <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Defaults to the configured Theory Markdown Directory when left empty.</div>
+        </div>
+        <div class="form-group">
           <label>Ordered Files</label>
           <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; max-height:220px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
         </div>
@@ -2038,17 +2046,18 @@ async function restoreVersion() {
     }
 
     async function refreshManuscriptFileList() {
-      const theoryDir = currentConfig?.theory_md_dir?.trim() || currentWorkspacePath || '';
+      const sourceDirInput = document.getElementById('manuscript-source-dir');
+      const selectedSourceDir = sourceDirInput?.value?.trim() || currentConfig?.theory_md_dir?.trim() || currentWorkspacePath || '';
       const container = document.getElementById('manuscript-file-list');
       if (!container) return;
-      if (!theoryDir) {
-        container.innerHTML = '<div style="color:var(--text-muted)">Set the theory markdown directory first.</div>';
+      if (!selectedSourceDir) {
+        container.innerHTML = '<div style="color:var(--text-muted)">Set the theory markdown directory or choose a source documents directory first.</div>';
         manuscriptFileOrder = [];
         return;
       }
 
       try {
-        const entries = await invoke('list_markdown_files', { directoryPath: theoryDir });
+        const entries = await invoke('list_markdown_files', { directoryPath: selectedSourceDir });
         const files = typeof entries === 'string' ? JSON.parse(entries) : entries;
         manuscriptFileOrder = Array.isArray(files) ? files : [];
         container.innerHTML = manuscriptFileOrder.length
@@ -2086,13 +2095,15 @@ async function restoreVersion() {
       }
 
       try {
+        const sourceDir = document.getElementById('manuscript-source-dir').value.trim();
         const payload = {
           mode,
           sourceFile,
           files: manuscriptFileOrder,
           outputDir,
           format,
-          useForTraining
+          useForTraining,
+          sourceDir
         };
         const response = await invoke('render_manuscript', payload);
         const result = typeof response === 'string' ? JSON.parse(response) : response;
