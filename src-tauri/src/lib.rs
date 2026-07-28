@@ -556,6 +556,32 @@ fn collect_keyword_tokens(path: &Path, content: &str) -> Vec<String> {
     tokens
 }
 
+fn extract_evidence_snippet(content: &str, query_terms: &[String], max_chars: usize) -> String {
+    let lower_content = content.to_lowercase();
+    let mut best_start = 0usize;
+    let mut best_len = 0usize;
+    for term in query_terms {
+        let needle = term.to_lowercase();
+        if needle.is_empty() {
+            continue;
+        }
+        if let Some(index) = lower_content.find(&needle) {
+            let start = index.saturating_sub(80);
+            let end = (index + needle.len() + 80).min(content.len());
+            let length = end.saturating_sub(start);
+            if length > best_len {
+                best_start = start;
+                best_len = length;
+            }
+        }
+    }
+    if best_len == 0 {
+        let excerpt = content.lines().find(|line| !line.trim().is_empty()).unwrap_or_default();
+        return excerpt.trim().chars().take(max_chars).collect::<String>();
+    }
+    content[best_start..best_start + best_len].trim().chars().take(max_chars).collect::<String>()
+}
+
 fn build_document_tool_links(project_root: &Path, theory_dir: &str, tools_dir: &str) -> Vec<String> {
     let theory_path = Path::new(theory_dir);
     let tools_path = if tools_dir.trim().is_empty() {
@@ -578,13 +604,13 @@ fn build_document_tool_links(project_root: &Path, theory_dir: &str, tools_dir: &
             let relative = path.strip_prefix(project_root).unwrap_or(&path).to_string_lossy().to_string();
             let keywords = collect_keyword_tokens(&path, &content);
             if !keywords.is_empty() {
-                docs.push((relative, keywords));
+                docs.push((relative, keywords, content));
             }
         }
     }
 
-    let mut matches = Vec::new();
-    for (doc_rel, doc_keywords) in docs {
+    let mut ranked_matches = Vec::new();
+    for (doc_rel, doc_keywords, doc_content) in docs {
         let mut tool_matches = Vec::new();
         for path in &tool_files {
             let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_lowercase();
@@ -599,20 +625,43 @@ fn build_document_tool_links(project_root: &Path, theory_dir: &str, tools_dir: &
                     .filter(|token| tool_keywords.contains(*token))
                     .cloned()
                     .collect();
-                if shared_terms.len() >= 1 || tool_keywords.iter().any(|token| token == "analyze" || token == "data") {
-                    tool_matches.push((tool_rel, shared_terms));
+                let filename_score = if tool_rel.to_lowercase().contains(&doc_rel.to_lowercase()) {
+                    2
+                } else {
+                    0
+                };
+                let overlap_score = shared_terms.len();
+                let hint_score = if tool_keywords.iter().any(|token| token == "analyze" || token == "data") {
+                    1
+                } else {
+                    0
+                };
+                let total_score = filename_score + overlap_score + hint_score;
+                if total_score > 0 {
+                    let evidence = extract_evidence_snippet(&content, &shared_terms, 140);
+                    tool_matches.push((tool_rel, shared_terms, total_score, evidence));
                 }
             }
         }
         if !tool_matches.is_empty() {
-            tool_matches.sort_by(|a, b| a.1.len().cmp(&b.1.len()).reverse());
-            let top_tool = tool_matches.first().unwrap();
-            matches.push(format!("- {} -> {} (shared terms: {})", doc_rel, top_tool.0, top_tool.1.join(", ")));
+            tool_matches.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+            let mut ranked_lines = Vec::new();
+            for (tool_rel, shared_terms, score, evidence) in tool_matches.iter().take(3) {
+                ranked_lines.push(format!(
+                    "- {} -> {} (score: {}, shared terms: {}, evidence: {})",
+                    doc_rel,
+                    tool_rel,
+                    score,
+                    shared_terms.join(", "),
+                    evidence.replace('\n', " ")
+                ));
+            }
+            ranked_matches.push(ranked_lines.join("\n"));
         }
     }
 
-    matches.sort();
-    matches
+    ranked_matches.sort();
+    ranked_matches
 }
 
 fn build_project_awareness_markdown(
@@ -652,11 +701,11 @@ fn build_project_awareness_markdown(
     let document_tool_section = if document_tool_links.is_empty() {
         "- No likely document-tool links were inferred yet; add shared terminology or richer tool headers to improve matching.".to_string()
     } else {
-        document_tool_links.join("\n")
+        document_tool_links.join("\n\n")
     };
 
     format!(
-        "# Project Awareness Index\n\n## Theory Topic Map\n{}\n\n## Active Theory Anchors\n- Master axiom: {}\n- Theory files scanned: {}\n- Lagrangian/action cue: {}\n- Hypothesis cue: {}\n\n## Tool Awareness\n{}\n\n## Suggested Document-Tool Links\n{}\n\n## Guidance\n- Use this index to locate relevant theory sections quickly without re-reading the entire manuscript each time.\n- Prefer existing tools and prior analyses before proposing brand-new implementations.\n- When the user asks about a specific topic, retrieve only the relevant node and its linked tool or experiment context.\n- When the user says a chapter used a specific analysis workflow, inspect the likely tool matches first and then verify the relevant document context.\n",
+        "# Project Awareness Index\n\n## Theory Topic Map\n{}\n\n## Active Theory Anchors\n- Master axiom: {}\n- Theory files scanned: {}\n- Lagrangian/action cue: {}\n- Hypothesis cue: {}\n\n## Tool Awareness\n{}\n\n## Ranked Retrieval Hints\n{}\n\n## Guidance\n- Use this index to locate relevant theory sections quickly without re-reading the entire manuscript each time.\n- Prefer existing tools and prior analyses before proposing brand-new implementations.\n- When the user asks about a specific topic, retrieve only the relevant node and its linked tool or experiment context.\n- When the user says a chapter used a specific analysis workflow, inspect the likely tool matches first and then verify the relevant document context.\n",
         topic_section,
         master_axiom_path.to_string_lossy(),
         files_scanned,
@@ -3074,7 +3123,7 @@ mod tests {
         assert!(awareness.contains("## Theory Topic Map"));
         assert!(awareness.contains("Chapter One"));
         assert!(awareness.contains("analyze_data.py"));
-        assert!(awareness.contains("Suggested Document-Tool Links"));
+        assert!(awareness.contains("Ranked Retrieval Hints"));
         assert!(awareness.contains("shared terms"));
     }
 
