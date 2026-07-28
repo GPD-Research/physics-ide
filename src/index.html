@@ -1258,6 +1258,7 @@
         </div>
         <div class="form-group">
           <label>Ordered Files</label>
+          <div style="font-size:0.8rem; color:var(--accent-dim); margin-bottom:6px;">All files are included by default. Toggle any file off to exclude it from the combined output without deleting the source file.</div>
           <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; max-height:220px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:10px;">
@@ -1405,6 +1406,7 @@
     let terminalDetached = false;
     let terminalDockHost = null;
     let manuscriptFileOrder = [];
+    let manuscriptSelectedIndex = 0;
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -2045,6 +2047,41 @@ async function restoreVersion() {
       }
     }
 
+    function renderManuscriptFileList() {
+      const container = document.getElementById('manuscript-file-list');
+      if (!container) return;
+      container.innerHTML = manuscriptFileOrder.length
+        ? manuscriptFileOrder.map((entry, index) => {
+            const file = entry.path;
+            const selected = entry.included !== false;
+            const isActive = index === manuscriptSelectedIndex;
+            const statusLabel = selected ? 'Included' : 'Excluded';
+            const rowStyle = isActive ? 'background: rgba(255,255,255,0.12); border-radius: 4px; padding: 4px 6px;' : 'padding: 4px 6px;';
+            return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; ${rowStyle}">
+              <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1;" onclick="selectManuscriptEntry(${index})">
+                <span>${index + 1}.</span>
+                <span>${file}</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:0.75rem; color:${selected ? 'var(--accent)' : 'var(--text-muted)'};">${statusLabel}</span>
+                <button type="button" onclick="toggleManuscriptEntry(${index}); event.stopPropagation();">${selected ? 'Exclude' : 'Include'}</button>
+              </div>
+            </div>`;
+          }).join('')
+        : '<div style="color:var(--text-muted)">No markdown files found in the theory directory.</div>';
+    }
+
+    function selectManuscriptEntry(index) {
+      manuscriptSelectedIndex = Math.max(0, Math.min(index, manuscriptFileOrder.length - 1));
+      renderManuscriptFileList();
+    }
+
+    function toggleManuscriptEntry(index) {
+      if (!manuscriptFileOrder[index]) return;
+      manuscriptFileOrder[index].included = manuscriptFileOrder[index].included === false;
+      renderManuscriptFileList();
+    }
+
     async function refreshManuscriptFileList() {
       const sourceDirInput = document.getElementById('manuscript-source-dir');
       const selectedSourceDir = sourceDirInput?.value?.trim() || currentConfig?.theory_md_dir?.trim() || currentWorkspacePath || '';
@@ -2053,33 +2090,38 @@ async function restoreVersion() {
       if (!selectedSourceDir) {
         container.innerHTML = '<div style="color:var(--text-muted)">Set the theory markdown directory or choose a source documents directory first.</div>';
         manuscriptFileOrder = [];
+        manuscriptSelectedIndex = 0;
         return;
       }
 
       try {
         const entries = await invoke('list_markdown_files', { directoryPath: selectedSourceDir });
         const files = typeof entries === 'string' ? JSON.parse(entries) : entries;
-        manuscriptFileOrder = Array.isArray(files) ? files : [];
-        container.innerHTML = manuscriptFileOrder.length
-          ? manuscriptFileOrder.map((file, index) => `<div style="padding:4px 0; display:flex; align-items:center; gap:8px;"><span>${index + 1}.</span><span>${file}</span></div>`).join('')
-          : '<div style="color:var(--text-muted)">No markdown files found in the theory directory.</div>';
+        const preservedState = Array.isArray(manuscriptFileOrder) ? manuscriptFileOrder : [];
+        manuscriptFileOrder = Array.isArray(files)
+          ? files.map((file) => {
+              const previous = preservedState.find((entry) => entry.path === file);
+              return { path: file, included: previous ? previous.included !== false : true };
+            })
+          : [];
+        manuscriptSelectedIndex = 0;
+        renderManuscriptFileList();
       } catch (err) {
         container.innerHTML = `<div style="color:var(--accent)">Unable to read files: ${err}</div>`;
         manuscriptFileOrder = [];
+        manuscriptSelectedIndex = 0;
       }
     }
 
     function moveManuscriptSelection(step) {
       if (manuscriptFileOrder.length < 2) return;
-      const selectedIndex = 0;
+      const selectedIndex = manuscriptSelectedIndex;
       const nextIndex = Math.min(manuscriptFileOrder.length - 1, Math.max(0, selectedIndex + step));
       if (nextIndex === selectedIndex) return;
       const [moved] = manuscriptFileOrder.splice(selectedIndex, 1);
       manuscriptFileOrder.splice(nextIndex, 0, moved);
-      const list = document.getElementById('manuscript-file-list');
-      if (list) {
-        list.innerHTML = manuscriptFileOrder.map((file, index) => `<div style="padding:4px 0; display:flex; align-items:center; gap:8px;"><span>${index + 1}.</span><span>${file}</span></div>`).join('');
-      }
+      manuscriptSelectedIndex = nextIndex;
+      renderManuscriptFileList();
     }
 
     async function renderManuscript() {
@@ -2096,10 +2138,15 @@ async function restoreVersion() {
 
       try {
         const sourceDir = document.getElementById('manuscript-source-dir').value.trim();
+        const includedFiles = manuscriptFileOrder.filter((entry) => entry.included !== false).map((entry) => entry.path);
+        if (mode === 'combine' && includedFiles.length === 0) {
+          appendTerminalLog('Manuscript Error: no files are selected for the combined output.');
+          return;
+        }
         const payload = {
           mode,
           sourceFile,
-          files: manuscriptFileOrder,
+          files: includedFiles,
           outputDir,
           format,
           useForTraining,
