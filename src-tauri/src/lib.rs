@@ -749,12 +749,13 @@ async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tau
     let ollama_url = config.ollama_url.clone();
     let openai_api_key = config.openai_api_key.clone();
     let gemini_api_key = config.gemini_api_key.clone();
+    let request_history = history.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
         match provider_name.as_str() {
             "ollama" => call_ollama(&ollama_url, &model, &ollama_messages, temperature),
             "openai" => call_openai(&openai_api_key, &model, &prompt_for_model),
-            "gemini" => call_gemini(&gemini_api_key, &model, &prompt_for_model),
+            "gemini" => call_gemini(&gemini_api_key, &model, &request_history),
             other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
         }
     })
@@ -1077,7 +1078,47 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
     parsed.get("choices").and_then(|choices| choices.get(0)).and_then(|choice| choice.get("message")).and_then(|message| message.get("content")).and_then(|value| value.as_str()).map(str::to_string).ok_or_else(|| "OpenAI returned no response content".to_string())
 }
 
-fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+fn build_gemini_request_body(history: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+    let mut contents = Vec::new();
+
+    for entry in history {
+        let role = entry.get("role").and_then(|value| value.as_str()).unwrap_or_default();
+        let text = if let Some(text) = entry.get("content").and_then(|value| value.as_str()) {
+            text.to_string()
+        } else if let Some(parts) = entry.get("parts").and_then(|value| value.as_array()) {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            String::new()
+        };
+
+        if text.trim().is_empty() {
+            continue;
+        }
+
+        let gemini_role = match role.to_ascii_lowercase().as_str() {
+            "assistant" | "model" => "model",
+            "system" => "user",
+            _ => "user",
+        };
+
+        contents.push(serde_json::json!({
+            "role": gemini_role,
+            "parts": [{"text": text}]
+        }));
+    }
+
+    if contents.is_empty() {
+        return Err("Gemini request body could not be built from the supplied history".to_string());
+    }
+
+    Ok(serde_json::json!({ "contents": contents }))
+}
+
+fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Result<String, String> {
     if api_key.trim().is_empty() {
         return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
     }
@@ -1095,11 +1136,7 @@ fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
     }
 
     let client = reqwest::blocking::Client::new();
-    let body = serde_json::json!({
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    });
+    let body = build_gemini_request_body(history).map_err(|e| format!("Gemini request body error: {e}"))?;
 
     let mut last_error = "Gemini request failed before receiving a response".to_string();
 
@@ -1148,7 +1185,6 @@ fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
             candidate_model, status, parsed_error
         );
 
-        // Retry only on not-found to handle legacy/deprecated model IDs.
         if status != reqwest::StatusCode::NOT_FOUND {
             return Err(last_error);
         }
@@ -2250,6 +2286,23 @@ mod tests {
         assert_eq!(normalize_model_for_provider("gemini", "gemini-2.5-pro"), "gemini-2.5-flash");
         assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-2.5-flash");
         assert_eq!(normalize_model_for_provider("gemini", "gemini-2.0-flash"), "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn builds_gemini_contents_from_chat_history() {
+        let history = vec![
+            serde_json::json!({"role": "system", "content": "You are a helpful assistant"}),
+            serde_json::json!({"role": "user", "parts": [{"text": "Summarize the theory"}]}),
+            serde_json::json!({"role": "assistant", "content": "A concise summary"}),
+        ];
+
+        let body = build_gemini_request_body(&history).unwrap();
+        let contents = body.get("contents").and_then(|value| value.as_array()).unwrap();
+
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0].get("role").and_then(|value| value.as_str()), Some("user"));
+        assert_eq!(contents[1].get("role").and_then(|value| value.as_str()), Some("user"));
+        assert_eq!(contents[2].get("role").and_then(|value| value.as_str()), Some("model"));
     }
 
     #[test]
