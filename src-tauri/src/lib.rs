@@ -1193,6 +1193,25 @@ fn gemini_model_candidates(
 ) -> Vec<String> {
     let mut candidates = vec![model.to_string()];
 
+    fn is_chat_capable_model_name(name: &str) -> bool {
+        let lower = name.to_ascii_lowercase();
+        let disallowed_markers = [
+            "tts",
+            "embedding",
+            "aqa",
+            "transcribe",
+            "speech",
+            "audio",
+            "image",
+            "vision",
+            "veo",
+            "live",
+            "realtime",
+        ];
+
+        !disallowed_markers.iter().any(|marker| lower.contains(marker))
+    }
+
     if let Ok(discovered_models) = list_gemini_generate_content_models(client, api_key) {
         let requested = model.to_ascii_lowercase();
         let mut preferred = Vec::new();
@@ -1200,6 +1219,10 @@ fn gemini_model_candidates(
 
         for discovered in discovered_models {
             if discovered.eq_ignore_ascii_case(model) {
+                continue;
+            }
+
+            if !is_chat_capable_model_name(&discovered) {
                 continue;
             }
 
@@ -1311,7 +1334,10 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
                 .contains("not supported for generatecontent")
             || parsed_error
                 .to_ascii_lowercase()
-                .contains("is not found for api version");
+                .contains("is not found for api version")
+            || parsed_error
+                .to_ascii_lowercase()
+                .contains("multiturn chat is not enabled");
 
         if !retryable_model_error {
             return Err(last_error);
