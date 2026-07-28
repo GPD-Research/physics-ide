@@ -1144,8 +1144,8 @@
 	              <label>Model Tier</label>
 	              <div id="left-model-container">
 	                <select id="settings-left-model">
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
-                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Heavy / Analysis)</option>
+                    <option value="gemini-3-flash">Gemini 3 Flash (Fast / Balanced)</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash (Heavy / Analysis)</option>
                   </select>
 	              </div>
 	            </div>
@@ -1165,8 +1165,8 @@
 	              <label>Model Tier</label>
 	              <div id="right-model-container">
 	                <select id="settings-right-model"> 
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
-                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Heavy / Analysis)</option>
+                    <option value="gemini-3-flash">Gemini 3 Flash (Fast / Balanced)</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash (Heavy / Analysis)</option>
 	                </select>
 	              </div>
 	            </div>
@@ -1346,7 +1346,7 @@
       if (normalizedProvider === 'openai') {
         return side === 'left' ? 'gpt-4o' : 'gpt-4o-mini';
       }
-      return 'gemini-2.5-flash';
+      return 'gemini-3-flash';
     }
 
     async function initializeApp() {
