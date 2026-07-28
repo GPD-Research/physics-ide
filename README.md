@@ -6,11 +6,15 @@ physics-IDE is a Linux-first desktop research environment for developing, compar
 
 The immediate direction for physics-IDE is to focus on a Linux-exclusive build and Debian-based deployment workflow. Windows support is currently deferred while the compilation process remains too complex to maintain effectively.
 
-The long-term vision for physics-IDE is to provide a flexible environment for:
+The next major milestone is version 7: turning physics-IDE into a true imported-project research environment where the AI can understand the state of the theory, the available tools, and the history of analysis work without needing the original human operator to re-explain everything each session.
+
+The version 7 vision is to provide a flexible environment for:
 
 - organizing theory material, notes, equations, and manuscripts in one place;
 - ingesting theory sources from different paradigms without rejecting them up front;
-- generating master-axiom documents from theory markdown folders;
+- generating a structured master manuscript from imported markdown theory content;
+- building a project knowledge index so the AI can navigate chapters, sections, and subsections coherently;
+- linking theory content to reusable tools, scripts, experiments, and datasets;
 - supporting educational and exploratory workflows across mainstream, hybrid, and non-standard theory families;
 - connecting theory content to empirical data and transparent evaluation workflows;
 - shipping a polished Linux desktop experience with reliable .deb packaging and installation.
@@ -19,12 +23,12 @@ The long-term vision for physics-IDE is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
-### Today's progress (2026-07-25)
+### Today's progress (2026-07-28)
 
-- successfully deployed and validated two Ollama AI threads for local concurrent usage;
-- enabled local save and run workflow for two Ollama models directly from the desktop environment;
-- tweaked the integrated terminal behavior for a smoother development and model-execution workflow;
-- completed additional stability and usability improvements across the desktop experience.
+- confirmed reliable Gemini model communication from the desktop app;
+- fixed markdown file-opening from the project tree view;
+- established the version 7 direction around project-aware AI memory and theory indexing;
+- prepared the groundwork for a new Tools menu and manuscript-ordering workflow.
 
 ### Implemented so far
 
@@ -37,9 +41,38 @@ The project has moved from a simple desktop shell toward a more practical theory
 
 ### Current focus
 
-- expanding the import pipeline for richer manuscript formats and section detection;
-- improving support for diverse theory families and educational use cases;
-- connecting imported theory structure to later empirical analysis and evaluation workflows.
+- formalizing the version 7 implementation plan for project-aware AI memory;
+- adding a Tools menu for future project workflows and app functions;
+- building a manuscript composition workflow that orders markdown chapters, sections, and subsections into a master document;
+- connecting imported theory structure to reusable tools, experiments, and datasets;
+- improving support for diverse theory families and educational use cases.
+
+## Version 7 Implementation Order
+
+1. Project knowledge index
+   - Parse the master manuscript and theory markdown directory into a structured topic tree.
+   - Generate chapter, section, and subsection summaries that can be used by the AI as a compact navigation layer.
+
+2. Compact project digest
+   - Create a token-efficient digest file that summarizes the theory corpus, assumptions, tools, and experiments.
+   - Use this digest as a prompt context layer for AI sessions.
+
+3. Manuscript composition workflow
+   - Allow the user to reorder imported markdown files into a preferred master-document sequence.
+   - Support logical sorting for numbered sections and appendix-style files.
+   - Render a combined markdown document from the chosen order.
+
+4. Tool and experiment registry
+   - Add a project-level registry of reusable scripts, notebooks, and analysis tools.
+   - Track prior experiments and link them to the theory topics they support.
+
+5. AI awareness integration
+   - Inject the project digest, topic index, and tool registry into the AI briefing pipeline.
+   - Make the AI prefer existing tools and previous analyses before proposing new ones.
+
+6. UI polish and workflow consolidation
+   - Add the new Tools menu and move version-7 functions into that drop-down as they are introduced.
+   - Keep the Customize menu focused on configuration paths and app settings.
 
 ## Development
 
