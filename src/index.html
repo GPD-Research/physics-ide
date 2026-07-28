@@ -1225,8 +1225,11 @@
   </div>
 
   <div id="manuscript-tools-modal" class="modal" style="z-index: 1100;">
-    <div class="modal-content" style="width: 760px; max-width: 92vw;">
-      <div class="modal-header">Manuscript Tools</div>
+    <div id="manuscript-tools-content" class="modal-content" style="width: 760px; max-width: 92vw; max-height: 92vh; overflow: auto;">
+      <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <span>Manuscript Tools</span>
+        <button type="button" onclick="toggleManuscriptToolsMaximize()" style="padding: 4px 8px;">⤢ Maximize</button>
+      </div>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
         Render a single markdown file or combine theory markdown files into a master manuscript, then export it as Markdown, PDF, or DOCX.
       </p>
@@ -1248,27 +1251,36 @@
       </div>
 
       <div id="combined-files-panel" style="display: none;">
-        <div class="form-group">
-          <label for="manuscript-source-dir">Source Documents Directory</label>
-          <div style="display: flex; gap: 5px;">
-            <input type="text" id="manuscript-source-dir" placeholder="Choose the folder that contains the markdown files to combine">
-            <button onclick="browseForDirectory('manuscript-source-dir')">Browse</button>
+        <div class="form-group" id="manuscript-combine-layout" style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+          <div style="flex: 1 1 360px; min-width: 320px;">
+            <label for="manuscript-source-dir">Source Documents Directory</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="manuscript-source-dir" placeholder="Choose the folder that contains the markdown files to combine">
+              <button onclick="browseForDirectory('manuscript-source-dir')">Browse</button>
+            </div>
+            <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Defaults to the configured Theory Markdown Directory when left empty.</div>
           </div>
-          <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Defaults to the configured Theory Markdown Directory when left empty.</div>
+          <div style="flex: 1 1 260px; min-width: 260px;">
+            <label for="manuscript-output-dir">Output Directory</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="manuscript-output-dir" placeholder="Choose where to save the rendered file">
+              <button onclick="browseForDirectory('manuscript-output-dir')">Browse</button>
+            </div>
+          </div>
         </div>
         <div class="form-group">
-          <label>Ordered Files</label>
+          <label>Define file order:</label>
           <div style="font-size:0.8rem; color:var(--accent-dim); margin-bottom:6px;">All files are included by default. Toggle any file off to exclude it from the combined output without deleting the source file.</div>
-          <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; max-height:220px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
+          <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; min-height:280px; max-height:420px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
         </div>
-        <div style="display:flex; gap:8px; margin-bottom:10px;">
+        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
           <button onclick="moveManuscriptSelection(-1)">↑ Move Up</button>
           <button onclick="moveManuscriptSelection(1)">↓ Move Down</button>
           <button onclick="refreshManuscriptFileList()">↻ Refresh List</button>
         </div>
       </div>
 
-      <div class="form-group">
+      <div id="single-file-configuration" class="form-group" style="display: none;">
         <label for="manuscript-output-dir">Output Directory</label>
         <div style="display: flex; gap: 5px;">
           <input type="text" id="manuscript-output-dir" placeholder="Choose where to save the rendered file">
@@ -1294,7 +1306,7 @@
       </div>
 
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
-        <button onclick="closeManuscriptToolsModal()">Cancel</button>
+        <button onclick="closeManuscriptToolsModal()">Close</button>
         <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()">Render</button>
       </div>
     </div>
@@ -1407,6 +1419,7 @@
     let terminalDockHost = null;
     let manuscriptFileOrder = [];
     let manuscriptSelectedIndex = 0;
+    let manuscriptMaximized = false;
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -2034,16 +2047,47 @@ async function restoreVersion() {
 
     function closeManuscriptToolsModal() {
       document.getElementById('manuscript-tools-modal').style.display = 'none';
+      manuscriptMaximized = false;
+      const content = document.getElementById('manuscript-tools-content');
+      if (content) {
+        content.style.width = '760px';
+        content.style.maxWidth = '92vw';
+        content.style.height = 'auto';
+        content.style.maxHeight = '92vh';
+      }
+    }
+
+    function toggleManuscriptToolsMaximize() {
+      const content = document.getElementById('manuscript-tools-content');
+      if (!content) return;
+      manuscriptMaximized = !manuscriptMaximized;
+      const button = event?.currentTarget || null;
+      if (button) {
+        button.textContent = manuscriptMaximized ? '⤡ Restore' : '⤢ Maximize';
+      }
+      if (manuscriptMaximized) {
+        content.style.width = '96vw';
+        content.style.maxWidth = '96vw';
+        content.style.height = '92vh';
+        content.style.maxHeight = '92vh';
+      } else {
+        content.style.width = '760px';
+        content.style.maxWidth = '92vw';
+        content.style.height = 'auto';
+        content.style.maxHeight = '92vh';
+      }
     }
 
     function toggleManuscriptMode(mode) {
       const combinedPanel = document.getElementById('combined-files-panel');
       const trainPanel = document.getElementById('train-ai-panel');
       const singleFileControls = document.getElementById('single-file-controls');
+      const singleFileConfiguration = document.getElementById('single-file-configuration');
       const isCombine = mode === 'combine';
       if (combinedPanel) combinedPanel.style.display = isCombine ? 'block' : 'none';
       if (trainPanel) trainPanel.style.display = isCombine ? 'block' : 'none';
       if (singleFileControls) singleFileControls.style.display = isCombine ? 'none' : 'block';
+      if (singleFileConfiguration) singleFileConfiguration.style.display = isCombine ? 'none' : 'block';
       if (!isCombine) {
         const trainingCheckbox = document.getElementById('manuscript-use-for-training');
         if (trainingCheckbox) trainingCheckbox.checked = false;
@@ -2106,10 +2150,27 @@ async function restoreVersion() {
         const files = typeof entries === 'string' ? JSON.parse(entries) : entries;
         const preservedState = Array.isArray(manuscriptFileOrder) ? manuscriptFileOrder : [];
         manuscriptFileOrder = Array.isArray(files)
-          ? files.map((file) => {
-              const previous = preservedState.find((entry) => entry.path === file);
-              return { path: file, included: previous ? previous.included !== false : true };
-            })
+          ? files
+              .map((file) => {
+                const previous = preservedState.find((entry) => entry.path === file);
+                return { path: file, included: previous ? previous.included !== false : true };
+              })
+              .sort((a, b) => {
+                const aName = (a.path || '').toLowerCase();
+                const bName = (b.path || '').toLowerCase();
+                const aIsAppendix = aName.includes('appendix');
+                const bIsAppendix = bName.includes('appendix');
+                if (aIsAppendix && !bIsAppendix) return 1;
+                if (!aIsAppendix && bIsAppendix) return -1;
+                const aChapter = aName.match(/chapter[_\- ]?(\d+)/i);
+                const bChapter = bName.match(/chapter[_\- ]?(\d+)/i);
+                if (aChapter && bChapter) {
+                  return Number(aChapter[1]) - Number(bChapter[1]);
+                }
+                if (aChapter && !bChapter) return -1;
+                if (!aChapter && bChapter) return 1;
+                return aName.localeCompare(bName);
+              })
           : [];
         manuscriptSelectedIndex = 0;
         renderManuscriptFileList();
