@@ -1091,6 +1091,14 @@
             </div>
           </div>
           <div class="form-group">
+            <label for="settings-tools-dir">Tools / Analysis Directory</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="settings-tools-dir" placeholder="/path/to/analysis or tools">
+              <button onclick="browseForDirectory('tools-dir')">Browse</button>
+            </div>
+            <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Used to build the project-awareness tool inventory for the AI briefing packet.</div>
+          </div>
+          <div class="form-group">
             <label for="settings-import-source">Theory Source File</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="settings-import-source" placeholder="/path/to/manuscript.txt or theory.md">
@@ -1459,6 +1467,7 @@
         document.getElementById('settings-project-root').value = currentConfig.project_root_dir || "";
         document.getElementById('settings-theory-dir').value = currentConfig.theory_md_dir || "";
         document.getElementById('settings-master-axiom').value = currentConfig.master_axiom_file || "";
+        document.getElementById('settings-tools-dir').value = currentConfig.tools_dir || "";
         document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
@@ -2502,6 +2511,7 @@ async function restoreVersion() {
       const projectRoot = document.getElementById('settings-project-root').value;
       const theoryDir = document.getElementById('settings-theory-dir').value;
       const masterAxiom = document.getElementById('settings-master-axiom').value;
+      const toolsDir = document.getElementById('settings-tools-dir').value;
       const theme = document.getElementById('settings-theme').value;
       const customAccent = document.getElementById('picker-accent').value;
       const customBgPanel = document.getElementById('picker-bg-panel').value;
@@ -2519,6 +2529,7 @@ async function restoreVersion() {
         project_root_dir: projectRoot,
         theory_md_dir: theoryDir,
         master_axiom_file: masterAxiom,
+        tools_dir: toolsDir,
         theme,
         custom_accent: customAccent,
         custom_bg_panel: customBgPanel
@@ -2540,6 +2551,7 @@ async function restoreVersion() {
         currentConfig.project_root_dir = projectRoot;
         currentConfig.theory_md_dir = theoryDir;
         currentConfig.master_axiom_file = masterAxiom;
+        currentConfig.tools_dir = toolsDir;
         currentConfig.theme = theme;
         currentConfig.custom_accent = customAccent;
         currentConfig.custom_bg_panel = customBgPanel;

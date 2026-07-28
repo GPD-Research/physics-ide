@@ -137,6 +137,7 @@ pub struct AppConfig {
     project_root_dir: String,
     theory_md_dir: String,
     master_axiom_file: String,
+    tools_dir: String,
     theme: String,           // <-- NEW
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
@@ -160,6 +161,7 @@ impl Default for AppConfig {
             project_root_dir: String::new(),
             theory_md_dir: String::new(),
             master_axiom_file: String::new(),
+            tools_dir: String::new(),
             theme: "dark".to_string(),
             custom_accent: String::new(),
             custom_bg_panel: String::new(),
@@ -205,6 +207,8 @@ pub struct SaveUserSettingsPayload {
     pub theory_md_dir: String,
     #[serde(alias = "masterAxiomFile")]
     pub master_axiom_file: String,
+    #[serde(default, alias = "toolsDir")]
+    pub tools_dir: String,
     pub theme: String,
     #[serde(alias = "customAccent")]
     pub custom_accent: String,
@@ -392,6 +396,151 @@ fn read_source_payload(source_name: &str, path: &Path, max_chars: usize) -> (ser
     }
 }
 
+fn collect_topic_index(theory_dir: &str) -> Vec<String> {
+    let path = Path::new(theory_dir);
+    if !path.exists() || !path.is_dir() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    let mut files = Vec::new();
+    let _ = recursive_markdown_scan(path, &mut files);
+
+    for file_path in files {
+        if let Ok(content) = fs::read_to_string(&file_path) {
+            let relative = file_path.strip_prefix(path).unwrap_or(&file_path).to_string_lossy().to_string();
+            let mut headings = Vec::new();
+            let mut summary = String::new();
+            let mut seen_non_heading = false;
+
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let heading_level = trimmed.chars().take_while(|c| *c == '#').count();
+                if heading_level > 0 && trimmed.len() > heading_level {
+                    let title = trimmed[heading_level..].trim().to_string();
+                    if !title.is_empty() {
+                        headings.push((heading_level, title));
+                    }
+                } else if !seen_non_heading {
+                    summary = trimmed.to_string();
+                    seen_non_heading = true;
+                }
+            }
+
+            if headings.is_empty() {
+                if !summary.is_empty() {
+                    entries.push(format!("- {}: {}", relative, summary));
+                }
+                continue;
+            }
+
+            let mut formatted = format!("- {}", relative);
+            for (level, title) in headings.iter().take(4) {
+                let prefix = "  ".repeat(*level as usize);
+                formatted.push_str(&format!("\n{}- {}", prefix, title));
+            }
+            if !summary.is_empty() {
+                formatted.push_str(&format!("\n  - Summary: {}", summary));
+            }
+            entries.push(formatted);
+        }
+    }
+
+    entries.sort();
+    entries
+}
+
+fn collect_tool_inventory(project_root: &Path, tools_dir: &str) -> Vec<String> {
+    let mut inventory = Vec::new();
+    let tools_path = if tools_dir.trim().is_empty() {
+        project_root.to_path_buf()
+    } else {
+        PathBuf::from(tools_dir)
+    };
+
+    if !tools_path.exists() {
+        return inventory;
+    }
+
+    let mut candidates = Vec::new();
+    let _ = recursive_file_scan(&tools_path, &mut candidates);
+    for path in candidates {
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_lowercase();
+        if !matches!(extension.as_str(), "py" | "sh" | "ipynb" | "m" | "jl") {
+            continue;
+        }
+        let relative = path.strip_prefix(project_root).unwrap_or(&path).to_string_lossy().to_string();
+        let mut summary = String::new();
+        if let Ok(content) = fs::read_to_string(&path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.starts_with("/*") {
+                    continue;
+                }
+                summary = trimmed.to_string();
+                break;
+            }
+        }
+        if summary.is_empty() {
+            summary = "No obvious purpose header found; inspect the file directly.".to_string();
+        }
+        inventory.push(format!("- {}: {}", relative, summary));
+    }
+
+    inventory.sort();
+    inventory
+}
+
+fn build_project_awareness_markdown(
+    project_root: &Path,
+    theory_dir: &str,
+    master_axiom_path: &Path,
+    tools_dir: &str,
+    scan: &serde_json::Value,
+) -> String {
+    let topic_index = collect_topic_index(theory_dir);
+    let tool_inventory = collect_tool_inventory(project_root, tools_dir);
+    let files_scanned = scan["files_scanned"].as_u64().unwrap_or(0);
+    let lagrangian_hint = scan["lagrangian_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| item.as_str())
+        .unwrap_or("No Lagrangian/action marker detected yet.");
+    let hypothesis_hint = scan["hypothesis_candidates"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| item.as_str())
+        .unwrap_or("No explicit hypothesis marker detected yet.");
+
+    let topic_section = if topic_index.is_empty() {
+        "- No theory markdown headings were found yet; the topic index will populate after the theory corpus is imported.".to_string()
+    } else {
+        topic_index.join("\n")
+    };
+
+    let tool_section = if tool_inventory.is_empty() {
+        "- No reusable tools were discovered in the configured tools directory yet.".to_string()
+    } else {
+        tool_inventory.join("\n")
+    };
+
+    format!(
+        "# Project Awareness Index\n\n## Theory Topic Map\n{}\n\n## Active Theory Anchors\n- Master axiom: {}\n- Theory files scanned: {}\n- Lagrangian/action cue: {}\n- Hypothesis cue: {}\n\n## Tool Awareness\n{}\n\n## Guidance\n- Use this index to locate relevant theory sections quickly without re-reading the entire manuscript each time.\n- Prefer existing tools and prior analyses before proposing brand-new implementations.\n- When the user asks about a specific topic, retrieve only the relevant node and its linked tool or experiment context.\n",
+        topic_section,
+        master_axiom_path.to_string_lossy(),
+        files_scanned,
+        lagrangian_hint,
+        hypothesis_hint,
+        tool_section
+    )
+}
+
 fn build_session_recap_markdown(
     project_root: &Path,
     theory_dir: &str,
@@ -428,6 +577,7 @@ fn build_ai_briefing_markdown(
     recap_path: &Path,
     tree_path: &Path,
     master_axiom_path: &Path,
+    awareness_markdown: &str,
 ) -> String {
     let axiom_excerpt = fs::read_to_string(master_axiom_path)
         .map(|content| {
@@ -447,13 +597,14 @@ fn build_ai_briefing_markdown(
         .unwrap_or_else(|_| "Master axiom file is not readable yet.".to_string());
 
     format!(
-        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
+        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
         summary,
         primer_path.to_string_lossy(),
         recap_path.to_string_lossy(),
         tree_path.to_string_lossy(),
         master_axiom_path.to_string_lossy(),
         axiom_excerpt,
+        awareness_markdown,
         project_root.to_string_lossy()
     )
 }
@@ -1408,6 +1559,25 @@ fn recursive_markdown_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Res
     Ok(())
 }
 
+fn recursive_file_scan(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let entries = fs::read_dir(dir)?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some("target") {
+                continue;
+            }
+            recursive_file_scan(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn sanitize_slug(value: &str) -> String {
     let mut cleaned = String::new();
     let mut last_was_underscore = false;
@@ -1908,6 +2078,13 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         project_root.to_string_lossy().to_string()
     };
 
+    let tools_dir = if config.tools_dir.trim().is_empty() {
+        let fallback = project_root.join("src").join("analysis");
+        fallback.to_string_lossy().to_string()
+    } else {
+        config.tools_dir.clone()
+    };
+
     let scan = scan_markdown_theory(&theory_dir);
     let master_axiom_path = if config.master_axiom_file.trim().is_empty() {
         project_root.join("master_axiom.md")
@@ -1935,6 +2112,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
 
     let primer_path = project_root.join("next_session_notes.md");
     let recap_path = project_root.join("session_recap.md");
+    let awareness_path = project_root.join("project_awareness.md");
     let briefing_path = project_root.join("ai_briefing.md");
     let recap_existed_before = recap_path.exists();
     let briefing_existed_before = briefing_path.exists();
@@ -2002,6 +2180,14 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         }
     );
 
+    let awareness_markdown = build_project_awareness_markdown(
+        &project_root,
+        &theory_dir,
+        &master_axiom_path,
+        &tools_dir,
+        &scan,
+    );
+
     let ai_briefing_markdown = if first_session_bootstrap {
         build_first_session_briefing_markdown(&project_root)
     } else {
@@ -2012,8 +2198,12 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
             &recap_path,
             &tree_path,
             &master_axiom_path,
+            &awareness_markdown,
         )
     };
+    if !awareness_path.exists() {
+        let _ = fs::write(&awareness_path, &awareness_markdown);
+    }
     if !briefing_path.exists() {
         let _ = fs::write(&briefing_path, ai_briefing_markdown);
     }
@@ -2046,7 +2236,8 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
             "ai_briefing": briefing_path.to_string_lossy().to_string(),
             "workspace_tree": tree_path.to_string_lossy().to_string(),
             "scratchpad": primer_path.to_string_lossy().to_string(),
-            "master_axiom": master_axiom_path.to_string_lossy().to_string()
+            "master_axiom": master_axiom_path.to_string_lossy().to_string(),
+            "project_awareness": awareness_path.to_string_lossy().to_string()
         },
         "reuse_notes_next_session": config.reuse_notes_next_session,
         "first_session_bootstrap": first_session_bootstrap,
@@ -2107,6 +2298,7 @@ fn prepare_exit_session(
     let recap_path = project_root.join("session_recap.md");
     let notes_path = project_root.join("next_session_notes.md");
     let tree_path = project_root.join("workspace_tree.txt");
+    let awareness_path = project_root.join("project_awareness.md");
     let briefing_path = project_root.join("ai_briefing.md");
     let startup_guide_path = resolve_startup_guide_path(&project_root, &theory_dir);
 
@@ -2149,6 +2341,19 @@ fn prepare_exit_session(
             let _ = fs::write(&tree_path, tree);
         }
         let exit_summary = "Post-session briefing packet generated from latest session recap and workspace context.";
+        let tools_dir = if config.tools_dir.trim().is_empty() {
+            project_root.join("src").join("analysis").to_string_lossy().to_string()
+        } else {
+            config.tools_dir.clone()
+        };
+        let scan = scan_markdown_theory(&theory_dir);
+        let awareness_markdown = build_project_awareness_markdown(
+            &project_root,
+            &theory_dir,
+            &master_axiom_path,
+            &tools_dir,
+            &scan,
+        );
         let packet = build_ai_briefing_markdown(
             &project_root,
             exit_summary,
@@ -2156,7 +2361,9 @@ fn prepare_exit_session(
             &recap_path,
             &tree_path,
             &master_axiom_path,
+            &awareness_markdown,
         );
+        let _ = fs::write(&awareness_path, &awareness_markdown);
         fs::write(&briefing_path, packet).map_err(|e| format!("Failed to write briefing packet: {e}"))?;
         actions.push(format!("Briefing packet updated: {}", briefing_path.to_string_lossy()));
     }
@@ -2540,6 +2747,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.project_root_dir = payload.project_root_dir;
     config.theory_md_dir = payload.theory_md_dir;
     config.master_axiom_file = payload.master_axiom_file;
+    config.tools_dir = payload.tools_dir;
     config.theme = payload.theme;
     config.custom_accent = payload.custom_accent;
     config.custom_bg_panel = payload.custom_bg_panel;
@@ -2680,6 +2888,38 @@ mod tests {
         assert!(!snapshot_dir.join(".git").exists());
         assert!(!snapshot_dir.join("build").exists());
         assert!(result.contains("saved successfully"));
+    }
+
+    #[test]
+    fn builds_project_awareness_markdown_from_theory_and_tools() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_awareness_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir.join("theory")).unwrap();
+        fs::create_dir_all(&temp_dir.join("tools")).unwrap();
+
+        fs::write(
+            temp_dir.join("theory").join("chapter_one.md"),
+            "# Chapter One\n\nThis section explores the core axiom.\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("tools").join("analyze.py"),
+            "# Analyze data\n\nprint('hello')\n",
+        )
+        .unwrap();
+
+        let scan = scan_markdown_theory(temp_dir.join("theory").to_str().unwrap());
+        let awareness = build_project_awareness_markdown(
+            &temp_dir,
+            temp_dir.join("theory").to_str().unwrap(),
+            &temp_dir.join("master_axiom.md"),
+            temp_dir.join("tools").to_str().unwrap(),
+            &scan,
+        );
+
+        assert!(awareness.contains("## Theory Topic Map"));
+        assert!(awareness.contains("Chapter One"));
+        assert!(awareness.contains("analyze.py"));
     }
 
     #[test]
