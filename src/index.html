@@ -942,6 +942,10 @@
               <button onclick="resetSinglePaneContext('left')">Reset Left Pane</button>
               <button onclick="resetSinglePaneContext('right')">Reset Right Pane</button>
             </div>
+            <div style="display: flex; gap: 10px; font-size: 0.72rem; color: var(--accent-dim); margin-top: 4px; flex-wrap: wrap;">
+              <div id="left-pane-history-mode-label">Left pane history mode: ON</div>
+              <div id="right-pane-history-mode-label">Right pane history mode: ON</div>
+            </div>
             <div id="context-probe-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
               Ready to benchmark context precision.
             </div>
@@ -1561,6 +1565,7 @@
           await fetchAndRenderDirectory(currentWorkspacePath);
         }
 
+          refreshContextProbeIndicator();
         await injectPrimerIntoThreads(true);
       } catch (err) {
         appendTerminalLog(`Initialization runtime failure: ${err}`);
@@ -1825,6 +1830,24 @@
       return `${provider}::${model}`;
     }
 
+    function getPaneHistoryPreference(pane) {
+      if (!currentConfig) return true;
+      return pane === 'left'
+        ? currentConfig.left_preserve_thread_history !== false
+        : currentConfig.right_preserve_thread_history !== false;
+    }
+
+    function refreshContextProbeModeLabels() {
+      const leftLabel = document.getElementById('left-pane-history-mode-label');
+      const rightLabel = document.getElementById('right-pane-history-mode-label');
+      if (leftLabel) {
+        leftLabel.textContent = `Left pane history mode: ${getPaneHistoryPreference('left') ? 'ON' : 'OFF'}`;
+      }
+      if (rightLabel) {
+        rightLabel.textContent = `Right pane history mode: ${getPaneHistoryPreference('right') ? 'ON' : 'OFF'}`;
+      }
+    }
+
     function loadContextProbeHistory() {
       try {
         const raw = localStorage.getItem(CONTEXT_PROBE_HISTORY_KEY);
@@ -1938,6 +1961,7 @@
       ];
 
       indicator.textContent = lines.join('\n');
+      refreshContextProbeModeLabels();
     }
 
     function resetContextProbeHistory() {
@@ -1973,6 +1997,7 @@
         const prompt = buildPanePrimerText(briefing, pane === 'left' ? 'theory' : 'critique');
         injectSystemPrimerMessage(pane, 0, 'Pane Reset Primer', prompt);
         appendTerminalLog(`${pane === 'left' ? 'Left' : 'Right'} pane reset to baseline primer.`);
+        refreshContextProbeModeLabels();
       } catch (err) {
         appendTerminalLog(`Pane reset primer sync error (${pane}): ${err}`);
       }
@@ -3167,6 +3192,7 @@ async function restoreVersion() {
         saveBtnText.innerHTML = "✓ Preferences Updated";
         appendTerminalLog(`Saved configuration. Native Terminal: ${term} | Editor: ${editor}`);
         refreshContextProbeIndicator();
+        refreshContextProbeModeLabels();
 
         setTimeout(() => {
           closeSettingsModal();
