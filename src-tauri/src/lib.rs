@@ -38,6 +38,22 @@ struct GeminiModelInfo {
     supported_generation_methods: Vec<String>,
 }
 
+#[derive(Deserialize, Default)]
+struct OpenAiApiErrorResponse {
+    #[serde(default)]
+    error: OpenAiApiError,
+}
+
+#[derive(Deserialize, Default)]
+struct OpenAiApiError {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    r#type: String,
+    #[serde(default)]
+    code: String,
+}
+
 // --- RUNTIME MEMORY STATE ---
 pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
@@ -1243,7 +1259,7 @@ fn normalize_model_for_provider(provider: &str, model: &str) -> String {
             other => other.to_string(),
         },
         "openai" => match trimmed {
-            "gpt-4" | "gpt-4o" => "gpt-4o-mini".to_string(),
+            "gpt-4" => "gpt-4o-mini".to_string(),
             other if other.is_empty() => "gpt-4o-mini".to_string(),
             other => other.to_string(),
         },
@@ -1472,24 +1488,112 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
         return Err("OpenAI API key is not configured. Please add one in Settings.".to_string());
     }
 
-    let client = reqwest::blocking::Client::new();
-    let response = client.post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7
-        }))
-        .send()
-        .map_err(|e| format!("OpenAI request failed: {e}"))?;
+    fn parse_openai_error_details(response_text: &str) -> String {
+        if let Ok(parsed) = serde_json::from_str::<OpenAiApiErrorResponse>(response_text) {
+            let mut parts = Vec::new();
+            if !parsed.error.message.trim().is_empty() {
+                parts.push(parsed.error.message.trim().to_string());
+            }
+            if !parsed.error.r#type.trim().is_empty() {
+                parts.push(format!("type={}", parsed.error.r#type.trim()));
+            }
+            if !parsed.error.code.trim().is_empty() {
+                parts.push(format!("code={}", parsed.error.code.trim()));
+            }
 
-    if !response.status().is_success() {
-        return Err(format!("OpenAI request failed with status {}", response.status()));
+            if !parts.is_empty() {
+                return parts.join(" | ");
+            }
+        }
+
+        response_text.trim().to_string()
     }
 
-    let parsed: serde_json::Value = response.json().map_err(|e| format!("OpenAI response parsing failed: {e}"))?;
-    parsed.get("choices").and_then(|choices| choices.get(0)).and_then(|choice| choice.get("message")).and_then(|message| message.get("content")).and_then(|value| value.as_str()).map(str::to_string).ok_or_else(|| "OpenAI returned no response content".to_string())
+    fn is_retryable_openai_model_error(status: reqwest::StatusCode, message: &str) -> bool {
+        let lower = message.to_ascii_lowercase();
+        status == reqwest::StatusCode::NOT_FOUND
+            || lower.contains("model") && (lower.contains("not found") || lower.contains("does not exist"))
+            || lower.contains("you do not have access to model")
+    }
+
+    fn openai_model_candidates(model: &str) -> Vec<String> {
+        let requested = normalize_model_for_provider("openai", model);
+        let mut candidates = vec![requested.clone()];
+
+        for fallback in ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"] {
+            if !candidates
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(fallback))
+            {
+                candidates.push(fallback.to_string());
+            }
+        }
+
+        candidates
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let mut attempted_models = Vec::new();
+    let mut last_error = String::new();
+
+    for candidate_model in openai_model_candidates(model) {
+        attempted_models.push(candidate_model.clone());
+
+        let response = client
+            .post("https://api.openai.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "model": candidate_model.clone(),
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7
+            }))
+            .send()
+            .map_err(|e| format!("OpenAI request failed: {e}"))?;
+
+        let status = response.status();
+        let response_text = response
+            .text()
+            .map_err(|e| format!("OpenAI response parsing failed: {e}"))?;
+
+        if status.is_success() {
+            let parsed: serde_json::Value = serde_json::from_str(&response_text)
+                .map_err(|e| format!("OpenAI response parsing failed: {e}"))?;
+
+            return parsed
+                .get("choices")
+                .and_then(|choices| choices.get(0))
+                .and_then(|choice| choice.get("message"))
+                .and_then(|message| message.get("content"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| "OpenAI returned no response content".to_string());
+        }
+
+        let parsed_error = parse_openai_error_details(&response_text);
+        last_error = format!(
+            "OpenAI request failed for model '{}' with status {}: {}",
+            candidate_model, status, parsed_error
+        );
+
+        // 429 frequently means billing/quota exhaustion or trial expiration, not local app overuse.
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(format!(
+                "{} | This usually indicates billing/quota limits on the OpenAI account or project key, not that this local app over-requested.",
+                last_error
+            ));
+        }
+
+        if !is_retryable_openai_model_error(status, &parsed_error) {
+            return Err(last_error);
+        }
+    }
+
+    Err(format!(
+        "{} | attempted models: {}",
+        last_error,
+        attempted_models.join(", ")
+    ))
 }
 
 fn build_gemini_request_body(history: &[serde_json::Value]) -> Result<serde_json::Value, String> {
@@ -3012,6 +3116,13 @@ mod tests {
         assert_eq!(normalize_model_for_provider("gemini", "gemini-3-flash"), "gemini-2.0-flash");
         assert_eq!(normalize_model_for_provider("gemini", "gemini-3.6-flash"), "gemini-2.0-flash-lite");
         assert_eq!(normalize_model_for_provider("gemini", "gemini-1.5-pro"), "gemini-2.0-flash-lite");
+    }
+
+    #[test]
+    fn keeps_explicit_openai_model_selection_when_supported() {
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4o"), "gpt-4o");
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4o-mini"), "gpt-4o-mini");
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4"), "gpt-4o-mini");
     }
 
     #[test]
