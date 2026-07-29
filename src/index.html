@@ -1483,6 +1483,11 @@
     let manuscriptFileOrder = [];
     let manuscriptSelectedIndex = 0;
     let manuscriptMaximized = false;
+    const probeAppendixCandidateCache = {
+      rootPath: '',
+      candidates: [],
+      loadedAt: 0,
+    };
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -1518,6 +1523,111 @@
         return side === 'left' ? 'gpt-4.1' : 'gpt-4.1-mini';
       }
       return 'gemini-2.0-flash';
+    }
+
+    function toWorkspaceRelativePath(candidatePath) {
+      const rawPath = String(candidatePath || '').trim();
+      const rootPath = String(currentWorkspacePath || '').trim();
+      if (!rawPath) return '';
+      if (!rootPath) return rawPath.replace(/^\/+/, '');
+
+      const normalizedRoot = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
+      const normalizedPath = rawPath.replace(/\\/g, '/');
+      const rootPrefix = `${normalizedRoot}/`;
+
+      if (normalizedPath === normalizedRoot) return '';
+      if (normalizedPath.startsWith(rootPrefix)) {
+        return normalizedPath.slice(rootPrefix.length);
+      }
+
+      return normalizedPath;
+    }
+
+    function scoreAppendixCandidate(relativePath) {
+      const lower = String(relativePath || '').toLowerCase();
+      let score = 0;
+
+      if (lower.includes('appendix')) score += 20;
+      if (lower.includes('blackhole') || lower.includes('black_hole')) score += 25;
+      if (lower.includes('collision')) score += 25;
+      if (lower.includes('analysis')) score += 12;
+      if (lower.includes('results')) score += 10;
+      if (/appendix[_-]?g\b/i.test(lower)) score += 35;
+
+      return score;
+    }
+
+    async function discoverProbeAppendixCandidates() {
+      const rootPath = String(currentWorkspacePath || '').trim();
+      if (!rootPath) return [];
+
+      const queue = [rootPath];
+      const visited = new Set();
+      const candidates = [];
+      const skipDirs = new Set(['.git', 'node_modules', 'target', 'dist', 'build', '.venv', 'venv', 'versions']);
+      const maxDirs = 400;
+
+      while (queue.length > 0 && visited.size < maxDirs) {
+        const dir = queue.shift();
+        if (!dir || visited.has(dir)) continue;
+        visited.add(dir);
+
+        let entries = [];
+        try {
+          entries = await invoke('read_directory', { path: dir });
+        } catch (_err) {
+          continue;
+        }
+
+        for (const entry of entries) {
+          const entryName = String(entry?.name || '').trim();
+          const entryPath = String(entry?.path || '').trim();
+          if (!entryName || !entryPath) continue;
+
+          if (entry?.is_dir) {
+            if (!skipDirs.has(entryName.toLowerCase())) {
+              queue.push(entryPath);
+            }
+            continue;
+          }
+
+          if (/\.md$/i.test(entryName) && /appendix/i.test(entryName)) {
+            const relativePath = toWorkspaceRelativePath(entryPath);
+            if (relativePath) {
+              candidates.push(relativePath);
+            }
+          }
+        }
+      }
+
+      const unique = Array.from(new Set(candidates));
+      unique.sort((a, b) => {
+        const scoreDelta = scoreAppendixCandidate(b) - scoreAppendixCandidate(a);
+        if (scoreDelta !== 0) return scoreDelta;
+        return a.localeCompare(b);
+      });
+
+      return unique.slice(0, 14);
+    }
+
+    async function getProbeAppendixCandidates(forceRefresh = false) {
+      const rootPath = String(currentWorkspacePath || '').trim();
+      if (!rootPath) return [];
+
+      const cacheExpired = (Date.now() - Number(probeAppendixCandidateCache.loadedAt || 0)) > 60_000;
+      if (!forceRefresh
+        && probeAppendixCandidateCache.rootPath === rootPath
+        && !cacheExpired
+        && Array.isArray(probeAppendixCandidateCache.candidates)
+        && probeAppendixCandidateCache.candidates.length > 0) {
+        return probeAppendixCandidateCache.candidates;
+      }
+
+      const discovered = await discoverProbeAppendixCandidates();
+      probeAppendixCandidateCache.rootPath = rootPath;
+      probeAppendixCandidateCache.candidates = discovered;
+      probeAppendixCandidateCache.loadedAt = Date.now();
+      return discovered;
     }
 
     function normalizeModelForProvider(provider, model) {
@@ -1623,7 +1733,8 @@
         '1. For file-location questions, return exact relative file path(s) present in project context.',
         '2. Never answer with only a folder unless no file candidate exists.',
         '3. If multiple candidates exist, label Primary and Alternate and include a confidence value from 0.00 to 1.00.',
-        '4. If evidence is insufficient, say so explicitly instead of guessing.',
+        '4. Never return absolute paths for file-location answers; use project-relative paths only.',
+        '5. If evidence is insufficient, say so explicitly instead of guessing.',
       ].join('\n');
 
       if (briefing.first_session_bootstrap === true) {
@@ -2038,6 +2149,7 @@
 
     async function runContextProbe(options = {}) {
       const suppressOutput = options.suppressOutput === true;
+      const injectedCandidates = Array.isArray(options.appendixCandidates) ? options.appendixCandidates : null;
       const statusEl = document.getElementById('context-probe-status');
       const outputEl = document.getElementById('context-probe-output');
       const questionEl = document.getElementById('context-probe-question');
@@ -2068,11 +2180,24 @@
         appendTerminalLog(`Context probe warning: primer sync failed before probe: ${err}`);
       }
 
-      const prompt = [
+      const appendixCandidates = injectedCandidates || await getProbeAppendixCandidates(false);
+
+      const promptParts = [
         probeQuestion,
         'Answer format requirement: include exact relative file path(s).',
+        'Never return absolute paths.',
         'If ambiguous, include Primary and Alternate with confidence values (0.00 to 1.00).',
-      ].join('\n');
+      ];
+
+      if (appendixCandidates.length > 0) {
+        promptParts.push('Use only the discovered appendix candidate paths below (do not invent new filenames):');
+        appendixCandidates.forEach((candidatePath) => {
+          promptParts.push(`- ${candidatePath}`);
+        });
+        promptParts.push('If none of these candidates match the query, explicitly say evidence is insufficient.');
+      }
+
+      const prompt = promptParts.join('\n');
 
       const leftProvider = getProviderDisplayName(getPaneProvider('left'));
       const rightProvider = getProviderDisplayName(getPaneProvider('right'));
@@ -2247,6 +2372,13 @@
       statusEl.textContent = `Running batch for current pair (${iterations} iterations)...`;
       outputEl.value = 'Batch run in progress...';
 
+      const appendixCandidates = await getProbeAppendixCandidates(true);
+      if (appendixCandidates.length > 0) {
+        appendTerminalLog(`Context probe grounding candidates loaded (${appendixCandidates.length}): ${appendixCandidates.join(', ')}`);
+      } else {
+        appendTerminalLog('Context probe grounding candidates unavailable; proceeding without explicit appendix candidate list.');
+      }
+
       const iterationResults = [];
       let leftPassCount = 0;
       let rightPassCount = 0;
@@ -2259,7 +2391,7 @@
           await resetSinglePaneContext('right', false);
         }
 
-        const result = await runContextProbe({ suppressOutput: true });
+        const result = await runContextProbe({ suppressOutput: true, appendixCandidates });
         iterationResults.push(result);
 
         const leftPassed = Boolean(result?.report?.[0]?.evaluation?.passed);
