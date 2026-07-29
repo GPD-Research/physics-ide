@@ -1226,7 +1226,7 @@
 	          </div>
 
               <div class="pane-config-block">
-                <h4>Thread History Behavior</h4>
+                <h4>Thread History</h4>
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
                   <input type="checkbox" id="settings-left-preserve-thread-history" checked>
                   <label for="settings-left-preserve-thread-history" style="margin: 0;">Keep left pane thread history when its model/provider changes</label>
@@ -1841,10 +1841,10 @@
       const leftLabel = document.getElementById('left-pane-history-mode-label');
       const rightLabel = document.getElementById('right-pane-history-mode-label');
       if (leftLabel) {
-        leftLabel.textContent = `Left pane history mode: ${getPaneHistoryPreference('left') ? 'ON' : 'OFF'}`;
+        leftLabel.textContent = `Left: ${getPaneHistoryPreference('left') ? 'ON' : 'OFF'}`;
       }
       if (rightLabel) {
-        rightLabel.textContent = `Right pane history mode: ${getPaneHistoryPreference('right') ? 'ON' : 'OFF'}`;
+        rightLabel.textContent = `Right: ${getPaneHistoryPreference('right') ? 'ON' : 'OFF'}`;
       }
     }
 
