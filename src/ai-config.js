@@ -7,8 +7,8 @@ export function getModelOptions(provider) {
       ];
     case 'openai':
       return [
-        { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Light / Fast)' },
         { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini (Fast / Cost-Efficient)' },
+        { value: 'gpt-4o-mini-2024-07-18', label: 'GPT-4o Mini 2024-07-18 (Light / Fast)' },
         { value: 'gpt-4o', label: 'GPT-4o Flagship (Heavy / Data Crunching)' },
       ];
     case 'ollama':

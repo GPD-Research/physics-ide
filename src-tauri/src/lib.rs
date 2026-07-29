@@ -1218,9 +1218,9 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
         match provider.to_ascii_lowercase().as_str() {
             "openai" => {
                 if pane_is_left {
-                    "gpt-4o".to_string()
+                    "gpt-4.1".to_string()
                 } else {
-                    "gpt-4o-mini".to_string()
+                    "gpt-4.1-mini".to_string()
                 }
             }
             "gemini" => "gemini-2.0-flash".to_string(),
@@ -1259,8 +1259,8 @@ fn normalize_model_for_provider(provider: &str, model: &str) -> String {
             other => other.to_string(),
         },
         "openai" => match trimmed {
-            "gpt-4" => "gpt-4o-mini".to_string(),
-            other if other.is_empty() => "gpt-4o-mini".to_string(),
+            "gpt-4" | "gpt-4o-mini" => "gpt-4.1-mini".to_string(),
+            other if other.is_empty() => "gpt-4.1-mini".to_string(),
             other => other.to_string(),
         },
         _ => trimmed.to_string(),
@@ -1512,15 +1512,18 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
     fn is_retryable_openai_model_error(status: reqwest::StatusCode, message: &str) -> bool {
         let lower = message.to_ascii_lowercase();
         status == reqwest::StatusCode::NOT_FOUND
+            || status == reqwest::StatusCode::FORBIDDEN && lower.contains("access to model")
             || lower.contains("model") && (lower.contains("not found") || lower.contains("does not exist"))
             || lower.contains("you do not have access to model")
+            || lower.contains("does not have access to model")
+            || lower.contains("code=model_not_found")
     }
 
     fn openai_model_candidates(model: &str) -> Vec<String> {
         let requested = normalize_model_for_provider("openai", model);
         let mut candidates = vec![requested.clone()];
 
-        for fallback in ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"] {
+        for fallback in ["gpt-4.1-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini-2024-07-18"] {
             if !candidates
                 .iter()
                 .any(|existing| existing.eq_ignore_ascii_case(fallback))
@@ -3121,8 +3124,8 @@ mod tests {
     #[test]
     fn keeps_explicit_openai_model_selection_when_supported() {
         assert_eq!(normalize_model_for_provider("openai", "gpt-4o"), "gpt-4o");
-        assert_eq!(normalize_model_for_provider("openai", "gpt-4o-mini"), "gpt-4o-mini");
-        assert_eq!(normalize_model_for_provider("openai", "gpt-4"), "gpt-4o-mini");
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4o-mini"), "gpt-4.1-mini");
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4"), "gpt-4.1-mini");
     }
 
     #[test]
