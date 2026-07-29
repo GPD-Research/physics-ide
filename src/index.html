@@ -739,6 +739,7 @@
       Tools
       <div class="dropdown-content">
         <a href="#" onclick="openManuscriptToolsModal(); return false;">Manuscript Tools</a>
+        <a href="#" onclick="openAiTestingModal(); return false;">AI Testing</a>
       </div>
     </div>
     <div class="menu-item" onclick="openSettingsModal()">Customize</div>
@@ -921,49 +922,9 @@
           </div>
 
           <div class="panel-section">
-            <div class="panel-section-title">Context Probe</div>
-            <div class="form-group">
-              <label for="context-probe-question">Probe Question</label>
-              <textarea id="context-probe-question" rows="4">Use exact relative path(s) only: which appendix file contains black hole collision analysis results? If ambiguous, return Primary and Alternate with confidence.</textarea>
-            </div>
-            <div class="form-group">
-              <label for="context-probe-expected">Expected Match Token</label>
-              <input id="context-probe-expected" placeholder="Appendix_G" value="Appendix_G">
-            </div>
-            <div class="form-group">
-              <label for="context-probe-target-runs">Tuning Target Runs Per Model</label>
-              <input id="context-probe-target-runs" type="number" min="5" max="200" step="1" value="20" oninput="refreshContextProbeIndicator()">
-            </div>
-            <div class="form-group" style="display: flex; gap: 8px; align-items: end;">
-              <div style="flex: 0 0 130px;">
-                <label for="context-probe-batch-iterations">Batch Iterations</label>
-                <input id="context-probe-batch-iterations" type="number" min="1" max="50" step="1" value="8">
-              </div>
-              <div style="flex: 1; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                <input type="checkbox" id="context-probe-batch-auto-reset" checked>
-                <label for="context-probe-batch-auto-reset" style="margin: 0;">Auto-reset both panes before each iteration</label>
-              </div>
-            </div>
-            <div class="btn-group" style="margin-top: 5px;">
-              <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
-              <button onclick="runContextProbeBatch()">Run Batch (Current Pair)</button>
-              <button onclick="resetContextProbeHistory()">Reset Probe History</button>
-            </div>
-            <div class="btn-group" style="margin-top: 5px;">
-              <button onclick="resetSinglePaneContext('left')">Reset Left Pane</button>
-              <button onclick="resetSinglePaneContext('right')">Reset Right Pane</button>
-            </div>
-            <div style="display: flex; gap: 10px; font-size: 0.72rem; color: var(--accent-dim); margin-top: 4px; flex-wrap: wrap;">
-              <div id="left-pane-history-mode-label">Left pane history mode: ON</div>
-              <div id="right-pane-history-mode-label">Right pane history mode: ON</div>
-            </div>
-            <div id="context-probe-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
-              Ready to benchmark context precision.
-            </div>
-            <div id="context-probe-indicator" style="font-size: 0.75rem; color: var(--accent-dim); margin-top: 4px; min-height: 30px; white-space: pre-line;">
-              Tuning indicator will appear after probe runs.
-            </div>
-            <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
+            <div class="panel-section-title">AI Testing</div>
+            <button style="width: 100%;" onclick="openAiTestingModal()">Open AI Testing Suite</button>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-top:6px; text-align:center;">Run model probe benchmarks from the dedicated AI Testing workspace.</div>
           </div>
 
           <div class="panel-section">
@@ -1189,11 +1150,6 @@
 	            </div>
 	          </div>
 	
-	          <div class="form-group">
-	            <label for="settings-ollama-url">Local Ollama URL</label>
-	            <input type="text" id="settings-ollama-url" placeholder="http://127.0.0.1:11434">
-	          </div>
-	
 	          <div class="pane-config-block">
 	            <h4>Left Pane (Analytical Stack)</h4>
 	            <div class="form-group">
@@ -1201,7 +1157,6 @@
 	              <select id="settings-left-provider" onchange="updateModelUI('left')">
 	                <option value="gemini">Google Gemini</option>
 	                <option value="openai">OpenAI</option>
-	                <option value="ollama">Ollama (Local)</option>
 	              </select>
 	            </div>
 	            <div class="form-group">
@@ -1222,7 +1177,6 @@
 	              <select id="settings-right-provider" onchange="updateModelUI('right')">
 	                <option value="gemini">Google Gemini</option>
 	                <option value="openai">OpenAI</option>
-	                <option value="ollama">Ollama (Local)</option>
 	              </select>
 	            </div>
 	            <div class="form-group">
@@ -1370,6 +1324,64 @@
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
         <button onclick="closeManuscriptToolsModal()">Close</button>
         <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()">Render</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ai-testing-modal" class="modal" style="z-index: 1100;">
+    <div id="ai-testing-content" class="modal-content" style="width: 820px; max-width: 94vw; max-height: 92vh; overflow: auto;">
+      <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <span>AI Testing</span>
+        <button type="button" onclick="closeAiTestingModal()" style="padding: 4px 8px;">Close</button>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+        Benchmark contextual retrieval and model consistency using your currently loaded theory workspace.
+      </p>
+
+      <div class="panel-section" style="margin-top: 0;">
+        <div class="panel-section-title">Context Probe</div>
+        <div class="form-group">
+          <label for="context-probe-question">Probe Question</label>
+          <textarea id="context-probe-question" rows="4">Use exact relative path(s) only: which appendix file contains black hole collision analysis results? If ambiguous, return Primary and Alternate with confidence.</textarea>
+        </div>
+        <div class="form-group">
+          <label for="context-probe-expected">Expected Match Token</label>
+          <input id="context-probe-expected" placeholder="Appendix_G" value="Appendix_G">
+        </div>
+        <div class="form-group">
+          <label for="context-probe-target-runs">Tuning Target Runs Per Model</label>
+          <input id="context-probe-target-runs" type="number" min="5" max="200" step="1" value="20" oninput="refreshContextProbeIndicator()">
+        </div>
+        <div class="form-group" style="display: flex; gap: 8px; align-items: end;">
+          <div style="flex: 0 0 130px;">
+            <label for="context-probe-batch-iterations">Batch Iterations</label>
+            <input id="context-probe-batch-iterations" type="number" min="1" max="50" step="1" value="8">
+          </div>
+          <div style="flex: 1; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <input type="checkbox" id="context-probe-batch-auto-reset" checked>
+            <label for="context-probe-batch-auto-reset" style="margin: 0;">Auto-reset both panes before each iteration</label>
+          </div>
+        </div>
+        <div class="btn-group" style="margin-top: 5px;">
+          <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
+          <button onclick="runContextProbeBatch()">Run Batch (Current Pair)</button>
+          <button onclick="resetContextProbeHistory()">Reset Probe History</button>
+        </div>
+        <div class="btn-group" style="margin-top: 5px;">
+          <button onclick="resetSinglePaneContext('left')">Reset Left Pane</button>
+          <button onclick="resetSinglePaneContext('right')">Reset Right Pane</button>
+        </div>
+        <div style="display: flex; gap: 10px; font-size: 0.72rem; color: var(--accent-dim); margin-top: 4px; flex-wrap: wrap;">
+          <div id="left-pane-history-mode-label">Left pane history mode: ON</div>
+          <div id="right-pane-history-mode-label">Right pane history mode: ON</div>
+        </div>
+        <div id="context-probe-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
+          Ready to benchmark context precision.
+        </div>
+        <div id="context-probe-indicator" style="font-size: 0.75rem; color: var(--accent-dim); margin-top: 4px; min-height: 30px; white-space: pre-line;">
+          Tuning indicator will appear after probe runs.
+        </div>
+        <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
       </div>
     </div>
   </div>
@@ -1522,13 +1534,18 @@
 
     function getDefaultModelForPane(side, provider) {
       const normalizedProvider = (provider || '').toLowerCase();
-      if (normalizedProvider === 'ollama') {
-        return side === 'left' ? 'deepseek-r1:7b' : 'qwen2.5:7b';
-      }
       if (normalizedProvider === 'openai') {
         return side === 'left' ? 'gpt-4.1' : 'gpt-4.1-mini';
       }
       return 'gemini-2.0-flash';
+    }
+
+    function normalizeProviderForV7(provider) {
+      const normalized = (provider || '').toLowerCase();
+      if (normalized === 'openai' || normalized === 'gemini') {
+        return normalized;
+      }
+      return 'openai';
     }
 
     function toWorkspaceRelativePath(candidatePath) {
@@ -1687,7 +1704,7 @@
     }
 
     function normalizeModelForProvider(provider, model) {
-      const normalizedProvider = (provider || '').toLowerCase();
+      const normalizedProvider = normalizeProviderForV7(provider);
       const trimmedModel = (model || '').trim().replace(/^models\//, '');
 
       if (normalizedProvider !== 'openai') {
@@ -1719,13 +1736,20 @@
         
         document.getElementById('settings-editor').value = currentConfig.editor;
         document.getElementById('settings-terminal').value = currentConfig.terminal_app;
-        const leftProvider = currentConfig.left_provider || 'ollama';
-        const rightProvider = currentConfig.right_provider || 'ollama';
+        const leftProvider = normalizeProviderForV7(currentConfig.left_provider || 'openai');
+        const rightProvider = normalizeProviderForV7(currentConfig.right_provider || 'openai');
         const leftModel = normalizeModelForProvider(leftProvider, currentConfig.left_model || getDefaultModelForPane('left', leftProvider));
         const rightModel = normalizeModelForProvider(rightProvider, currentConfig.right_model || getDefaultModelForPane('right', rightProvider));
+        currentConfig.left_provider = leftProvider;
+        currentConfig.right_provider = rightProvider;
+        currentConfig.left_model = leftModel;
+        currentConfig.right_model = rightModel;
 
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
-        document.getElementById('settings-ollama-url').value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
+        const ollamaUrlField = document.getElementById('settings-ollama-url');
+        if (ollamaUrlField) {
+          ollamaUrlField.value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
+        }
         document.getElementById('settings-left-provider').value = leftProvider;
         document.getElementById('settings-right-provider').value = rightProvider;
         document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
@@ -1738,7 +1762,9 @@
         document.getElementById('settings-tools-dir').value = currentConfig.tools_dir || "";
         document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
-        document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
+        if (ollamaUrlField) {
+          ollamaUrlField.value = currentConfig.ollama_url;
+        }
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
         refreshContextProbeIndicator();
 
@@ -2513,7 +2539,6 @@
       switch (provider) {
         case 'gemini': return 'Gemini';
         case 'openai': return 'OpenAI';
-        case 'ollama': return 'Ollama';
         default: return 'Assistant';
       }
     }
@@ -2537,7 +2562,8 @@
     }
 
     function getPaneProvider(pane) {
-      return pane === 'left' ? (currentConfig?.left_provider || 'ollama') : (currentConfig?.right_provider || 'ollama');
+      const provider = pane === 'left' ? currentConfig?.left_provider : currentConfig?.right_provider;
+      return normalizeProviderForV7(provider || 'openai');
     }
 
     function getPaneHistory(pane, index) {
@@ -2870,6 +2896,15 @@ async function restoreVersion() {
       document.getElementById('manuscript-tools-modal').style.display = 'flex';
       refreshManuscriptFileList();
       toggleManuscriptMode(document.getElementById('manuscript-mode').value);
+    }
+
+    function openAiTestingModal() {
+      document.getElementById('ai-testing-modal').style.display = 'flex';
+      refreshContextProbeIndicator();
+    }
+
+    function closeAiTestingModal() {
+      document.getElementById('ai-testing-modal').style.display = 'none';
     }
 
     function closeManuscriptToolsModal() {
@@ -3467,7 +3502,7 @@ async function restoreVersion() {
       const term = document.getElementById('settings-terminal').value;
       const geminiKey = document.getElementById('settings-gemini-key').value;
       const openaiKey = document.getElementById('settings-openai-key').value;
-      const ollamaUrl = document.getElementById('settings-ollama-url').value;
+      const ollamaUrl = document.getElementById('settings-ollama-url')?.value || currentConfig?.ollama_url || '';
       const leftProvider = document.getElementById('settings-left-provider').value;
       const leftModelRaw = document.getElementById('settings-left-model').value;
       const rightProvider = document.getElementById('settings-right-provider').value;

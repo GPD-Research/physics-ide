@@ -11,13 +11,6 @@ export function getModelOptions(provider) {
         { value: 'gpt-4.1', label: 'GPT-4.1 Flagship (Heavy / Data Crunching)' },
         { value: 'gpt-4o-mini-2024-07-18', label: 'GPT-4o Mini 2024-07-18 (Light / Fast)' },
       ];
-    case 'ollama':
-      return [
-        { value: 'deepseek-r1:7b', label: 'DeepSeek R1 7B (Analytical / Thoughtful, ~4-5GB)' },
-        { value: 'qwen2.5:7b', label: 'Qwen 2.5 7B (Conversational / Synthesis, ~4-5GB)' },
-        { value: 'llama3:8b', label: 'Llama 3 8B (Light / Fast Local)' },
-        { value: 'llama3:70b', label: 'Llama 3 70B / Mistral Large (Heavy Local)' },
-      ];
     default:
       return [];
   }
@@ -29,8 +22,6 @@ export function getProviderLabel(provider) {
       return 'Gemini';
     case 'openai':
       return 'OpenAI';
-    case 'ollama':
-      return 'Ollama';
     default:
       return 'Provider';
   }

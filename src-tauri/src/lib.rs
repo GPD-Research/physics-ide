@@ -178,10 +178,10 @@ impl Default for AppConfig {
             gemini_api_key: String::new(),
             openai_api_key: String::new(),
             ollama_url: "http://127.0.0.1:11434".to_string(),
-            left_provider: "ollama".to_string(),
-            left_model: "deepseek-r1:7b".to_string(),
-            right_provider: "ollama".to_string(),
-            right_model: "qwen2.5:7b".to_string(),
+            left_provider: "openai".to_string(),
+            left_model: "gpt-4.1".to_string(),
+            right_provider: "openai".to_string(),
+            right_model: "gpt-4.1-mini".to_string(),
             project_root_dir: String::new(),
             theory_md_dir: String::new(),
             master_axiom_file: String::new(),
@@ -1191,7 +1191,7 @@ async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tau
             "ollama" => call_ollama(&ollama_url, &model, &ollama_messages, temperature),
             "openai" => call_openai(&openai_api_key, &model, &prompt_for_model),
             "gemini" => call_gemini(&gemini_api_key, &model, &request_history),
-            other => Err(format!("Unsupported provider '{}'. Choose Ollama, OpenAI, or Gemini.", other)),
+            other => Err(format!("Unsupported provider '{}'. Choose OpenAI or Gemini.", other)),
         }
     })
     .await
@@ -1219,7 +1219,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
         config.right_model.clone()
     };
 
-    let provider = if provider.is_empty() { "ollama" } else { provider };
+    let provider = if provider.is_empty() { "openai" } else { provider };
     let pane_is_left = pane.eq_ignore_ascii_case("left");
     let model = if model.is_empty() {
         match provider.to_ascii_lowercase().as_str() {
@@ -1233,9 +1233,9 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
             "gemini" => "gemini-2.0-flash".to_string(),
             _ => {
                 if pane_is_left {
-                    "deepseek-r1:7b".to_string()
+                    "gpt-4.1".to_string()
                 } else {
-                    "qwen2.5:7b".to_string()
+                    "gpt-4.1-mini".to_string()
                 }
             }
         }

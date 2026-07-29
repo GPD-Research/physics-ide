@@ -14,11 +14,5 @@ test('openai provider exposes OpenAI model options', () => {
 test('provider labels are human-readable', () => {
   assert.equal(getProviderLabel('openai'), 'OpenAI');
   assert.equal(getProviderLabel('gemini'), 'Gemini');
-  assert.equal(getProviderLabel('ollama'), 'Ollama');
-});
-
-test('ollama provider exposes deep reasoning and conversational local options', () => {
-  const models = getModelOptions('ollama');
-  assert.ok(models.some(model => model.value === 'deepseek-r1:7b'));
-  assert.ok(models.some(model => model.value === 'qwen2.5:7b'));
+  assert.equal(getProviderLabel('unknown'), 'Provider');
 });
