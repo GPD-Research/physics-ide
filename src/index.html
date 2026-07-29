@@ -1396,6 +1396,9 @@
         <div id="context-probe-indicator" style="font-size: 0.75rem; color: var(--accent-dim); margin-top: 4px; min-height: 30px; white-space: pre-line;">
           Tuning indicator will appear after probe runs.
         </div>
+        <div class="btn-group" style="margin-top: 6px;">
+          <button id="context-probe-open-report-btn" onclick="openLatestContextProbeReport()" style="display: none;">Open Report</button>
+        </div>
         <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
       </div>
     </div>
@@ -1522,6 +1525,8 @@
       evidence: [],
       loadedAt: 0,
     };
+    let latestContextProbeReportPath = '';
+    let latestContextProbeReportPaths = [];
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -1618,6 +1623,33 @@
       const scopeKey = getProbeSuiteScopeKey();
       store[scopeKey] = Array.isArray(suites) ? suites : [];
       saveProbeSuitesStore(store);
+    }
+
+    function setLatestContextProbeReports(paths) {
+      const cleaned = Array.isArray(paths)
+        ? paths.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+      latestContextProbeReportPaths = cleaned;
+      latestContextProbeReportPath = cleaned.length > 0 ? cleaned[cleaned.length - 1] : '';
+
+      const button = document.getElementById('context-probe-open-report-btn');
+      if (!button) return;
+      if (latestContextProbeReportPath) {
+        button.style.display = 'inline-block';
+        button.textContent = cleaned.length > 1 ? `Open Report (${cleaned.length})` : 'Open Report';
+      } else {
+        button.style.display = 'none';
+      }
+    }
+
+    function openLatestContextProbeReport() {
+      if (!latestContextProbeReportPath) {
+        appendTerminalLog('Open report unavailable: no saved report path found yet.');
+        return;
+      }
+
+      openEditor(latestContextProbeReportPath);
+      appendTerminalLog(`Opened context probe report: ${latestContextProbeReportPath}`);
     }
 
     function getCurrentProbeConfigFromUi() {
@@ -2720,6 +2752,7 @@
           reportSaveError ? `Report save error: ${reportSaveError}` : 'Report save: ok',
         ].join('\n');
       }
+      setLatestContextProbeReports(reportSaveError ? [] : [reportPath]);
       refreshContextProbeIndicator();
 
       return {
@@ -2759,6 +2792,7 @@
       const summaries = [];
       let aggregatePasses = 0;
       let aggregateChecks = 0;
+      const generatedReportPaths = [];
 
       for (let i = 0; i < tests.length; i += 1) {
         const test = tests[i] || {};
@@ -2781,6 +2815,9 @@
 
         aggregatePasses += totalPass;
         aggregateChecks += totalChecks;
+        if (result?.reportPath && !result?.reportSaveError) {
+          generatedReportPaths.push(result.reportPath);
+        }
 
         summaries.push([
           `Test ${i + 1}:`,
@@ -2794,14 +2831,44 @@
       }
 
       const passRate = aggregateChecks > 0 ? ((aggregatePasses / aggregateChecks) * 100).toFixed(1) : '0.0';
+
+      const suiteTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const resolvedBasePath = (currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || '').trim();
+      const suiteReportPath = resolvedBasePath
+        ? `${resolvedBasePath}/context_probe_suite_${suiteSlug}_summary_${suiteTimestamp}.md`
+        : `context_probe_suite_${suiteSlug}_summary_${suiteTimestamp}.md`;
+      const suiteSummaryContent = [
+        `# AI Testing Suite Summary`,
+        '',
+        `- Suite: ${suiteName}`,
+        `- Theory scope: ${getProbeSuiteScopeKey()}`,
+        `- Generated: ${new Date().toISOString()}`,
+        `- Aggregate passes: ${aggregatePasses}/${aggregateChecks} (${passRate}%)`,
+        '',
+        '## Test Results',
+        '',
+        ...summaries,
+      ].join('\n');
+      let suiteReportSaveError = null;
+      try {
+        await invoke('save_scratchpad_content', { content: suiteSummaryContent, path: suiteReportPath });
+        generatedReportPaths.push(suiteReportPath);
+      } catch (err) {
+        suiteReportSaveError = String(err);
+        appendTerminalLog(`AI testing suite summary save failed: ${err}`);
+      }
+
       statusEl.textContent = `Suite '${suiteName}' complete: ${aggregatePasses}/${aggregateChecks} (${passRate}%).`;
       outputEl.value = [
         `AI Testing Suite: ${suiteName}`,
         `Theory scope: ${getProbeSuiteScopeKey()}`,
         `Aggregate passes: ${aggregatePasses}/${aggregateChecks} (${passRate}%)`,
+        `Suite summary report: ${suiteReportPath}`,
+        suiteReportSaveError ? `Suite summary save error: ${suiteReportSaveError}` : 'Suite summary save: ok',
         '',
         ...summaries,
       ].join('\n');
+      setLatestContextProbeReports(generatedReportPaths);
       appendTerminalLog(`AI testing suite complete: ${suiteName} (${aggregatePasses}/${aggregateChecks}).`);
     }
 
