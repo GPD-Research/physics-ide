@@ -1340,6 +1340,21 @@
 
       <div class="panel-section" style="margin-top: 0;">
         <div class="panel-section-title">Context Probe</div>
+        <div class="form-group" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+          <div style="flex: 1 1 220px; min-width: 220px;">
+            <label for="context-probe-suite-name">Suite Name (Current Theory)</label>
+            <input id="context-probe-suite-name" placeholder="e.g., Core Retrieval Suite">
+          </div>
+          <div style="flex: 1 1 220px; min-width: 220px;">
+            <label for="context-probe-suite-select">Saved Suites</label>
+            <select id="context-probe-suite-select" onchange="loadSelectedProbeSuiteIntoForm()"></select>
+          </div>
+        </div>
+        <div class="btn-group" style="margin-top: 5px;">
+          <button onclick="saveCurrentProbeAsSuite()">Save Suite</button>
+          <button onclick="deleteSelectedProbeSuite()">Delete Suite</button>
+          <button onclick="runSelectedProbeSuite()">Run Selected Suite</button>
+        </div>
         <div class="form-group">
           <label for="context-probe-question">Probe Question</label>
           <textarea id="context-probe-question" rows="4">Use exact relative path(s) only: which appendix file contains black hole collision analysis results? If ambiguous, return Primary and Alternate with confidence.</textarea>
@@ -1477,6 +1492,7 @@
     const SECURITY_NOTE_DISMISSED_KEY = 'physics-ide-security-note-dismissed-v1';
     const PROJECT_TITLE_KEY = 'physics-ide-project-title';
     const CONTEXT_PROBE_HISTORY_KEY = 'physics-ide-context-probe-history-v1';
+    const CONTEXT_PROBE_SUITES_KEY = 'physics-ide-context-probe-suites-v1';
 
     let currentConfig = null;
     const chatHistories = {
@@ -1564,6 +1580,175 @@
       }
 
       return normalizedPath;
+    }
+
+    function getProbeSuiteScopeKey() {
+      const root = String(currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || 'global').trim();
+      return root || 'global';
+    }
+
+    function loadProbeSuitesStore() {
+      try {
+        const raw = localStorage.getItem(CONTEXT_PROBE_SUITES_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (_err) {
+        return {};
+      }
+    }
+
+    function saveProbeSuitesStore(store) {
+      try {
+        localStorage.setItem(CONTEXT_PROBE_SUITES_KEY, JSON.stringify(store));
+      } catch (_err) {
+        // Ignore storage failures so testing still works.
+      }
+    }
+
+    function getProbeSuitesForCurrentScope() {
+      const store = loadProbeSuitesStore();
+      const scopeKey = getProbeSuiteScopeKey();
+      const suites = Array.isArray(store[scopeKey]) ? store[scopeKey] : [];
+      return suites;
+    }
+
+    function setProbeSuitesForCurrentScope(suites) {
+      const store = loadProbeSuitesStore();
+      const scopeKey = getProbeSuiteScopeKey();
+      store[scopeKey] = Array.isArray(suites) ? suites : [];
+      saveProbeSuitesStore(store);
+    }
+
+    function getCurrentProbeConfigFromUi() {
+      const question = (document.getElementById('context-probe-question')?.value || '').trim();
+      const expectedToken = (document.getElementById('context-probe-expected')?.value || '').trim();
+      const parsedIterations = Number(document.getElementById('context-probe-batch-iterations')?.value || 8);
+      const iterations = Math.max(1, Math.min(50, Number.isFinite(parsedIterations) ? Math.floor(parsedIterations) : 8));
+      const autoReset = Boolean(document.getElementById('context-probe-batch-auto-reset')?.checked);
+      return { question, expectedToken, iterations, autoReset };
+    }
+
+    function applyProbeConfigToUi(config) {
+      if (!config || typeof config !== 'object') return;
+      if (typeof config.question === 'string') {
+        document.getElementById('context-probe-question').value = config.question;
+      }
+      if (typeof config.expectedToken === 'string') {
+        document.getElementById('context-probe-expected').value = config.expectedToken;
+      }
+      if (Number.isFinite(Number(config.iterations))) {
+        document.getElementById('context-probe-batch-iterations').value = String(Math.max(1, Math.min(50, Math.floor(Number(config.iterations)))));
+      }
+      if (typeof config.autoReset === 'boolean') {
+        document.getElementById('context-probe-batch-auto-reset').checked = config.autoReset;
+      }
+    }
+
+    function refreshProbeSuiteSelector() {
+      const select = document.getElementById('context-probe-suite-select');
+      if (!select) return;
+
+      const suites = getProbeSuitesForCurrentScope();
+      const previous = select.value;
+      select.innerHTML = '';
+
+      if (suites.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No saved suites for this theory';
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+      }
+
+      suites.forEach((suite) => {
+        const option = document.createElement('option');
+        option.value = suite.name;
+        option.textContent = `${suite.name} (${Array.isArray(suite.tests) ? suite.tests.length : 0} tests)`;
+        select.appendChild(option);
+      });
+
+      select.disabled = false;
+      const hasPrevious = suites.some((suite) => suite.name === previous);
+      select.value = hasPrevious ? previous : suites[0].name;
+    }
+
+    function saveCurrentProbeAsSuite() {
+      const nameInput = document.getElementById('context-probe-suite-name');
+      const suiteName = String(nameInput?.value || '').trim();
+      if (!suiteName) {
+        appendTerminalLog('AI testing suite save skipped: suite name is empty.');
+        return;
+      }
+
+      const config = getCurrentProbeConfigFromUi();
+      if (!config.question) {
+        appendTerminalLog('AI testing suite save skipped: probe question is empty.');
+        return;
+      }
+
+      const suites = getProbeSuitesForCurrentScope();
+      const now = new Date().toISOString();
+      const existingIndex = suites.findIndex((suite) => suite.name === suiteName);
+
+      if (existingIndex >= 0) {
+        const existingTests = Array.isArray(suites[existingIndex].tests) ? suites[existingIndex].tests : [];
+        const duplicateIndex = existingTests.findIndex((item) =>
+          String(item?.question || '').trim() === config.question
+          && String(item?.expectedToken || '').trim() === config.expectedToken
+        );
+
+        const nextTests = existingTests.slice();
+        if (duplicateIndex >= 0) {
+          nextTests[duplicateIndex] = config;
+        } else {
+          nextTests.push(config);
+        }
+
+        suites[existingIndex] = {
+          ...suites[existingIndex],
+          updatedAt: now,
+          tests: nextTests,
+        };
+      } else {
+        suites.push({
+          name: suiteName,
+          updatedAt: now,
+          tests: [config],
+        });
+      }
+
+      setProbeSuitesForCurrentScope(suites);
+      refreshProbeSuiteSelector();
+      const select = document.getElementById('context-probe-suite-select');
+      if (select) select.value = suiteName;
+      appendTerminalLog(`AI testing suite saved for current theory: ${suiteName}`);
+    }
+
+    function deleteSelectedProbeSuite() {
+      const select = document.getElementById('context-probe-suite-select');
+      const selected = String(select?.value || '').trim();
+      if (!selected) return;
+
+      const suites = getProbeSuitesForCurrentScope();
+      const remaining = suites.filter((suite) => suite.name !== selected);
+      setProbeSuitesForCurrentScope(remaining);
+      refreshProbeSuiteSelector();
+      appendTerminalLog(`AI testing suite deleted: ${selected}`);
+    }
+
+    function loadSelectedProbeSuiteIntoForm() {
+      const select = document.getElementById('context-probe-suite-select');
+      const selected = String(select?.value || '').trim();
+      if (!selected) return;
+
+      const suite = getProbeSuitesForCurrentScope().find((item) => item.name === selected);
+      const testConfig = Array.isArray(suite?.tests) ? suite.tests[0] : null;
+      if (!testConfig) return;
+
+      applyProbeConfigToUi(testConfig);
+      appendTerminalLog(`Loaded AI testing suite into form: ${selected}`);
     }
 
     function scoreAppendixCandidate(relativePath) {
@@ -1746,10 +1931,6 @@
         currentConfig.right_model = rightModel;
 
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
-        const ollamaUrlField = document.getElementById('settings-ollama-url');
-        if (ollamaUrlField) {
-          ollamaUrlField.value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
-        }
         document.getElementById('settings-left-provider').value = leftProvider;
         document.getElementById('settings-right-provider').value = rightProvider;
         document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
@@ -1762,9 +1943,6 @@
         document.getElementById('settings-tools-dir').value = currentConfig.tools_dir || "";
         document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
-        if (ollamaUrlField) {
-          ollamaUrlField.value = currentConfig.ollama_url;
-        }
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
         refreshContextProbeIndicator();
 
@@ -2431,33 +2609,39 @@
       return lines.join('\n');
     }
 
-    async function runContextProbeBatch() {
+    async function runContextProbeBatch(options = {}) {
       const statusEl = document.getElementById('context-probe-status');
       const outputEl = document.getElementById('context-probe-output');
       const questionEl = document.getElementById('context-probe-question');
       const expectedEl = document.getElementById('context-probe-expected');
       const iterationEl = document.getElementById('context-probe-batch-iterations');
       const autoResetEl = document.getElementById('context-probe-batch-auto-reset');
+      const suppressUi = options.suppressUi === true;
 
       if (!statusEl || !outputEl || !questionEl || !expectedEl || !iterationEl || !autoResetEl) {
         appendTerminalLog('Context probe batch is unavailable: required UI elements are missing.');
         return;
       }
 
-      const question = (questionEl.value || '').trim();
-      const expectedToken = (expectedEl.value || '').trim();
+      const question = String(options.question ?? questionEl.value ?? '').trim();
+      const expectedToken = String(options.expectedToken ?? expectedEl.value ?? '').trim();
       if (!question) {
-        statusEl.textContent = 'Probe question is empty.';
-        outputEl.value = 'Please enter a probe question before running a batch.';
+        if (!suppressUi) {
+          statusEl.textContent = 'Probe question is empty.';
+          outputEl.value = 'Please enter a probe question before running a batch.';
+        }
         return;
       }
 
-      const parsedIterations = Number(iterationEl.value || 8);
+      const parsedIterations = Number(options.iterations ?? iterationEl.value ?? 8);
       const iterations = Math.max(1, Math.min(50, Number.isFinite(parsedIterations) ? Math.floor(parsedIterations) : 8));
-      const autoReset = autoResetEl.checked;
+      const autoReset = options.autoReset ?? autoResetEl.checked;
+      const reportPrefix = String(options.reportPrefix || 'context_probe_report').trim() || 'context_probe_report';
 
-      statusEl.textContent = `Running batch for current pair (${iterations} iterations)...`;
-      outputEl.value = 'Batch run in progress...';
+      if (!suppressUi) {
+        statusEl.textContent = `Running batch for current pair (${iterations} iterations)...`;
+        outputEl.value = 'Batch run in progress...';
+      }
 
       const appendixCandidates = await getProbeAppendixCandidates(true);
       const probeEvidence = await getProbeEvidence(question, true);
@@ -2477,7 +2661,9 @@
       let rightPassCount = 0;
 
       for (let i = 0; i < iterations; i += 1) {
-        statusEl.textContent = `Batch iteration ${i + 1}/${iterations} in progress...`;
+        if (!suppressUi) {
+          statusEl.textContent = `Batch iteration ${i + 1}/${iterations} in progress...`;
+        }
 
         if (autoReset) {
           await resetSinglePaneContext('left', false);
@@ -2509,8 +2695,8 @@
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const resolvedBasePath = (currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || '').trim();
       const reportPath = resolvedBasePath
-        ? `${resolvedBasePath}/context_probe_report_${timestamp}.md`
-        : `context_probe_report_${timestamp}.md`;
+        ? `${resolvedBasePath}/${reportPrefix}_${timestamp}.md`
+        : `${reportPrefix}_${timestamp}.md`;
       let reportSaveError = null;
 
       try {
@@ -2521,18 +2707,102 @@
         appendTerminalLog(`Context probe batch report save failed: ${err}`);
       }
 
-      statusEl.textContent = `Batch complete: total passes ${totalPassCount}/${iterations * 2}.`;
-      outputEl.value = [
-        `Batch complete for current pair.`,
-        `Iterations: ${iterations}`,
-        `Auto-reset: ${autoReset ? 'yes' : 'no'}`,
-        `Left passes: ${leftPassCount}/${iterations}`,
-        `Right passes: ${rightPassCount}/${iterations}`,
-        `Total passes: ${totalPassCount}/${iterations * 2}`,
-        `Report: ${reportPath}`,
-        reportSaveError ? `Report save error: ${reportSaveError}` : 'Report save: ok',
-      ].join('\n');
+      if (!suppressUi) {
+        statusEl.textContent = `Batch complete: total passes ${totalPassCount}/${iterations * 2}.`;
+        outputEl.value = [
+          `Batch complete for current pair.`,
+          `Iterations: ${iterations}`,
+          `Auto-reset: ${autoReset ? 'yes' : 'no'}`,
+          `Left passes: ${leftPassCount}/${iterations}`,
+          `Right passes: ${rightPassCount}/${iterations}`,
+          `Total passes: ${totalPassCount}/${iterations * 2}`,
+          `Report: ${reportPath}`,
+          reportSaveError ? `Report save error: ${reportSaveError}` : 'Report save: ok',
+        ].join('\n');
+      }
       refreshContextProbeIndicator();
+
+      return {
+        batchResult,
+        reportPath,
+        reportSaveError,
+      };
+    }
+
+    function buildSafeSuiteSlug(input) {
+      const base = String(input || 'suite').toLowerCase().trim();
+      const slug = base.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      return slug || 'suite';
+    }
+
+    async function runSelectedProbeSuite() {
+      const select = document.getElementById('context-probe-suite-select');
+      const statusEl = document.getElementById('context-probe-status');
+      const outputEl = document.getElementById('context-probe-output');
+      const suiteName = String(select?.value || '').trim();
+      if (!suiteName) {
+        appendTerminalLog('AI testing suite run skipped: no suite selected.');
+        return;
+      }
+
+      const suite = getProbeSuitesForCurrentScope().find((item) => item.name === suiteName);
+      const tests = Array.isArray(suite?.tests) ? suite.tests : [];
+      if (tests.length === 0) {
+        appendTerminalLog(`AI testing suite run skipped: suite '${suiteName}' has no tests.`);
+        return;
+      }
+
+      statusEl.textContent = `Running AI testing suite '${suiteName}' (${tests.length} test set${tests.length === 1 ? '' : 's'})...`;
+      outputEl.value = 'Suite run in progress...';
+
+      const suiteSlug = buildSafeSuiteSlug(suiteName);
+      const summaries = [];
+      let aggregatePasses = 0;
+      let aggregateChecks = 0;
+
+      for (let i = 0; i < tests.length; i += 1) {
+        const test = tests[i] || {};
+        statusEl.textContent = `Running suite '${suiteName}' test ${i + 1}/${tests.length}...`;
+        applyProbeConfigToUi(test);
+        const result = await runContextProbeBatch({
+          question: test.question,
+          expectedToken: test.expectedToken,
+          iterations: test.iterations,
+          autoReset: test.autoReset,
+          suppressUi: true,
+          reportPrefix: `context_probe_suite_${suiteSlug}_test_${i + 1}`,
+        });
+
+        const left = Number(result?.batchResult?.leftPassCount || 0);
+        const right = Number(result?.batchResult?.rightPassCount || 0);
+        const iterations = Number(result?.batchResult?.iterations || test.iterations || 0);
+        const totalPass = left + right;
+        const totalChecks = iterations * 2;
+
+        aggregatePasses += totalPass;
+        aggregateChecks += totalChecks;
+
+        summaries.push([
+          `Test ${i + 1}:`,
+          `Question: ${String(test.question || '').trim() || '(empty)'}`,
+          `Expected: ${String(test.expectedToken || '').trim() || '(none)'}`,
+          `Passes: ${totalPass}/${totalChecks}`,
+          `Report: ${result?.reportPath || 'not saved'}`,
+          result?.reportSaveError ? `Report save error: ${result.reportSaveError}` : 'Report save: ok',
+          ''
+        ].join('\n'));
+      }
+
+      const passRate = aggregateChecks > 0 ? ((aggregatePasses / aggregateChecks) * 100).toFixed(1) : '0.0';
+      statusEl.textContent = `Suite '${suiteName}' complete: ${aggregatePasses}/${aggregateChecks} (${passRate}%).`;
+      outputEl.value = [
+        `AI Testing Suite: ${suiteName}`,
+        `Theory scope: ${getProbeSuiteScopeKey()}`,
+        `Aggregate passes: ${aggregatePasses}/${aggregateChecks} (${passRate}%)`,
+        '',
+        ...summaries,
+      ].join('\n');
+      appendTerminalLog(`AI testing suite complete: ${suiteName} (${aggregatePasses}/${aggregateChecks}).`);
     }
 
     function getProviderDisplayName(provider) {
@@ -2900,6 +3170,7 @@ async function restoreVersion() {
 
     function openAiTestingModal() {
       document.getElementById('ai-testing-modal').style.display = 'flex';
+      refreshProbeSuiteSelector();
       refreshContextProbeIndicator();
     }
 
@@ -3502,7 +3773,6 @@ async function restoreVersion() {
       const term = document.getElementById('settings-terminal').value;
       const geminiKey = document.getElementById('settings-gemini-key').value;
       const openaiKey = document.getElementById('settings-openai-key').value;
-      const ollamaUrl = document.getElementById('settings-ollama-url')?.value || currentConfig?.ollama_url || '';
       const leftProvider = document.getElementById('settings-left-provider').value;
       const leftModelRaw = document.getElementById('settings-left-model').value;
       const rightProvider = document.getElementById('settings-right-provider').value;
@@ -3524,7 +3794,6 @@ async function restoreVersion() {
         terminal_app: term,
         gemini_key: geminiKey,
         openai_key: openaiKey,
-        ollama_url: ollamaUrl,
         left_provider: leftProvider,
         left_model: leftModel,
         right_provider: rightProvider,
@@ -3548,7 +3817,6 @@ async function restoreVersion() {
         currentConfig.terminal_app = term;
         currentConfig.gemini_api_key = geminiKey;
         currentConfig.openai_api_key = openaiKey;
-        currentConfig.ollama_url = ollamaUrl;
         currentConfig.left_provider = leftProvider;
         currentConfig.left_model = leftModel;
         currentConfig.right_provider = rightProvider;

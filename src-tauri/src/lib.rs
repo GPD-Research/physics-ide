@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::{AppHandle, Manager};
 
 #[derive(Deserialize, Default)]
@@ -149,7 +148,6 @@ pub struct AppConfig {
     terminal_app: String,
     gemini_api_key: String,
     openai_api_key: String,
-    ollama_url: String,
     left_provider: String,
     left_model: String,
     right_provider: String,
@@ -177,7 +175,6 @@ impl Default for AppConfig {
             terminal_app: String::new(),
             gemini_api_key: String::new(),
             openai_api_key: String::new(),
-            ollama_url: "http://127.0.0.1:11434".to_string(),
             left_provider: "openai".to_string(),
             left_model: "gpt-4.1".to_string(),
             right_provider: "openai".to_string(),
@@ -217,8 +214,6 @@ pub struct SaveUserSettingsPayload {
     pub gemini_key: String,
     #[serde(alias = "openaiKey")]
     pub openai_key: String,
-    #[serde(alias = "ollamaUrl")]
-    pub ollama_url: String,
     #[serde(alias = "leftProvider")]
     pub left_provider: String,
     #[serde(alias = "leftModel")]
@@ -1170,25 +1165,17 @@ mod llm_prompt_tests {
 async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
-    let temperature = ollama_temperature_for_pane(&pane);
 
     let prompt = build_prompt_from_history(&history);
     let prompt_for_model = prompt;
-    let ollama_messages = if provider.eq_ignore_ascii_case("ollama") {
-        build_ollama_messages(&history)
-    } else {
-        Vec::new()
-    };
 
     let provider_name = provider.to_ascii_lowercase();
-    let ollama_url = config.ollama_url.clone();
     let openai_api_key = config.openai_api_key.clone();
     let gemini_api_key = config.gemini_api_key.clone();
     let request_history = history.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
         match provider_name.as_str() {
-            "ollama" => call_ollama(&ollama_url, &model, &ollama_messages, temperature),
             "openai" => call_openai(&openai_api_key, &model, &prompt_for_model),
             "gemini" => call_gemini(&gemini_api_key, &model, &request_history),
             other => Err(format!("Unsupported provider '{}'. Choose OpenAI or Gemini.", other)),
@@ -1246,14 +1233,6 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
     (provider, model)
 }
 
-fn ollama_temperature_for_pane(pane: &str) -> f32 {
-    if pane.eq_ignore_ascii_case("left") {
-        0.3
-    } else {
-        0.7
-    }
-}
-
 fn normalize_model_for_provider(provider: &str, model: &str) -> String {
     let trimmed = model.trim().trim_start_matches("models/");
     match provider.to_ascii_lowercase().as_str() {
@@ -1294,201 +1273,6 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
         }
     }
     prompt.trim().to_string()
-}
-
-fn build_ollama_messages(history: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    let mut messages = vec![serde_json::json!({
-        "role": "system",
-        "content": "You are a helpful scientific assistant. Respond concisely and use the repository context. Return only the final answer. Do not output internal reasoning, scratch work, or thinking traces unless explicitly requested. For file-location questions, return exact relative file paths from available context and never only a folder path unless no file candidate exists. If multiple candidates exist, label Primary and Alternate with confidence scores from 0.00 to 1.00. If evidence is insufficient, say so explicitly and do not guess."
-    })];
-
-    for entry in history {
-        let Some(role) = entry.get("role").and_then(|value| value.as_str()) else {
-            continue;
-        };
-
-        let normalized_role = match role.to_ascii_lowercase().as_str() {
-            "assistant" | "model" => "assistant",
-            "system" => "system",
-            _ => "user",
-        };
-
-        let content = if let Some(text) = entry.get("content").and_then(|value| value.as_str()) {
-            text.trim().to_string()
-        } else if let Some(parts) = entry.get("parts").and_then(|value| value.as_array()) {
-            parts
-                .iter()
-                .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
-                .collect::<Vec<_>>()
-                .join(" ")
-                .trim()
-                .to_string()
-        } else {
-            String::new()
-        };
-
-        if !content.is_empty() {
-            messages.push(serde_json::json!({
-                "role": normalized_role,
-                "content": content,
-            }));
-        }
-    }
-
-    messages
-}
-
-fn call_ollama(ollama_url: &str, model: &str, messages: &[serde_json::Value], temperature: f32) -> Result<String, String> {
-    let url = if ollama_url.trim().is_empty() {
-        "http://127.0.0.1:11434/api/chat".to_string()
-    } else {
-        format!("{}/api/chat", ollama_url.trim_end_matches('/'))
-    };
-
-    let client = reqwest::blocking::Client::new();
-    let body = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "stream": false,
-        "options": {
-            "temperature": temperature
-        }
-    });
-
-    let response = match client.post(&url).json(&body).send() {
-        Ok(response) => response,
-        Err(http_error) => {
-            return fallback_to_ollama_cli(model, messages).map_err(|cli_error| {
-                format!("Ollama request failed: {http_error}; CLI fallback failed: {cli_error}")
-            });
-        }
-    };
-    if !response.status().is_success() {
-        return Err(format!("Ollama request failed with status {}", response.status()));
-    }
-
-    let parsed: serde_json::Value = response.json().map_err(|e| format!("Ollama response parsing failed: {e}"))?;
-    let content = parsed
-        .get("message")
-        .and_then(|message| message.get("content"))
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| "Ollama returned no response text".to_string())?;
-
-    Ok(normalize_ollama_reply(model, &content))
-}
-
-fn fallback_to_ollama_cli(model: &str, messages: &[serde_json::Value]) -> Result<String, String> {
-    let prompt = messages
-        .iter()
-        .filter_map(|message| {
-            let role = message.get("role").and_then(|value| value.as_str())?;
-            let content = message.get("content").and_then(|value| value.as_str())?.trim();
-            if content.is_empty() {
-                None
-            } else {
-                let label = match role {
-                    "system" => "System",
-                    "assistant" => "Assistant",
-                    _ => "User",
-                };
-                Some(format!("{label}: {content}"))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let ollama_binaries = ["ollama", "/usr/local/bin/ollama", "/usr/bin/ollama"];
-    let mut last_error = None;
-
-    for binary in ollama_binaries {
-        match Command::new(binary)
-            .arg("run")
-            .arg(model)
-            .arg(&prompt)
-            .output()
-        {
-            Ok(output) => {
-                if output.status.success() {
-                    let stdout = strip_ansi_sequences(&String::from_utf8_lossy(&output.stdout)).trim().to_string();
-                    if stdout.is_empty() {
-                        return Err("ollama CLI returned empty output".to_string());
-                    }
-                    return Ok(normalize_ollama_reply(model, &stdout));
-                }
-
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                last_error = Some(if stderr.is_empty() {
-                    format!("ollama CLI exited with status {}", output.status)
-                } else {
-                    stderr
-                });
-            }
-            Err(error) => {
-                last_error = Some(error.to_string());
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| "ollama CLI is unavailable".to_string()))
-}
-
-fn strip_ansi_sequences(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if matches!(chars.peek(), Some('[')) {
-                let _ = chars.next();
-                while let Some(next) = chars.next() {
-                    if ('@'..='~').contains(&next) {
-                        break;
-                    }
-                }
-                continue;
-            }
-            continue;
-        }
-
-        output.push(ch);
-    }
-
-    output
-}
-
-fn normalize_ollama_reply(model: &str, raw: &str) -> String {
-    let mut cleaned = strip_ansi_sequences(raw).trim().to_string();
-
-    if model.to_ascii_lowercase().starts_with("deepseek-r1") {
-        cleaned = strip_think_tags(&cleaned);
-        cleaned = strip_done_thinking_prefix(&cleaned);
-    }
-
-    cleaned.trim().to_string()
-}
-
-fn strip_think_tags(input: &str) -> String {
-    let mut text = input.to_string();
-    while let Some(start) = text.find("<think>") {
-        if let Some(end_relative) = text[start..].find("</think>") {
-            let end = start + end_relative + "</think>".len();
-            text.replace_range(start..end, "");
-        } else {
-            text.replace_range(start..text.len(), "");
-            break;
-        }
-    }
-    text
-}
-
-fn strip_done_thinking_prefix(input: &str) -> String {
-    let marker = "...done thinking.";
-    if let Some(position) = input.to_ascii_lowercase().find(marker) {
-        let start = position + marker.len();
-        return input[start..].trim().to_string();
-    }
-    input.to_string()
 }
 
 fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
@@ -3230,7 +3014,6 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.terminal_app = payload.terminal_app;
     config.gemini_api_key = payload.gemini_key;
     config.openai_api_key = payload.openai_key;
-    config.ollama_url = payload.ollama_url;
     config.left_provider = payload.left_provider;
     config.left_model = payload.left_model;
     config.right_provider = payload.right_provider;
@@ -3439,11 +3222,10 @@ mod tests {
             "terminalApp": "gnome-terminal",
             "geminiKey": "key",
             "openaiKey": "openai",
-            "ollamaUrl": "http://127.0.0.1:11434",
             "leftProvider": "gemini",
             "leftModel": "gemini-2.0-flash",
-            "rightProvider": "ollama",
-            "rightModel": "qwen2.5",
+            "rightProvider": "openai",
+            "rightModel": "gpt-4.1-mini",
             "projectRootDir": "/tmp/project",
             "theoryMdDir": "/tmp/theory",
             "masterAxiomFile": "/tmp/master.md",
@@ -3459,11 +3241,10 @@ mod tests {
             "terminal_app": "gnome-terminal",
             "gemini_key": "key",
             "openai_key": "openai",
-            "ollama_url": "http://127.0.0.1:11434",
             "left_provider": "gemini",
             "left_model": "gemini-2.0-flash",
-            "right_provider": "ollama",
-            "right_model": "qwen2.5",
+            "right_provider": "openai",
+            "right_model": "gpt-4.1-mini",
             "project_root_dir": "/tmp/project",
             "theory_md_dir": "/tmp/theory",
             "master_axiom_file": "/tmp/master.md",
@@ -3479,11 +3260,10 @@ mod tests {
             "terminal_app": "gnome-terminal",
             "gemini_key": "key",
             "openai_key": "openai",
-            "ollama_url": "http://127.0.0.1:11434",
             "left_provider": "gemini",
             "left_model": "gemini-2.0-flash",
-            "right_provider": "ollama",
-            "right_model": "qwen2.5",
+            "right_provider": "openai",
+            "right_model": "gpt-4.1-mini",
             "project_root_dir": "/tmp/project",
             "theory_md_dir": "/tmp/theory",
             "master_axiom_file": "/tmp/master.md",
