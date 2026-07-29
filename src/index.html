@@ -1841,10 +1841,12 @@
       const leftLabel = document.getElementById('left-pane-history-mode-label');
       const rightLabel = document.getElementById('right-pane-history-mode-label');
       if (leftLabel) {
-        leftLabel.textContent = `Left: ${getPaneHistoryPreference('left') ? 'ON' : 'OFF'}`;
+        const leftOn = getPaneHistoryPreference('left');
+        leftLabel.innerHTML = `Left: <span style="color:${leftOn ? 'var(--accent)' : '#f38ba8'}; font-weight: 700;">${leftOn ? 'ON' : 'OFF'}</span>`;
       }
       if (rightLabel) {
-        rightLabel.textContent = `Right: ${getPaneHistoryPreference('right') ? 'ON' : 'OFF'}`;
+        const rightOn = getPaneHistoryPreference('right');
+        rightLabel.innerHTML = `Right: <span style="color:${rightOn ? 'var(--accent)' : '#f38ba8'}; font-weight: 700;">${rightOn ? 'ON' : 'OFF'}</span>`;
       }
     }
 
