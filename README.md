@@ -113,3 +113,110 @@ This repository is under active development. The current implementation is inten
 - Provider API keys entered in settings are stored locally on the device in application config as plain text.
 - Keys are used only to send requests to the provider selected in the UI.
 - For stronger secret handling, prefer environment variables or an OS keychain-backed workflow.
+
+## Version 7 Milestone
+
+Version 7 marks a major milestone for physics-IDE.
+
+- Project-aware AI behavior is now stable enough to materially outperform a generic side-by-side browser LLM workflow for in-project theory work.
+- The desktop workflow now supports a coherent paradigm for theoretical-physics modeling, iteration, and testing, with AI carrying repetitive context-heavy tasks while the human remains the primary director of theory evolution.
+
+## Version 8 Prospective Goals
+
+Version 8 is focused on refinement, flexibility, and polish.
+
+- model freedom: user-selected OpenAI and Gemini model IDs without code edits;
+- workflow consolidation: migrate mature workflows into the top-menu Tools dropdown to free left/right wing real estate;
+- layout control: expand View controls so users can toggle pane elements such as file tree and primer-related surfaces;
+- primer simplification: evaluate how much primer work can be automated by project-aware context, including an idea-pad-driven pathway that can append daily notes into primer context;
+- UX coherence: keep customization centered on path/location setup while reducing repetitive manual context assembly.
+
+Tracking references:
+
+- docs/releases/v7-release-checklist.md
+- docs/releases/v7-release-notes.md
+- docs/releases/v8-model-flexibility-plan.md
+
+## Ubuntu Linux Full Build Guide (v7)
+
+Use this sequence on a local Ubuntu laptop for a clean production build.
+
+1. Install system dependencies
+
+```bash
+sudo apt update
+sudo apt install -y \
+   build-essential \
+   curl \
+   wget \
+   file \
+   libgtk-3-dev \
+   libayatana-appindicator3-dev \
+   librsvg2-dev \
+   patchelf \
+   libwebkit2gtk-4.1-dev
+```
+
+2. Install Node.js 20 LTS (if not already installed)
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v
+npm -v
+```
+
+3. Install Rust toolchain (if not already installed)
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+rustc -V
+cargo -V
+```
+
+4. Clone and install project dependencies
+
+```bash
+git clone https://github.com/GPD-Research/physics-ide.git
+cd physics-ide
+npm install
+```
+
+5. Run automated checks before packaging
+
+```bash
+node --test src/ai-config.test.js
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+6. Build production desktop artifacts
+
+```bash
+npm run tauri -- build
+```
+
+7. Locate artifacts
+
+- Debian package and related artifacts are produced under:
+   - src-tauri/target/release/bundle/
+
+8. Install local Debian package (if generated)
+
+```bash
+sudo dpkg -i src-tauri/target/release/bundle/deb/*.deb
+sudo apt -f install -y
+```
+
+9. Launch and smoke-check
+
+- open the installed app;
+- verify workspace loading, AI provider settings, and AI Testing modal flows;
+- run one context probe and confirm report generation/open-report behavior.
+
+If build issues appear, capture full logs:
+
+```bash
+npm run tauri -- build > build.log 2>&1
+tail -n 120 build.log
+```

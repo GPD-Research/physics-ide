@@ -22,9 +22,9 @@ v8 should focus on user-controlled model freedom while preserving reliability an
 
 ### Remaining to formalize before v7 tag
 
-- [ ] Write explicit v7 release checklist and tagging gates (similar to v6 checklist).
+- [x] Write explicit v7 release checklist and tagging gates (similar to v6 checklist).
 - [ ] Cross-platform packaging smoke checks (Linux/Windows/macOS) recorded for this feature set.
-- [ ] Final release notes for v7 feature deltas.
+- [x] Final release notes for v7 feature deltas.
 
 ## v8 scope: user-defined OpenAI/Gemini models
 
@@ -40,6 +40,39 @@ Allow users to enter any model ID for OpenAI or Gemini (as enabled in their prov
 - [ ] Persist custom model IDs in user settings.
 - [ ] Use custom IDs directly in runtime dispatch.
 - [ ] Keep safe fallback behavior when custom model fails.
+
+## v8 scope: workflow polish and UI real-estate control
+
+### Goal
+
+Make v8 feel polished and user-directed by moving workflow tools into top-menu flows and allowing users to control left/right pane visibility from View.
+
+### Tools menu integration
+
+- [ ] Move mature workflow actions into top-menu Tools.
+- [ ] Keep Tools organized by category (manuscript, testing, data, utilities).
+- [ ] Reduce left/right wing control clutter by removing duplicated action surfaces.
+- [ ] Ensure each Tools action reports status and output location clearly.
+
+### View menu expansion
+
+- [ ] Add View toggles for major left-pane elements (file tree, terminal, primer widgets where applicable).
+- [ ] Add View toggles for major right-pane elements (AI/testing widgets and auxiliary panels).
+- [ ] Persist View visibility preferences across restarts.
+- [ ] Add quick "reset layout" option in View.
+
+### Primer workflow simplification
+
+- [ ] Evaluate which primer tasks can be automated by project-aware AI context.
+- [ ] Add optional "Idea Pad to Primer" flow that can append user notes into primer context.
+- [ ] Keep Customize focused on file locations while automating primer assembly where safe.
+- [ ] Add traceability notes showing what user text was promoted into primer context.
+
+### UX quality targets
+
+- [ ] Improve discoverability of workflows through top-menu-first navigation.
+- [ ] Decrease time-to-first-use for new sessions with fewer mandatory setup steps.
+- [ ] Keep human-directed theory evolution primary while AI handles repetitive context stitching.
 
 ### Validation and safety
 
