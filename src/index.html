@@ -930,11 +930,19 @@
               <label for="context-probe-expected">Expected Match Token</label>
               <input id="context-probe-expected" placeholder="Appendix_G" value="Appendix_G">
             </div>
+            <div class="form-group">
+              <label for="context-probe-target-runs">Tuning Target Runs Per Model</label>
+              <input id="context-probe-target-runs" type="number" min="5" max="200" step="1" value="20" oninput="refreshContextProbeIndicator()">
+            </div>
             <div class="btn-group" style="margin-top: 5px;">
               <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
+              <button onclick="resetContextProbeHistory()">Reset Probe History</button>
             </div>
             <div id="context-probe-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
               Ready to benchmark context precision.
+            </div>
+            <div id="context-probe-indicator" style="font-size: 0.75rem; color: var(--accent-dim); margin-top: 4px; min-height: 30px; white-space: pre-line;">
+              Tuning indicator will appear after probe runs.
             </div>
             <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
           </div>
@@ -1516,6 +1524,7 @@
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url;
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
+        refreshContextProbeIndicator();
 
         const configuredProjectRoot = (currentConfig.project_root_dir || '').trim();
         const rememberedRoot = (currentConfig.last_root_dir || '').trim();
@@ -1868,6 +1877,61 @@
       return 'Needs tuning';
     }
 
+    function getContextProbeTargetRuns() {
+      const input = document.getElementById('context-probe-target-runs');
+      const parsed = Number(input?.value || 20);
+      if (!Number.isFinite(parsed)) return 20;
+      return Math.max(5, Math.min(200, Math.floor(parsed)));
+    }
+
+    function buildModelIndicatorLine(paneLabel, providerName, modelName, metrics, readiness, targetRuns) {
+      const runs = Number(metrics?.runs || 0);
+      const progress = Math.min(100, Math.round((runs / targetRuns) * 100));
+      const remainingRuns = Math.max(0, targetRuns - runs);
+      const passRate = (((metrics?.passRate || 0) * 100)).toFixed(1);
+      const folderRate = (((metrics?.folderOnlyRate || 0) * 100)).toFixed(1);
+      const avgScore = (metrics?.avgScore || 0).toFixed(2);
+      return `${paneLabel} (${providerName} | ${modelName}): ${runs}/${targetRuns} runs (${progress}%, remaining ${remainingRuns}), pass ${passRate}%, avg ${avgScore}/3, folder-only ${folderRate}%, ${readiness}`;
+    }
+
+    function refreshContextProbeIndicator() {
+      const indicator = document.getElementById('context-probe-indicator');
+      if (!indicator) return;
+
+      const targetRuns = getContextProbeTargetRuns();
+      const leftProvider = getProviderDisplayName(getPaneProvider('left'));
+      const rightProvider = getProviderDisplayName(getPaneProvider('right'));
+      const leftModel = getPaneModelName('left');
+      const rightModel = getPaneModelName('right');
+      const leftKey = getPaneModelKey('left', leftProvider);
+      const rightKey = getPaneModelKey('right', rightProvider);
+      const leftMetrics = aggregateContextProbeMetrics(leftKey);
+      const rightMetrics = aggregateContextProbeMetrics(rightKey);
+      const leftReadiness = classifyModelReadiness(leftMetrics);
+      const rightReadiness = classifyModelReadiness(rightMetrics);
+
+      const lines = [
+        `Tuning target: ${targetRuns} runs/model`,
+        buildModelIndicatorLine('Left', leftProvider, leftModel, leftMetrics, leftReadiness, targetRuns),
+        buildModelIndicatorLine('Right', rightProvider, rightModel, rightMetrics, rightReadiness, targetRuns),
+      ];
+
+      indicator.textContent = lines.join('\n');
+    }
+
+    function resetContextProbeHistory() {
+      const confirmed = window.confirm('Reset all stored context probe history for every model?');
+      if (!confirmed) return;
+
+      localStorage.removeItem(CONTEXT_PROBE_HISTORY_KEY);
+      const statusEl = document.getElementById('context-probe-status');
+      const outputEl = document.getElementById('context-probe-output');
+      if (statusEl) statusEl.textContent = 'Probe history reset. Ready for a fresh tuning cycle.';
+      if (outputEl) outputEl.value = 'History cleared. Run the probe again to accumulate fresh metrics.';
+      refreshContextProbeIndicator();
+      appendTerminalLog('Context probe history reset for all models.');
+    }
+
     async function runContextProbe() {
       const statusEl = document.getElementById('context-probe-status');
       const outputEl = document.getElementById('context-probe-output');
@@ -2001,6 +2065,7 @@
       }).join('\n');
 
       appendTerminalLog(summaryLine);
+      refreshContextProbeIndicator();
     }
 
     function getProviderDisplayName(provider) {
@@ -3030,6 +3095,7 @@ async function restoreVersion() {
         saveBtn.classList.add("success");
         saveBtnText.innerHTML = "✓ Preferences Updated";
         appendTerminalLog(`Saved configuration. Native Terminal: ${term} | Editor: ${editor}`);
+        refreshContextProbeIndicator();
 
         setTimeout(() => {
           closeSettingsModal();
