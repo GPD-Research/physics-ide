@@ -17,14 +17,14 @@ Status: Draft pending final packaging smoke outcome.
 
 ## Packaging status
 
-- Linux packaging smoke: in progress in the Linux dev container.
+- Linux packaging smoke: attempted in the Linux dev container, but final pass/fail lines were not captured in this session.
 - Windows packaging smoke: not executed in this environment.
 - macOS packaging smoke: not executed in this environment.
 
 Active Linux log:
 - `/tmp/v7_tauri_build.log`
 
-Before finalizing this release note, replace the Linux line above with the actual build result and artifact paths.
+Before finalizing this release note, rerun Linux packaging and replace the Linux line above with the actual build result and artifact paths.
 
 ## Known limits
 

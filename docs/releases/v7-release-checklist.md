@@ -34,13 +34,13 @@ Evidence:
 
 ### 3) Packaging smoke checks
 
-- [ ] Linux package smoke test (in progress in this Linux dev container).
+- [ ] Linux package smoke test (attempted in this Linux dev container; final pass/fail not captured yet).
 - [ ] Windows package smoke test (blocked in this environment).
 - [ ] macOS package smoke test (blocked in this environment).
 
 Evidence:
 - Active Linux build log path: `/tmp/v7_tauri_build.log`.
-- Record final Linux success/failure lines before tag.
+- Build log currently contains compile progress only; rerun and capture final success/failure lines before tag.
 - Windows/macOS checks require platform-native validation or CI runners.
 
 ### 4) Release documentation
