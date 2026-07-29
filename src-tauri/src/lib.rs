@@ -1259,7 +1259,8 @@ fn normalize_model_for_provider(provider: &str, model: &str) -> String {
             other => other.to_string(),
         },
         "openai" => match trimmed {
-            "gpt-4" | "gpt-4o-mini" => "gpt-4.1-mini".to_string(),
+            "gpt-4" | "gpt-4o" => "gpt-4.1".to_string(),
+            "gpt-4o-mini" => "gpt-4.1-mini".to_string(),
             other if other.is_empty() => "gpt-4.1-mini".to_string(),
             other => other.to_string(),
         },
@@ -1523,7 +1524,7 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
         let requested = normalize_model_for_provider("openai", model);
         let mut candidates = vec![requested.clone()];
 
-        for fallback in ["gpt-4.1-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini-2024-07-18"] {
+        for fallback in ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini-2024-07-18"] {
             if !candidates
                 .iter()
                 .any(|existing| existing.eq_ignore_ascii_case(fallback))
@@ -3123,9 +3124,9 @@ mod tests {
 
     #[test]
     fn keeps_explicit_openai_model_selection_when_supported() {
-        assert_eq!(normalize_model_for_provider("openai", "gpt-4o"), "gpt-4o");
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4o"), "gpt-4.1");
         assert_eq!(normalize_model_for_provider("openai", "gpt-4o-mini"), "gpt-4.1-mini");
-        assert_eq!(normalize_model_for_provider("openai", "gpt-4"), "gpt-4.1-mini");
+        assert_eq!(normalize_model_for_provider("openai", "gpt-4"), "gpt-4.1");
     }
 
     #[test]
