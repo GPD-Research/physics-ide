@@ -2264,14 +2264,17 @@
 
       const reportMarkdown = buildContextProbeReportMarkdown(batchResult);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const reportPath = currentWorkspacePath
-        ? `${currentWorkspacePath}/context_probe_report_${timestamp}.md`
+      const resolvedBasePath = (currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || '').trim();
+      const reportPath = resolvedBasePath
+        ? `${resolvedBasePath}/context_probe_report_${timestamp}.md`
         : `context_probe_report_${timestamp}.md`;
+      let reportSaveError = null;
 
       try {
         await invoke('save_scratchpad_content', { content: reportMarkdown, path: reportPath });
         appendTerminalLog(`Context probe batch report saved: ${reportPath}`);
       } catch (err) {
+        reportSaveError = String(err);
         appendTerminalLog(`Context probe batch report save failed: ${err}`);
       }
 
@@ -2284,6 +2287,7 @@
         `Right passes: ${rightPassCount}/${iterations}`,
         `Total passes: ${totalPassCount}/${iterations * 2}`,
         `Report: ${reportPath}`,
+        reportSaveError ? `Report save error: ${reportSaveError}` : 'Report save: ok',
       ].join('\n');
       refreshContextProbeIndicator();
     }
