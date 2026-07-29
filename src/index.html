@@ -1422,6 +1422,7 @@
     const { invoke } = window.__TAURI__.core;
     const SECURITY_NOTE_DISMISSED_KEY = 'physics-ide-security-note-dismissed-v1';
     const PROJECT_TITLE_KEY = 'physics-ide-project-title';
+    const CONTEXT_PROBE_HISTORY_KEY = 'physics-ide-context-probe-history-v1';
 
     let currentConfig = null;
     const chatHistories = {
@@ -1781,6 +1782,92 @@
       };
     }
 
+    function getPaneModelName(pane) {
+      if (!currentConfig) return 'unknown-model';
+      return pane === 'left'
+        ? (currentConfig.left_model || 'unknown-model')
+        : (currentConfig.right_model || 'unknown-model');
+    }
+
+    function getPaneModelKey(pane, providerName) {
+      const model = getPaneModelName(pane);
+      const provider = (providerName || 'unknown-provider').toLowerCase();
+      return `${provider}::${model}`;
+    }
+
+    function loadContextProbeHistory() {
+      try {
+        const raw = localStorage.getItem(CONTEXT_PROBE_HISTORY_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (_err) {
+        return {};
+      }
+    }
+
+    function saveContextProbeHistory(history) {
+      try {
+        localStorage.setItem(CONTEXT_PROBE_HISTORY_KEY, JSON.stringify(history));
+      } catch (_err) {
+        // Ignore storage failures so probe still works in constrained environments.
+      }
+    }
+
+    function recordContextProbeResult(modelKey, evaluation) {
+      const history = loadContextProbeHistory();
+      const rows = Array.isArray(history[modelKey]) ? history[modelKey] : [];
+
+      rows.push({
+        ts: new Date().toISOString(),
+        passed: Boolean(evaluation?.passed),
+        score: Number(evaluation?.score || 0),
+        folderOnly: Boolean(evaluation?.folderOnly),
+      });
+
+      // Keep latest 100 probe rows per model key.
+      history[modelKey] = rows.slice(-100);
+      saveContextProbeHistory(history);
+    }
+
+    function aggregateContextProbeMetrics(modelKey) {
+      const history = loadContextProbeHistory();
+      const rows = Array.isArray(history[modelKey]) ? history[modelKey] : [];
+      const runs = rows.length;
+      if (runs === 0) {
+        return {
+          runs: 0,
+          passRate: 0,
+          avgScore: 0,
+          folderOnlyRate: 0,
+        };
+      }
+
+      const passCount = rows.filter((row) => row.passed).length;
+      const folderOnlyCount = rows.filter((row) => row.folderOnly).length;
+      const totalScore = rows.reduce((sum, row) => sum + Number(row.score || 0), 0);
+
+      return {
+        runs,
+        passRate: passCount / runs,
+        avgScore: totalScore / runs,
+        folderOnlyRate: folderOnlyCount / runs,
+      };
+    }
+
+    function classifyModelReadiness(metrics) {
+      if (!metrics || metrics.runs < 5) {
+        return 'Insufficient data';
+      }
+      if (metrics.passRate >= 0.9 && metrics.folderOnlyRate <= 0.05 && metrics.avgScore >= 2.7) {
+        return 'Primary-ready';
+      }
+      if (metrics.passRate >= 0.7 && metrics.folderOnlyRate <= 0.15 && metrics.avgScore >= 2.0) {
+        return 'Fallback-ready';
+      }
+      return 'Needs tuning';
+    }
+
     async function runContextProbe() {
       const statusEl = document.getElementById('context-probe-status');
       const outputEl = document.getElementById('context-probe-output');
@@ -1824,35 +1911,57 @@
         dispatchPromptToPane('right', prompt, 'Context Probe'),
       ]);
 
-      const normalizeResult = (result, side, providerName) => {
+      const normalizeResult = (result, pane, side, providerName) => {
+        const modelName = getPaneModelName(pane);
+        const modelKey = getPaneModelKey(pane, providerName);
+
         if (result.status === 'rejected') {
+          const failedEvaluation = {
+            passed: false,
+            score: 0,
+            hasFilePath: false,
+            hasExpected: false,
+            hasConfidence: false,
+            folderOnly: false
+          };
+
+          recordContextProbeResult(modelKey, failedEvaluation);
+          const aggregate = aggregateContextProbeMetrics(modelKey);
+
           return {
+            pane,
             side,
             providerName,
+            modelName,
+            modelKey,
             reply: `Error: ${String(result.reason)}`,
-            evaluation: {
-              passed: false,
-              score: 0,
-              hasFilePath: false,
-              hasExpected: false,
-              hasConfidence: false,
-              folderOnly: false
-            }
+            evaluation: failedEvaluation,
+            aggregate,
+            readiness: classifyModelReadiness(aggregate)
           };
         }
 
         const reply = result.value || '';
+        const evaluation = evaluateProbeReply(reply, expectedToken);
+        recordContextProbeResult(modelKey, evaluation);
+        const aggregate = aggregateContextProbeMetrics(modelKey);
+
         return {
+          pane,
           side,
           providerName,
+          modelName,
+          modelKey,
           reply,
-          evaluation: evaluateProbeReply(reply, expectedToken)
+          evaluation,
+          aggregate,
+          readiness: classifyModelReadiness(aggregate)
         };
       };
 
       const report = [
-        normalizeResult(leftResult, 'Left', leftProvider),
-        normalizeResult(rightResult, 'Right', rightProvider),
+        normalizeResult(leftResult, 'left', 'Left', leftProvider),
+        normalizeResult(rightResult, 'right', 'Right', rightProvider),
       ];
 
       const totalScore = report.reduce((sum, item) => sum + item.evaluation.score, 0);
@@ -1872,9 +1981,19 @@
           `folder_only=${item.evaluation.folderOnly ? 'yes' : 'no'}`
         ].join(', ');
 
+        const aggregate = item.aggregate || {};
+        const aggregateLine = [
+          `runs=${aggregate.runs || 0}`,
+          `pass_rate=${(((aggregate.passRate || 0) * 100)).toFixed(1)}%`,
+          `avg_score=${(aggregate.avgScore || 0).toFixed(2)}/3`,
+          `folder_only_rate=${(((aggregate.folderOnlyRate || 0) * 100)).toFixed(1)}%`,
+          `label=${item.readiness || 'Insufficient data'}`
+        ].join(', ');
+
         return [
-          `${item.side} Pane (${item.providerName})`,
+          `${item.side} Pane (${item.providerName} | ${item.modelName})`,
           evalLine,
+          aggregateLine,
           'Reply:',
           item.reply,
           ''
