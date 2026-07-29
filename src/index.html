@@ -1520,6 +1520,20 @@
       return 'gemini-2.0-flash';
     }
 
+    function normalizeModelForProvider(provider, model) {
+      const normalizedProvider = (provider || '').toLowerCase();
+      const trimmedModel = (model || '').trim().replace(/^models\//, '');
+
+      if (normalizedProvider !== 'openai') {
+        return trimmedModel || getDefaultModelForPane('left', provider);
+      }
+
+      if (!trimmedModel) return 'gpt-4.1-mini';
+      if (trimmedModel === 'gpt-4' || trimmedModel === 'gpt-4o') return 'gpt-4.1';
+      if (trimmedModel === 'gpt-4o-mini') return 'gpt-4.1-mini';
+      return trimmedModel;
+    }
+
     async function initializeApp() {
       try {
         loadProjectTitle();
@@ -1541,8 +1555,8 @@
         document.getElementById('settings-terminal').value = currentConfig.terminal_app;
         const leftProvider = currentConfig.left_provider || 'ollama';
         const rightProvider = currentConfig.right_provider || 'ollama';
-        const leftModel = currentConfig.left_model || getDefaultModelForPane('left', leftProvider);
-        const rightModel = currentConfig.right_model || getDefaultModelForPane('right', rightProvider);
+        const leftModel = normalizeModelForProvider(leftProvider, currentConfig.left_model || getDefaultModelForPane('left', leftProvider));
+        const rightModel = normalizeModelForProvider(rightProvider, currentConfig.right_model || getDefaultModelForPane('right', rightProvider));
 
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
@@ -1830,9 +1844,13 @@
 
     function getPaneModelName(pane) {
       if (!currentConfig) return 'unknown-model';
-      return pane === 'left'
+      const provider = pane === 'left'
+        ? (currentConfig.left_provider || 'unknown-provider')
+        : (currentConfig.right_provider || 'unknown-provider');
+      const rawModel = pane === 'left'
         ? (currentConfig.left_model || 'unknown-model')
         : (currentConfig.right_model || 'unknown-model');
+      return normalizeModelForProvider(provider, rawModel);
     }
 
     function getPaneModelKey(pane, providerName) {
@@ -3252,9 +3270,11 @@ async function restoreVersion() {
       const openaiKey = document.getElementById('settings-openai-key').value;
       const ollamaUrl = document.getElementById('settings-ollama-url').value;
       const leftProvider = document.getElementById('settings-left-provider').value;
-      const leftModel = document.getElementById('settings-left-model').value;
+      const leftModelRaw = document.getElementById('settings-left-model').value;
       const rightProvider = document.getElementById('settings-right-provider').value;
-      const rightModel = document.getElementById('settings-right-model').value;
+      const rightModelRaw = document.getElementById('settings-right-model').value;
+      const leftModel = normalizeModelForProvider(leftProvider, leftModelRaw);
+      const rightModel = normalizeModelForProvider(rightProvider, rightModelRaw);
       const projectRoot = document.getElementById('settings-project-root').value;
       const theoryDir = document.getElementById('settings-theory-dir').value;
       const masterAxiom = document.getElementById('settings-master-axiom').value;
