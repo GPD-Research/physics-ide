@@ -146,7 +146,9 @@ pub struct AppConfig {
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
     #[serde(default = "default_true")]
-    preserve_thread_history: bool,
+    left_preserve_thread_history: bool,
+    #[serde(default = "default_true")]
+    right_preserve_thread_history: bool,
     reuse_notes_next_session: bool,
     first_session_completed: bool,
 }
@@ -171,7 +173,8 @@ impl Default for AppConfig {
             theme: "dark".to_string(),
             custom_accent: String::new(),
             custom_bg_panel: String::new(),
-            preserve_thread_history: true,
+            left_preserve_thread_history: true,
+            right_preserve_thread_history: true,
             reuse_notes_next_session: false,
             first_session_completed: false,
         }
@@ -221,8 +224,10 @@ pub struct SaveUserSettingsPayload {
     pub custom_accent: String,
     #[serde(alias = "customBgPanel")]
     pub custom_bg_panel: String,
-    #[serde(default = "default_true", alias = "preserveThreadHistory")]
-    pub preserve_thread_history: bool,
+    #[serde(default = "default_true", alias = "leftPreserveThreadHistory")]
+    pub left_preserve_thread_history: bool,
+    #[serde(default = "default_true", alias = "rightPreserveThreadHistory")]
+    pub right_preserve_thread_history: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -2974,7 +2979,8 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.theme = payload.theme;
     config.custom_accent = payload.custom_accent;
     config.custom_bg_panel = payload.custom_bg_panel;
-    config.preserve_thread_history = payload.preserve_thread_history;
+    config.left_preserve_thread_history = payload.left_preserve_thread_history;
+    config.right_preserve_thread_history = payload.right_preserve_thread_history;
 
     let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
@@ -3174,7 +3180,8 @@ mod tests {
             "theme": "dark",
             "customAccent": "#33d17a",
             "customBgPanel": "#2f4f3f",
-            "preserveThreadHistory": false
+            "leftPreserveThreadHistory": false,
+            "rightPreserveThreadHistory": false
         });
 
         let snake_payload = serde_json::json!({
@@ -3193,7 +3200,8 @@ mod tests {
             "theme": "dark",
             "custom_accent": "#33d17a",
             "custom_bg_panel": "#2f4f3f",
-            "preserve_thread_history": false
+            "left_preserve_thread_history": false,
+            "right_preserve_thread_history": false
         });
 
         let default_history_payload = serde_json::json!({
@@ -3222,9 +3230,12 @@ mod tests {
         assert_eq!(snake.terminal_app, "gnome-terminal");
         assert_eq!(camel.project_root_dir, "/tmp/project");
         assert_eq!(snake.project_root_dir, "/tmp/project");
-        assert!(!camel.preserve_thread_history);
-        assert!(!snake.preserve_thread_history);
-        assert!(defaulted.preserve_thread_history);
+        assert!(!camel.left_preserve_thread_history);
+        assert!(!camel.right_preserve_thread_history);
+        assert!(!snake.left_preserve_thread_history);
+        assert!(!snake.right_preserve_thread_history);
+        assert!(defaulted.left_preserve_thread_history);
+        assert!(defaulted.right_preserve_thread_history);
     }
 
     #[test]

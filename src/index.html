@@ -1220,11 +1220,15 @@
               <div class="pane-config-block">
                 <h4>Thread History Behavior</h4>
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
-                  <input type="checkbox" id="settings-preserve-thread-history" checked>
-                  <label for="settings-preserve-thread-history" style="margin: 0;">Keep thread history when model/provider changes</label>
+                  <input type="checkbox" id="settings-left-preserve-thread-history" checked>
+                  <label for="settings-left-preserve-thread-history" style="margin: 0;">Keep left pane thread history when its model/provider changes</label>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-right-preserve-thread-history" checked>
+                  <label for="settings-right-preserve-thread-history" style="margin: 0;">Keep right pane thread history when its model/provider changes</label>
                 </div>
                 <div style="font-size: 0.78rem; color: var(--accent-dim);">
-                  ON (default): new model can reference existing thread context. OFF: changed pane resets to baseline primer for clean model testing.
+                  ON (default): the pane can keep referencing earlier context. OFF: only that pane resets to baseline primer when you change its model/provider.
                 </div>
               </div>
 	        </div>
@@ -1525,7 +1529,8 @@
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
         document.getElementById('settings-left-provider').value = leftProvider;
         document.getElementById('settings-right-provider').value = rightProvider;
-        document.getElementById('settings-preserve-thread-history').checked = currentConfig.preserve_thread_history !== false;
+        document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
+        document.getElementById('settings-right-preserve-thread-history').checked = currentConfig.right_preserve_thread_history !== false;
         updateModelUI('left', leftModel);
         updateModelUI('right', rightModel);
         document.getElementById('settings-project-root').value = currentConfig.project_root_dir || "";
@@ -3050,7 +3055,8 @@ async function restoreVersion() {
       const theme = document.getElementById('settings-theme').value;
       const customAccent = document.getElementById('picker-accent').value;
       const customBgPanel = document.getElementById('picker-bg-panel').value;
-      const preserveThreadHistory = document.getElementById('settings-preserve-thread-history').checked;
+      const leftPreserveThreadHistory = document.getElementById('settings-left-preserve-thread-history').checked;
+      const rightPreserveThreadHistory = document.getElementById('settings-right-preserve-thread-history').checked;
 
       const payload = {
         editor,
@@ -3069,7 +3075,8 @@ async function restoreVersion() {
         theme,
         custom_accent: customAccent,
         custom_bg_panel: customBgPanel,
-        preserve_thread_history: preserveThreadHistory
+        left_preserve_thread_history: leftPreserveThreadHistory,
+        right_preserve_thread_history: rightPreserveThreadHistory
       };
 
       try {
@@ -3092,31 +3099,36 @@ async function restoreVersion() {
         currentConfig.theme = theme;
         currentConfig.custom_accent = customAccent;
         currentConfig.custom_bg_panel = customBgPanel;
-        currentConfig.preserve_thread_history = preserveThreadHistory;
+        currentConfig.left_preserve_thread_history = leftPreserveThreadHistory;
+        currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
 
         const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
         const rightModelChanged = previousRightProvider !== rightProvider || previousRightModel !== rightModel;
 
-        if (!preserveThreadHistory) {
-          let baselineResetTriggered = false;
-          if (leftModelChanged) {
+        let baselineResetTriggered = false;
+        if (leftModelChanged) {
+          if (!leftPreserveThreadHistory) {
             chatHistories.left = [[], [], []];
             appendTerminalLog('Left-pane chat history reset due to model/provider change (history OFF).');
             baselineResetTriggered = true;
+          } else {
+            appendTerminalLog('Left-pane thread history preserved across model/provider change (history ON).');
           }
+        }
 
-          if (rightModelChanged) {
+        if (rightModelChanged) {
+          if (!rightPreserveThreadHistory) {
             chatHistories.right = [[], [], []];
             appendTerminalLog('Right-pane chat history reset due to model/provider change (history OFF).');
             baselineResetTriggered = true;
+          } else {
+            appendTerminalLog('Right-pane thread history preserved across model/provider change (history ON).');
           }
+        }
 
-          if (baselineResetTriggered) {
-            await injectPrimerIntoThreads(false);
-            appendTerminalLog('Baseline primer re-synced after model switch for clean testing.');
-          }
-        } else if (leftModelChanged || rightModelChanged) {
-          appendTerminalLog('Thread history preserved across model/provider change (history ON).');
+        if (baselineResetTriggered) {
+          await injectPrimerIntoThreads(false);
+          appendTerminalLog('Baseline primer re-synced after model switch for clean testing.');
         }
 
         localStorage.setItem('physics-ide-settings-fallback', JSON.stringify(payload));
