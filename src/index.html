@@ -938,6 +938,10 @@
               <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
               <button onclick="resetContextProbeHistory()">Reset Probe History</button>
             </div>
+            <div class="btn-group" style="margin-top: 5px;">
+              <button onclick="resetSinglePaneContext('left')">Reset Left Pane</button>
+              <button onclick="resetSinglePaneContext('right')">Reset Right Pane</button>
+            </div>
             <div id="context-probe-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
               Ready to benchmark context precision.
             </div>
@@ -1947,6 +1951,31 @@
       if (outputEl) outputEl.value = 'History cleared. Run the probe again to accumulate fresh metrics.';
       refreshContextProbeIndicator();
       appendTerminalLog('Context probe history reset for all models.');
+    }
+
+    async function resetSinglePaneContext(pane) {
+      if (pane !== 'left' && pane !== 'right') return;
+
+      const confirmed = window.confirm(`Reset the ${pane} pane to its baseline primer and clear only that pane's history?`);
+      if (!confirmed) return;
+
+      chatHistories[pane] = [[], [], []];
+      if (pane === 'left') {
+        leftIndex = 0;
+        document.getElementById('left-strip').style.transform = 'translateY(0%)';
+      } else {
+        rightIndex = 0;
+        document.getElementById('right-strip').style.transform = 'translateY(0%)';
+      }
+
+      try {
+        const briefing = JSON.parse(await invoke('compile_ai_briefing'));
+        const prompt = buildPanePrimerText(briefing, pane === 'left' ? 'theory' : 'critique');
+        injectSystemPrimerMessage(pane, 0, 'Pane Reset Primer', prompt);
+        appendTerminalLog(`${pane === 'left' ? 'Left' : 'Right'} pane reset to baseline primer.`);
+      } catch (err) {
+        appendTerminalLog(`Pane reset primer sync error (${pane}): ${err}`);
+      }
     }
 
     async function runContextProbe() {
