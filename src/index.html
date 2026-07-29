@@ -934,8 +934,19 @@
               <label for="context-probe-target-runs">Tuning Target Runs Per Model</label>
               <input id="context-probe-target-runs" type="number" min="5" max="200" step="1" value="20" oninput="refreshContextProbeIndicator()">
             </div>
+            <div class="form-group" style="display: flex; gap: 8px; align-items: end;">
+              <div style="flex: 0 0 130px;">
+                <label for="context-probe-batch-iterations">Batch Iterations</label>
+                <input id="context-probe-batch-iterations" type="number" min="1" max="50" step="1" value="8">
+              </div>
+              <div style="flex: 1; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="context-probe-batch-auto-reset" checked>
+                <label for="context-probe-batch-auto-reset" style="margin: 0;">Auto-reset both panes before each iteration</label>
+              </div>
+            </div>
             <div class="btn-group" style="margin-top: 5px;">
               <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
+              <button onclick="runContextProbeBatch()">Run Batch (Current Pair)</button>
               <button onclick="resetContextProbeHistory()">Reset Probe History</button>
             </div>
             <div class="btn-group" style="margin-top: 5px;">
@@ -1979,11 +1990,13 @@
       appendTerminalLog('Context probe history reset for all models.');
     }
 
-    async function resetSinglePaneContext(pane) {
+    async function resetSinglePaneContext(pane, askConfirmation = true) {
       if (pane !== 'left' && pane !== 'right') return;
 
-      const confirmed = window.confirm(`Reset the ${pane} pane to its baseline primer and clear only that pane's history?`);
-      if (!confirmed) return;
+      if (askConfirmation) {
+        const confirmed = window.confirm(`Reset the ${pane} pane to its baseline primer and clear only that pane's history?`);
+        if (!confirmed) return;
+      }
 
       chatHistories[pane] = [[], [], []];
       if (pane === 'left') {
@@ -2005,7 +2018,8 @@
       }
     }
 
-    async function runContextProbe() {
+    async function runContextProbe(options = {}) {
+      const suppressOutput = options.suppressOutput === true;
       const statusEl = document.getElementById('context-probe-status');
       const outputEl = document.getElementById('context-probe-output');
       const questionEl = document.getElementById('context-probe-question');
@@ -2025,8 +2039,10 @@
         return;
       }
 
-      statusEl.textContent = 'Running probe across both panes...';
-      outputEl.value = 'Syncing context and dispatching probe prompts...';
+      if (!suppressOutput) {
+        statusEl.textContent = 'Running probe across both panes...';
+        outputEl.value = 'Syncing context and dispatching probe prompts...';
+      }
 
       try {
         await injectPrimerIntoThreads(false);
@@ -2108,7 +2124,7 @@
 
       statusEl.textContent = summaryLine;
 
-      outputEl.value = report.map((item) => {
+      const detailedOutput = report.map((item) => {
         const evalLine = [
           `pass=${item.evaluation.passed ? 'yes' : 'no'}`,
           `score=${item.evaluation.score}/3`,
@@ -2137,7 +2153,138 @@
         ].join('\n');
       }).join('\n');
 
+      if (!suppressOutput) {
+        outputEl.value = detailedOutput;
+      }
+
       appendTerminalLog(summaryLine);
+      refreshContextProbeIndicator();
+
+      return {
+        summaryLine,
+        report,
+        detailedOutput,
+      };
+    }
+
+    function buildContextProbeReportMarkdown(batchResult) {
+      const timestamp = new Date().toISOString();
+      const lines = [
+        '# Context Probe Batch Report',
+        '',
+        `- Generated: ${timestamp}`,
+        `- Iterations: ${batchResult.iterations}`,
+        `- Auto-reset before iteration: ${batchResult.autoReset ? 'yes' : 'no'}`,
+        `- Probe question: ${batchResult.question}`,
+        `- Expected token: ${batchResult.expectedToken || '(none)'}`,
+        '',
+      ];
+
+      batchResult.iterationResults.forEach((iteration, idx) => {
+        lines.push(`## Iteration ${idx + 1}`);
+        lines.push('');
+        lines.push(`- ${iteration.summaryLine}`);
+        lines.push('');
+        lines.push('```text');
+        lines.push(iteration.detailedOutput || '(no output)');
+        lines.push('```');
+        lines.push('');
+      });
+
+      lines.push('## Totals');
+      lines.push('');
+      lines.push(`- Left pass count: ${batchResult.leftPassCount}/${batchResult.iterations}`);
+      lines.push(`- Right pass count: ${batchResult.rightPassCount}/${batchResult.iterations}`);
+      lines.push(`- Total pass count: ${batchResult.totalPassCount}/${batchResult.iterations * 2}`);
+      lines.push('');
+
+      return lines.join('\n');
+    }
+
+    async function runContextProbeBatch() {
+      const statusEl = document.getElementById('context-probe-status');
+      const outputEl = document.getElementById('context-probe-output');
+      const questionEl = document.getElementById('context-probe-question');
+      const expectedEl = document.getElementById('context-probe-expected');
+      const iterationEl = document.getElementById('context-probe-batch-iterations');
+      const autoResetEl = document.getElementById('context-probe-batch-auto-reset');
+
+      if (!statusEl || !outputEl || !questionEl || !expectedEl || !iterationEl || !autoResetEl) {
+        appendTerminalLog('Context probe batch is unavailable: required UI elements are missing.');
+        return;
+      }
+
+      const question = (questionEl.value || '').trim();
+      const expectedToken = (expectedEl.value || '').trim();
+      if (!question) {
+        statusEl.textContent = 'Probe question is empty.';
+        outputEl.value = 'Please enter a probe question before running a batch.';
+        return;
+      }
+
+      const parsedIterations = Number(iterationEl.value || 8);
+      const iterations = Math.max(1, Math.min(50, Number.isFinite(parsedIterations) ? Math.floor(parsedIterations) : 8));
+      const autoReset = autoResetEl.checked;
+
+      statusEl.textContent = `Running batch for current pair (${iterations} iterations)...`;
+      outputEl.value = 'Batch run in progress...';
+
+      const iterationResults = [];
+      let leftPassCount = 0;
+      let rightPassCount = 0;
+
+      for (let i = 0; i < iterations; i += 1) {
+        statusEl.textContent = `Batch iteration ${i + 1}/${iterations} in progress...`;
+
+        if (autoReset) {
+          await resetSinglePaneContext('left', false);
+          await resetSinglePaneContext('right', false);
+        }
+
+        const result = await runContextProbe({ suppressOutput: true });
+        iterationResults.push(result);
+
+        const leftPassed = Boolean(result?.report?.[0]?.evaluation?.passed);
+        const rightPassed = Boolean(result?.report?.[1]?.evaluation?.passed);
+        if (leftPassed) leftPassCount += 1;
+        if (rightPassed) rightPassCount += 1;
+      }
+
+      const totalPassCount = leftPassCount + rightPassCount;
+      const batchResult = {
+        iterations,
+        autoReset,
+        question,
+        expectedToken,
+        iterationResults,
+        leftPassCount,
+        rightPassCount,
+        totalPassCount,
+      };
+
+      const reportMarkdown = buildContextProbeReportMarkdown(batchResult);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const reportPath = currentWorkspacePath
+        ? `${currentWorkspacePath}/context_probe_report_${timestamp}.md`
+        : `context_probe_report_${timestamp}.md`;
+
+      try {
+        await invoke('save_scratchpad_content', { content: reportMarkdown, path: reportPath });
+        appendTerminalLog(`Context probe batch report saved: ${reportPath}`);
+      } catch (err) {
+        appendTerminalLog(`Context probe batch report save failed: ${err}`);
+      }
+
+      statusEl.textContent = `Batch complete: total passes ${totalPassCount}/${iterations * 2}.`;
+      outputEl.value = [
+        `Batch complete for current pair.`,
+        `Iterations: ${iterations}`,
+        `Auto-reset: ${autoReset ? 'yes' : 'no'}`,
+        `Left passes: ${leftPassCount}/${iterations}`,
+        `Right passes: ${rightPassCount}/${iterations}`,
+        `Total passes: ${totalPassCount}/${iterations * 2}`,
+        `Report: ${reportPath}`,
+      ].join('\n');
       refreshContextProbeIndicator();
     }
 
