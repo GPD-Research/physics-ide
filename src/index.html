@@ -921,6 +921,25 @@
           </div>
 
           <div class="panel-section">
+            <div class="panel-section-title">Context Probe</div>
+            <div class="form-group">
+              <label for="context-probe-question">Probe Question</label>
+              <textarea id="context-probe-question" rows="4">Use exact relative path(s) only: which appendix file contains black hole collision analysis results? If ambiguous, return Primary and Alternate with confidence.</textarea>
+            </div>
+            <div class="form-group">
+              <label for="context-probe-expected">Expected Match Token</label>
+              <input id="context-probe-expected" placeholder="Appendix_G" value="Appendix_G">
+            </div>
+            <div class="btn-group" style="margin-top: 5px;">
+              <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
+            </div>
+            <div id="context-probe-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
+              Ready to benchmark context precision.
+            </div>
+            <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
+          </div>
+
+          <div class="panel-section">
             <div class="panel-section-title">Empirical Analysis Workflow</div>
             <div class="form-group">
               <label for="analysis-dataset-path">Dataset Path / URL</label>
@@ -1687,6 +1706,14 @@
       if (!text) return;
 
       inputEl.value = "";
+      await dispatchPromptToPane(pane, text, "Gregory");
+    }
+
+    async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory') {
+      if (!currentConfig || !text) {
+        return '';
+      }
+
       const index = (pane === 'left') ? leftIndex : rightIndex;
       const provider = (pane === 'left') ? currentConfig.left_provider : currentConfig.right_provider;
 
@@ -1698,7 +1725,7 @@
       }
 
       chatHistories[pane][index].push(messagePayload);
-      appendChatBubble(pane, index, "Gregory", text);
+      appendChatBubble(pane, index, senderLabel, text);
       appendTerminalLog(`Dispatching payload via active connection string to [${provider}]...`);
       setPaneBusy(pane, true);
 
@@ -1717,12 +1744,144 @@
 
         chatHistories[pane][index].push(responsePayload);
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
+        return reply;
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
         appendChatBubble(pane, index, "System Error", err);
+        throw err;
       } finally {
         setPaneBusy(pane, false);
       }
+    }
+
+    function evaluateProbeReply(reply, expectedToken) {
+      const text = (reply || '').trim();
+      const lower = text.toLowerCase();
+      const expected = (expectedToken || '').trim().toLowerCase();
+      const hasExpected = expected.length > 0 ? lower.includes(expected) : false;
+      const hasFilePath = /(?:^|\s|["'`])(?:[\w.-]+\/)*[\w.-]+\.(md|py|ipynb|txt|docx?)(?:$|\s|["'`.,;:!?])/i.test(text);
+      const hasConfidence = /confidence[^\n\r]{0,25}(0(?:\.\d+)?|1(?:\.0+)?)|\b(0\.\d{1,2}|1\.00)\b/i.test(text);
+      const folderOnly = /\bfolder\b/i.test(text) && !hasFilePath;
+
+      let score = 0;
+      if (hasFilePath) score += 1;
+      if (hasExpected) score += 1;
+      if (hasConfidence) score += 1;
+      if (folderOnly) score = Math.max(0, score - 1);
+
+      const passed = hasFilePath && (expected.length === 0 || hasExpected);
+
+      return {
+        passed,
+        score,
+        hasFilePath,
+        hasExpected,
+        hasConfidence,
+        folderOnly
+      };
+    }
+
+    async function runContextProbe() {
+      const statusEl = document.getElementById('context-probe-status');
+      const outputEl = document.getElementById('context-probe-output');
+      const questionEl = document.getElementById('context-probe-question');
+      const expectedEl = document.getElementById('context-probe-expected');
+
+      if (!statusEl || !outputEl || !questionEl || !expectedEl) {
+        appendTerminalLog('Context probe is unavailable: required UI elements are missing.');
+        return;
+      }
+
+      const probeQuestion = (questionEl.value || '').trim();
+      const expectedToken = (expectedEl.value || '').trim();
+
+      if (!probeQuestion) {
+        statusEl.textContent = 'Probe question is empty.';
+        outputEl.value = 'Please enter a probe question.';
+        return;
+      }
+
+      statusEl.textContent = 'Running probe across both panes...';
+      outputEl.value = 'Syncing context and dispatching probe prompts...';
+
+      try {
+        await injectPrimerIntoThreads(false);
+      } catch (err) {
+        appendTerminalLog(`Context probe warning: primer sync failed before probe: ${err}`);
+      }
+
+      const prompt = [
+        probeQuestion,
+        'Answer format requirement: include exact relative file path(s).',
+        'If ambiguous, include Primary and Alternate with confidence values (0.00 to 1.00).',
+      ].join('\n');
+
+      const leftProvider = getProviderDisplayName(getPaneProvider('left'));
+      const rightProvider = getProviderDisplayName(getPaneProvider('right'));
+
+      const [leftResult, rightResult] = await Promise.allSettled([
+        dispatchPromptToPane('left', prompt, 'Context Probe'),
+        dispatchPromptToPane('right', prompt, 'Context Probe'),
+      ]);
+
+      const normalizeResult = (result, side, providerName) => {
+        if (result.status === 'rejected') {
+          return {
+            side,
+            providerName,
+            reply: `Error: ${String(result.reason)}`,
+            evaluation: {
+              passed: false,
+              score: 0,
+              hasFilePath: false,
+              hasExpected: false,
+              hasConfidence: false,
+              folderOnly: false
+            }
+          };
+        }
+
+        const reply = result.value || '';
+        return {
+          side,
+          providerName,
+          reply,
+          evaluation: evaluateProbeReply(reply, expectedToken)
+        };
+      };
+
+      const report = [
+        normalizeResult(leftResult, 'Left', leftProvider),
+        normalizeResult(rightResult, 'Right', rightProvider),
+      ];
+
+      const totalScore = report.reduce((sum, item) => sum + item.evaluation.score, 0);
+      const maxScore = report.length * 3;
+      const passCount = report.filter((item) => item.evaluation.passed).length;
+      const summaryLine = `Probe complete: ${passCount}/${report.length} passed, score ${totalScore}/${maxScore}.`;
+
+      statusEl.textContent = summaryLine;
+
+      outputEl.value = report.map((item) => {
+        const evalLine = [
+          `pass=${item.evaluation.passed ? 'yes' : 'no'}`,
+          `score=${item.evaluation.score}/3`,
+          `path=${item.evaluation.hasFilePath ? 'yes' : 'no'}`,
+          `expected=${item.evaluation.hasExpected ? 'yes' : 'no'}`,
+          `confidence=${item.evaluation.hasConfidence ? 'yes' : 'no'}`,
+          `folder_only=${item.evaluation.folderOnly ? 'yes' : 'no'}`
+        ].join(', ');
+
+        return [
+          `${item.side} Pane (${item.providerName})`,
+          evalLine,
+          'Reply:',
+          item.reply,
+          ''
+        ].join('\n');
+      }).join('\n');
+
+      appendTerminalLog(summaryLine);
     }
 
     function getProviderDisplayName(provider) {
