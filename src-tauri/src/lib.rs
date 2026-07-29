@@ -264,6 +264,13 @@ pub struct FileEntry {
     is_dir: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ProbeEvidenceItem {
+    relative_path: String,
+    score: i32,
+    snippets: Vec<String>,
+}
+
 // Helper: Resolve the OS-specific config path
 fn get_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     let mut path = app.path()
@@ -1962,6 +1969,154 @@ fn collect_markdown_files(directory_path: &str) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
+fn build_probe_terms(query: &str) -> Vec<String> {
+    let lower = query.to_ascii_lowercase();
+    let mut terms = Vec::new();
+
+    let mut push_term = |term: &str| {
+        let trimmed = term.trim().to_ascii_lowercase();
+        if !trimmed.is_empty() && !terms.iter().any(|existing| existing == &trimmed) {
+            terms.push(trimmed);
+        }
+    };
+
+    for token in lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .map(str::trim)
+        .filter(|token| token.len() >= 4)
+    {
+        push_term(token);
+    }
+
+    if lower.contains("black hole") || lower.contains("blackhole") || lower.contains("black_hole") {
+        push_term("black hole");
+        push_term("blackhole");
+        push_term("black_hole");
+    }
+
+    if lower.contains("collision") {
+        push_term("collision");
+        push_term("collisions");
+    }
+
+    if lower.contains("result") || lower.contains("study") || lower.contains("analysis") {
+        push_term("results");
+        push_term("analysis");
+        push_term("empirical");
+        push_term("validation");
+        push_term("observational");
+        push_term("evidence");
+    }
+
+    if lower.contains("appendix") {
+        push_term("appendix");
+    }
+
+    terms
+}
+
+fn score_probe_content(relative_path: &str, content: &str, terms: &[String]) -> (i32, Vec<String>) {
+    let path_lower = relative_path.to_ascii_lowercase();
+    let content_lower = content.to_ascii_lowercase();
+    let mut score = 0i32;
+
+    for term in terms {
+        if path_lower.contains(term) {
+            score += 12;
+        }
+
+        let hits = content_lower.matches(term).count() as i32;
+        score += (hits.min(8)) * 5;
+    }
+
+    if path_lower.contains("appendix_g") {
+        score += 18;
+    }
+
+    if path_lower.contains("empirical") || path_lower.contains("validation") {
+        score += 10;
+    }
+
+    let mut snippets = Vec::new();
+    for (index, line) in content.lines().enumerate() {
+        let line_lower = line.to_ascii_lowercase();
+        if terms.iter().any(|term| line_lower.contains(term)) {
+            let cleaned = line.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+
+            snippets.push(format!("L{}: {}", index + 1, cleaned));
+            if snippets.len() >= 4 {
+                break;
+            }
+        }
+    }
+
+    (score, snippets)
+}
+
+#[tauri::command]
+fn collect_probe_evidence(workspace_path: String, query: String) -> Result<Vec<ProbeEvidenceItem>, String> {
+    let root = PathBuf::from(workspace_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err("Workspace path is missing or invalid for probe evidence scan.".to_string());
+    }
+
+    let terms = build_probe_terms(&query);
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut markdown_files = Vec::new();
+    let _ = recursive_markdown_scan(&root, &mut markdown_files);
+
+    let mut ranked = Vec::new();
+    for file in markdown_files {
+        let relative_path = file
+            .strip_prefix(&root)
+            .unwrap_or(file.as_path())
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let file_name_lower = file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if !file_name_lower.contains("appendix") {
+            continue;
+        }
+
+        let content = match fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+
+        let truncated = if content.len() > 120_000 {
+            &content[..120_000]
+        } else {
+            &content
+        };
+
+        let (score, snippets) = score_probe_content(&relative_path, truncated, &terms);
+        ranked.push(ProbeEvidenceItem {
+            relative_path,
+            score,
+            snippets,
+        });
+    }
+
+    ranked.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| a.relative_path.cmp(&b.relative_path))
+    });
+
+    Ok(ranked.into_iter().take(8).collect())
+}
+
 fn render_manuscript_content(
     mode: &str,
     source_file: &str,
@@ -3448,6 +3603,7 @@ pub fn run() {
             import_theory_source_command,
             generate_master_axiom_from_theory,
             list_markdown_files,
+            collect_probe_evidence,
             render_manuscript,
             launch_file_editor,
             detach_terminal_shell,

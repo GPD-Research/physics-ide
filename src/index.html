@@ -1488,6 +1488,12 @@
       candidates: [],
       loadedAt: 0,
     };
+    const probeEvidenceCache = {
+      rootPath: '',
+      query: '',
+      evidence: [],
+      loadedAt: 0,
+    };
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -1628,6 +1634,56 @@
       probeAppendixCandidateCache.candidates = discovered;
       probeAppendixCandidateCache.loadedAt = Date.now();
       return discovered;
+    }
+
+    async function getProbeEvidence(query, forceRefresh = false) {
+      const rootPath = String(currentWorkspacePath || '').trim();
+      const queryText = String(query || '').trim();
+      if (!rootPath || !queryText) return [];
+
+      const cacheExpired = (Date.now() - Number(probeEvidenceCache.loadedAt || 0)) > 60_000;
+      if (!forceRefresh
+        && probeEvidenceCache.rootPath === rootPath
+        && probeEvidenceCache.query === queryText
+        && !cacheExpired
+        && Array.isArray(probeEvidenceCache.evidence)) {
+        return probeEvidenceCache.evidence;
+      }
+
+      try {
+        const evidence = await invoke('collect_probe_evidence', {
+          workspacePath: rootPath,
+          query: queryText,
+        });
+        const normalized = Array.isArray(evidence) ? evidence : [];
+        probeEvidenceCache.rootPath = rootPath;
+        probeEvidenceCache.query = queryText;
+        probeEvidenceCache.evidence = normalized;
+        probeEvidenceCache.loadedAt = Date.now();
+        return normalized;
+      } catch (err) {
+        appendTerminalLog(`Probe evidence scan warning: ${err}`);
+        return [];
+      }
+    }
+
+    function buildProbeEvidenceBlock(evidenceRows) {
+      if (!Array.isArray(evidenceRows) || evidenceRows.length === 0) {
+        return ['No content evidence rows were available from appendix scans.'];
+      }
+
+      const lines = ['Content evidence (higher score means stronger term overlap in file content):'];
+      evidenceRows.forEach((row) => {
+        const path = String(row?.relative_path || '').trim();
+        const score = Number(row?.score || 0);
+        if (!path) return;
+        lines.push(`- ${path} | score=${score}`);
+        const snippets = Array.isArray(row?.snippets) ? row.snippets : [];
+        snippets.slice(0, 3).forEach((snippet) => {
+          lines.push(`  - ${String(snippet || '').trim()}`);
+        });
+      });
+      return lines;
     }
 
     function normalizeModelForProvider(provider, model) {
@@ -2150,6 +2206,7 @@
     async function runContextProbe(options = {}) {
       const suppressOutput = options.suppressOutput === true;
       const injectedCandidates = Array.isArray(options.appendixCandidates) ? options.appendixCandidates : null;
+      const injectedEvidence = Array.isArray(options.probeEvidence) ? options.probeEvidence : null;
       const statusEl = document.getElementById('context-probe-status');
       const outputEl = document.getElementById('context-probe-output');
       const questionEl = document.getElementById('context-probe-question');
@@ -2181,6 +2238,7 @@
       }
 
       const appendixCandidates = injectedCandidates || await getProbeAppendixCandidates(false);
+      const probeEvidence = injectedEvidence || await getProbeEvidence(probeQuestion, false);
 
       const promptParts = [
         probeQuestion,
@@ -2194,8 +2252,11 @@
         appendixCandidates.forEach((candidatePath) => {
           promptParts.push(`- ${candidatePath}`);
         });
-        promptParts.push('If none of these candidates match the query, explicitly say evidence is insufficient.');
+        promptParts.push('Select the best-supported Primary from this list, even if confidence is moderate.');
       }
+
+      promptParts.push(...buildProbeEvidenceBlock(probeEvidence));
+      promptParts.push('Use semantic evidence from snippets (not filename-only matching) to choose Primary and Alternate.');
 
       const prompt = promptParts.join('\n');
 
@@ -2373,10 +2434,16 @@
       outputEl.value = 'Batch run in progress...';
 
       const appendixCandidates = await getProbeAppendixCandidates(true);
+      const probeEvidence = await getProbeEvidence(question, true);
       if (appendixCandidates.length > 0) {
         appendTerminalLog(`Context probe grounding candidates loaded (${appendixCandidates.length}): ${appendixCandidates.join(', ')}`);
       } else {
         appendTerminalLog('Context probe grounding candidates unavailable; proceeding without explicit appendix candidate list.');
+      }
+      if (probeEvidence.length > 0) {
+        appendTerminalLog(`Context probe content evidence rows loaded (${probeEvidence.length}).`);
+      } else {
+        appendTerminalLog('Context probe content evidence unavailable; probe may rely more on filename priors.');
       }
 
       const iterationResults = [];
@@ -2391,7 +2458,7 @@
           await resetSinglePaneContext('right', false);
         }
 
-        const result = await runContextProbe({ suppressOutput: true, appendixCandidates });
+        const result = await runContextProbe({ suppressOutput: true, appendixCandidates, probeEvidence });
         iterationResults.push(result);
 
         const leftPassed = Boolean(result?.report?.[0]?.evaluation?.passed);
