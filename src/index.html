@@ -1216,6 +1216,17 @@
 	              </div>
 	            </div>
 	          </div>
+
+              <div class="pane-config-block">
+                <h4>Thread History Behavior</h4>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-preserve-thread-history" checked>
+                  <label for="settings-preserve-thread-history" style="margin: 0;">Keep thread history when model/provider changes</label>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--accent-dim);">
+                  ON (default): new model can reference existing thread context. OFF: changed pane resets to baseline primer for clean model testing.
+                </div>
+              </div>
 	        </div>
 	        
 			<!-- Tab 4: Appearance & Colors -->
@@ -1514,6 +1525,7 @@
         document.getElementById('settings-ollama-url').value = currentConfig.ollama_url || 'http://127.0.0.1:11434';
         document.getElementById('settings-left-provider').value = leftProvider;
         document.getElementById('settings-right-provider').value = rightProvider;
+        document.getElementById('settings-preserve-thread-history').checked = currentConfig.preserve_thread_history !== false;
         updateModelUI('left', leftModel);
         updateModelUI('right', rightModel);
         document.getElementById('settings-project-root').value = currentConfig.project_root_dir || "";
@@ -3038,6 +3050,7 @@ async function restoreVersion() {
       const theme = document.getElementById('settings-theme').value;
       const customAccent = document.getElementById('picker-accent').value;
       const customBgPanel = document.getElementById('picker-bg-panel').value;
+      const preserveThreadHistory = document.getElementById('settings-preserve-thread-history').checked;
 
       const payload = {
         editor,
@@ -3055,7 +3068,8 @@ async function restoreVersion() {
         tools_dir: toolsDir,
         theme,
         custom_accent: customAccent,
-        custom_bg_panel: customBgPanel
+        custom_bg_panel: customBgPanel,
+        preserve_thread_history: preserveThreadHistory
       };
 
       try {
@@ -3078,15 +3092,31 @@ async function restoreVersion() {
         currentConfig.theme = theme;
         currentConfig.custom_accent = customAccent;
         currentConfig.custom_bg_panel = customBgPanel;
+        currentConfig.preserve_thread_history = preserveThreadHistory;
 
-        if (previousLeftProvider !== leftProvider || previousLeftModel !== leftModel) {
-          chatHistories.left = [[], [], []];
-          appendTerminalLog('Left-pane chat history reset due to model/provider change.');
-        }
+        const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
+        const rightModelChanged = previousRightProvider !== rightProvider || previousRightModel !== rightModel;
 
-        if (previousRightProvider !== rightProvider || previousRightModel !== rightModel) {
-          chatHistories.right = [[], [], []];
-          appendTerminalLog('Right-pane chat history reset due to model/provider change.');
+        if (!preserveThreadHistory) {
+          let baselineResetTriggered = false;
+          if (leftModelChanged) {
+            chatHistories.left = [[], [], []];
+            appendTerminalLog('Left-pane chat history reset due to model/provider change (history OFF).');
+            baselineResetTriggered = true;
+          }
+
+          if (rightModelChanged) {
+            chatHistories.right = [[], [], []];
+            appendTerminalLog('Right-pane chat history reset due to model/provider change (history OFF).');
+            baselineResetTriggered = true;
+          }
+
+          if (baselineResetTriggered) {
+            await injectPrimerIntoThreads(false);
+            appendTerminalLog('Baseline primer re-synced after model switch for clean testing.');
+          }
+        } else if (leftModelChanged || rightModelChanged) {
+          appendTerminalLog('Thread history preserved across model/provider change (history ON).');
         }
 
         localStorage.setItem('physics-ide-settings-fallback', JSON.stringify(payload));

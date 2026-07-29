@@ -121,6 +121,10 @@ fn compute_cosmology_metrics(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, 
     })
 }
 
+fn default_true() -> bool {
+    true
+}
+
 // --- PERSISTENT DISK CONFIGURATION ---
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
@@ -141,6 +145,8 @@ pub struct AppConfig {
     theme: String,           // <-- NEW
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
+    #[serde(default = "default_true")]
+    preserve_thread_history: bool,
     reuse_notes_next_session: bool,
     first_session_completed: bool,
 }
@@ -165,6 +171,7 @@ impl Default for AppConfig {
             theme: "dark".to_string(),
             custom_accent: String::new(),
             custom_bg_panel: String::new(),
+            preserve_thread_history: true,
             reuse_notes_next_session: false,
             first_session_completed: false,
         }
@@ -214,6 +221,8 @@ pub struct SaveUserSettingsPayload {
     pub custom_accent: String,
     #[serde(alias = "customBgPanel")]
     pub custom_bg_panel: String,
+    #[serde(default = "default_true", alias = "preserveThreadHistory")]
+    pub preserve_thread_history: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -2965,6 +2974,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.theme = payload.theme;
     config.custom_accent = payload.custom_accent;
     config.custom_bg_panel = payload.custom_bg_panel;
+    config.preserve_thread_history = payload.preserve_thread_history;
 
     let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
@@ -3163,10 +3173,30 @@ mod tests {
             "masterAxiomFile": "/tmp/master.md",
             "theme": "dark",
             "customAccent": "#33d17a",
-            "customBgPanel": "#2f4f3f"
+            "customBgPanel": "#2f4f3f",
+            "preserveThreadHistory": false
         });
 
         let snake_payload = serde_json::json!({
+            "editor": "vim",
+            "terminal_app": "gnome-terminal",
+            "gemini_key": "key",
+            "openai_key": "openai",
+            "ollama_url": "http://127.0.0.1:11434",
+            "left_provider": "gemini",
+            "left_model": "gemini-2.0-flash",
+            "right_provider": "ollama",
+            "right_model": "qwen2.5",
+            "project_root_dir": "/tmp/project",
+            "theory_md_dir": "/tmp/theory",
+            "master_axiom_file": "/tmp/master.md",
+            "theme": "dark",
+            "custom_accent": "#33d17a",
+            "custom_bg_panel": "#2f4f3f",
+            "preserve_thread_history": false
+        });
+
+        let default_history_payload = serde_json::json!({
             "editor": "vim",
             "terminal_app": "gnome-terminal",
             "gemini_key": "key",
@@ -3186,11 +3216,15 @@ mod tests {
 
         let camel: SaveUserSettingsPayload = serde_json::from_value(camel_payload).unwrap();
         let snake: SaveUserSettingsPayload = serde_json::from_value(snake_payload).unwrap();
+        let defaulted: SaveUserSettingsPayload = serde_json::from_value(default_history_payload).unwrap();
 
         assert_eq!(camel.terminal_app, "gnome-terminal");
         assert_eq!(snake.terminal_app, "gnome-terminal");
         assert_eq!(camel.project_root_dir, "/tmp/project");
         assert_eq!(snake.project_root_dir, "/tmp/project");
+        assert!(!camel.preserve_thread_history);
+        assert!(!snake.preserve_thread_history);
+        assert!(defaulted.preserve_thread_history);
     }
 
     #[test]
