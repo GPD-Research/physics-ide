@@ -1261,7 +1261,7 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
 fn build_ollama_messages(history: &[serde_json::Value]) -> Vec<serde_json::Value> {
     let mut messages = vec![serde_json::json!({
         "role": "system",
-        "content": "You are a helpful scientific assistant. Respond concisely and use the repository context. Return only the final answer. Do not output internal reasoning, scratch work, or thinking traces unless explicitly requested."
+        "content": "You are a helpful scientific assistant. Respond concisely and use the repository context. Return only the final answer. Do not output internal reasoning, scratch work, or thinking traces unless explicitly requested. For file-location questions, return exact relative file paths from available context and never only a folder path unless no file candidate exists. If multiple candidates exist, label Primary and Alternate with confidence scores from 0.00 to 1.00. If evidence is insufficient, say so explicitly and do not guess."
     })];
 
     for entry in history {
