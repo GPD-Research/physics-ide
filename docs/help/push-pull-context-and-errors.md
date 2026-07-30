@@ -14,7 +14,7 @@ In short:
 
 ## How the IDE Chooses Context
 
-1. You load a workspace with Open Workspace/Open Folder.
+1. You load a workspace with Open Workspace.
 2. The app saves that path as active runtime workspace context.
 3. Pull and Push run inside that active path.
 
@@ -46,7 +46,7 @@ Typical symptom:
 - "No workspace loaded"
 
 Fix:
-1. Click Open Workspace/Open Folder.
+1. Click Open Workspace.
 2. Select the intended project root.
 3. Retry Pull or Push.
 

@@ -3265,7 +3265,45 @@ fn render_manuscript_content(
         _ => "md",
     };
     let rendered_path = output_path.join(format!("{}.{}", output_name, output_ext));
-    fs::write(&rendered_path, &content).map_err(|e| format!("Failed to write rendered artifact: {e}"))?;
+
+    if output_ext == "md" {
+        fs::write(&rendered_path, &content).map_err(|e| format!("Failed to write rendered artifact: {e}"))?;
+    } else {
+        let temp_markdown_path = output_path.join(format!("{}.render_tmp.md", output_name));
+        fs::write(&temp_markdown_path, &content)
+            .map_err(|e| format!("Failed to stage markdown for conversion: {e}"))?;
+
+        let conversion = std::process::Command::new("pandoc")
+            .arg(&temp_markdown_path)
+            .arg("-o")
+            .arg(&rendered_path)
+            .output();
+
+        let _ = fs::remove_file(&temp_markdown_path);
+
+        match conversion {
+            Ok(output) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let reason = if stderr.is_empty() {
+                        "Pandoc conversion failed with no error output.".to_string()
+                    } else {
+                        stderr
+                    };
+                    return Err(format!(
+                        "Failed to convert markdown to {}. {}",
+                        output_ext, reason
+                    ));
+                }
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Failed to run pandoc for {} export: {}. Install pandoc to enable this format.",
+                    output_ext, err
+                ));
+            }
+        }
+    }
 
     let training_path = if use_for_training {
         let training_dir = output_path.join("ai_training");

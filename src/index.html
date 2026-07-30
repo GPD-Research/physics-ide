@@ -814,52 +814,52 @@
     <div class="menu-item">
       File
 	  <div class="dropdown-content">
-        <a href="#" onclick="startNewTheorySheet(); return false;">New Theory Sheet</a>
-        <a href="#" onclick="loadWorkspace()">Open Workspace</a>
-        <a href="#" onclick="openTheoryProfilesModal(); return false;">Theory Profiles...</a>
-        <a href="#" onclick="saveVersion()">Save as Version</a>
-        <a href="#" onclick="restoreVersion()">Restore Version</a>
-        <a href="#" onclick="saveHypothesis()">Save as Hypothesis</a>
-        <a href="#" onclick="terminateHypothesisBranch()">Terminate Hypothesis</a>
+        <a href="#" onclick="startNewTheorySheet(); return false;" title="Reset to first-session mode and close active theory state">New Theory Sheet</a>
+        <a href="#" onclick="loadWorkspace()" title="Choose and load a workspace directory">Open Workspace</a>
+        <a href="#" onclick="openTheoryProfilesModal(); return false;" title="Open saved theory profiles">Theory Profiles...</a>
+        <a href="#" onclick="saveVersion()" title="Save a local version snapshot">Save as Version</a>
+        <a href="#" onclick="restoreVersion()" title="Restore a previously saved local version">Restore Version</a>
+        <a href="#" onclick="saveHypothesis()" title="Create or switch to a hypothesis branch">Save as Hypothesis</a>
+        <a href="#" onclick="terminateHypothesisBranch()" title="End the active hypothesis branch">Terminate Hypothesis</a>
         <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 4px 0;">
-        <a href="#" onclick="openExitDialog(); return false;">Exit</a>
+        <a href="#" onclick="openExitDialog(); return false;" title="Open session wrap-up and exit dialog">Exit</a>
       </div>
     </div>
     <div class="menu-item">
       Edit
       <div class="dropdown-content">
-        <a href="#" onclick="alert('Formula clipboard copy...')">Copy Math String</a>
-        <a href="#" onclick="alert('Paste external parameters...')">Paste Context Buffer</a>
+        <a href="#" onclick="alert('Formula clipboard copy...')" title="Copy equation text to clipboard (placeholder)">Copy Math String</a>
+        <a href="#" onclick="alert('Paste external parameters...')" title="Paste external context buffer (placeholder)">Paste Context Buffer</a>
       </div>
     </div>
     <div class="menu-item">
       View
       <div class="dropdown-content">
         <div class="menu-section">Panels</div>
-        <a href="#" class="menu-item-toggle" id="view-menu-terminal" onclick="toggleViewTool('terminal'); return false;"><span>Terminal</span><span class="menu-item-state">●</span></a>
-        <a href="#" class="menu-item-toggle" id="view-menu-inspectors" onclick="toggleViewTool('inspectors'); return false;"><span>Inspectors</span><span class="menu-item-state">●</span></a>
-        <a href="#" class="menu-item-toggle" id="view-menu-equation" onclick="toggleViewTool('equation'); return false;"><span>Equation Tools</span><span class="menu-item-state">●</span></a>
-        <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-terminal" onclick="toggleViewTool('terminal'); return false;" title="Show or hide the terminal panel"><span>Terminal</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-inspectors" onclick="toggleViewTool('inspectors'); return false;" title="Show or hide the inspectors panel"><span>Inspectors</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-equation" onclick="toggleViewTool('equation'); return false;" title="Show or hide equation tools panel"><span>Equation Tools</span><span class="menu-item-state">●</span></a>
+        <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;" title="Show or hide the scratchpad panel"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
         <div class="menu-section">Navigation</div>
-        <a href="#" onclick="rotateLeft(1); return false;">Next Analytical Slot</a>
-        <a href="#" onclick="rotateRight(1); return false;">Next Creative Slot</a>
+        <a href="#" onclick="rotateLeft(1); return false;" title="Switch to next analytical lane thread">Next Analytical Slot</a>
+        <a href="#" onclick="rotateRight(1); return false;" title="Switch to next creative lane thread">Next Creative Slot</a>
       </div>
     </div>
     <div class="menu-item">
       Tools
       <div class="dropdown-content">
         <div class="menu-section">Workflows</div>
-        <a href="#" onclick="openMarkdownDocumentsModal(); return false;">Markdown Documents</a>
-        <a href="#" onclick="openManuscriptToolsModal(); return false;">Manuscript Tools</a>
-        <a href="#" onclick="openAiTestingModal(); return false;">AI Testing</a>
+        <a href="#" onclick="openMarkdownDocumentsModal(); return false;" title="Browse, search, preview, and export markdown files">Markdown Documents</a>
+        <a href="#" onclick="openManuscriptToolsModal(); return false;" title="Render single or combined markdown into MD, PDF, or DOCX">Manuscript Tools</a>
+        <a href="#" onclick="openAiTestingModal(); return false;" title="Open probe and benchmark testing tools">AI Testing</a>
         <div class="menu-section">Help</div>
-        <a href="#" onclick="openHelpDoc('app-layers'); return false;">App Layers</a>
-        <a href="#" onclick="openHelpDoc('gui-button-glossary'); return false;">GUI Button Glossary</a>
-        <a href="#" onclick="openHelpDoc('push-pull-context-and-errors'); return false;">Push/Pull and Errors</a>
-        <a href="#" onclick="openHelpDoc('startup-initial-setup-checklist'); return false;">Startup Setup Checklist</a>
+        <a href="#" onclick="openHelpDoc('app-layers'); return false;" title="Open conceptual overview of app layers">App Layers</a>
+        <a href="#" onclick="openHelpDoc('gui-button-glossary'); return false;" title="Open glossary of GUI controls">GUI Button Glossary</a>
+        <a href="#" onclick="openHelpDoc('push-pull-context-and-errors'); return false;" title="Open git push/pull troubleshooting guide">Push/Pull and Errors</a>
+        <a href="#" onclick="openHelpDoc('startup-initial-setup-checklist'); return false;" title="Open first-run setup workflow checklist">Startup Setup Checklist</a>
       </div>
     </div>
-    <div class="menu-item" onclick="openSettingsModal()">Customize</div>
+    <div class="menu-item" onclick="openSettingsModal()" title="Open settings and preferences">Customize</div>
 
     <!-- Added Project Info Tooltip Elements Here -->
     <div class="project-info-container" onmouseenter="showProjectTooltip()" onmouseleave="hideProjectTooltip()">
@@ -881,11 +881,11 @@
             <div class="panel-section-title project-title-row">
               <div class="project-title-inline">
                 <span id="project-title-display">Cosmology Workspace</span>
-                <button class="project-title-edit-btn" onclick="beginEditProjectTitle()" title="Edit project title">✎</button>
+                <button class="project-title-edit-btn" onclick="beginEditProjectTitle()" title="Rename project title">✎</button>
               </div>
             </div>
             <input id="project-title-input" type="text" value="Cosmology Workspace" onkeydown="handleProjectTitleKeydown(event)" onblur="commitProjectTitle()">
-            <button id="select-dir-btn" onclick="loadWorkspace()" style="width: 100%; margin-bottom: 10px;">📂 Open Folder</button>
+            <button id="select-dir-btn" onclick="loadWorkspace()" style="width: 100%; margin-bottom: 10px;" title="Choose and load a workspace directory">📂 Open Workspace</button>
             
             <div class="file-tree" id="file-tree-container" style="flex: 1; overflow-y: auto; min-height: 0;">
                 <!-- Tree content will go here -->
@@ -896,10 +896,9 @@
         <div class="panel-section" style="flex: 0 0 auto; margin-top: 15px;">
             <div class="panel-section-title">Compile & Deploy</div>
             <div class="btn-group">
-                <button class="btn-special" onclick="exportWorkspaceTree()">🌳 Export ASCII Tree</button>
-                <button onclick="executeGitPull()">Pull</button>
-                <button onclick="executeGitPush()">Push</button>
-                <button class="btn-large" onclick="openManuscriptToolsModal()">Manuscript Tools</button>
+                <button class="btn-special" onclick="exportWorkspaceTree()" title="Generate workspace_tree.txt in the workspace root">🌳 Export ASCII Tree</button>
+                <button onclick="executeGitPull()" title="Pull latest commits from the repository remote">Pull</button>
+                <button onclick="executeGitPush()" title="Push commits to the repository remote (main/master only)">Push</button>
             </div>
         </div>
 
@@ -908,8 +907,8 @@
               <div class="terminal-header">
                 <div class="terminal-session" id="terminal-label">bash (~/projects/physics-ide)</div>
                 <div class="terminal-controls">
-                  <button class="terminal-action secondary" id="terminal-detach-btn" onclick="toggleTerminalDetached()">Detach</button>
-                  <button class="terminal-action" onclick="openExternalTerminal()">Shell</button>
+                  <button class="terminal-action secondary" id="terminal-detach-btn" onclick="toggleTerminalDetached()" title="Detach or reattach terminal panel">Detach</button>
+                  <button class="terminal-action" onclick="openExternalTerminal()" title="Open workspace in your external terminal app">Shell</button>
                 </div>
               </div>
               <div class="terminal-body" id="terminal-output">
@@ -934,8 +933,8 @@
             <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
           </div>
           <div>
-            <button onclick="rotateLeft(-1)">▲</button>
-            <button onclick="rotateLeft(1)">▼</button>
+            <button onclick="rotateLeft(-1)" title="Previous analytical slot">▲</button>
+            <button onclick="rotateLeft(1)" title="Next analytical slot">▼</button>
           </div>
         </div>
 
@@ -965,9 +964,9 @@
         </div>
 
         <div class="chat-input-wrapper">
-          <button class="chat-attach-btn" onclick="attachFileToThread('left')" title="Attach a file to this thread">+</button>
-          <input type="text" id="left-chat-input" class="chat-input" placeholder="Query analytical stack..." onkeydown="if(event.key === 'Enter') submitPrompt('left')">
-          <button onclick="submitPrompt('left')">Send</button>
+          <button class="chat-attach-btn" onclick="attachFileToThread('left')" title="Attach file to analytical lane">+</button>
+          <input type="text" id="left-chat-input" class="chat-input" placeholder="Query analytical stack..." title="Type a prompt. Press Enter to send." onkeydown="if(event.key === 'Enter') submitPrompt('left')">
+          <button onclick="submitPrompt('left')" title="Send prompt to analytical lane (Enter)">Send</button>
         </div>
       </div>
 
@@ -979,8 +978,8 @@
             <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
           </div>
           <div>
-            <button onclick="rotateRight(-1)">▲</button>
-            <button onclick="rotateRight(1)">▼</button>
+            <button onclick="rotateRight(-1)" title="Previous creative slot">▲</button>
+            <button onclick="rotateRight(1)" title="Next creative slot">▼</button>
           </div>
         </div>
 
@@ -1009,9 +1008,9 @@
         </div>
 
         <div class="chat-input-wrapper">
-          <button class="chat-attach-btn" onclick="attachFileToThread('right')" title="Attach a file to this thread">+</button>
-          <input type="text" id="right-chat-input" class="chat-input" placeholder="Query speculation engine..." onkeydown="if(event.key === 'Enter') submitPrompt('right')">
-          <button onclick="submitPrompt('right')">Send</button>
+          <button class="chat-attach-btn" onclick="attachFileToThread('right')" title="Attach file to creative lane">+</button>
+          <input type="text" id="right-chat-input" class="chat-input" placeholder="Query speculation engine..." title="Type a prompt. Press Enter to send." onkeydown="if(event.key === 'Enter') submitPrompt('right')">
+          <button onclick="submitPrompt('right')" title="Send prompt to creative lane (Enter)">Send</button>
         </div>
       </div>
 
@@ -1023,24 +1022,24 @@
     <!-- Right Wing -->
     <div id="right-wing" class="panel">
       <div class="right-wing-tabs">
-        <button class="right-wing-tab-btn active" data-tab="context" onclick="switchRightWingTab('context')">Context</button>
-        <button class="right-wing-tab-btn" data-tab="inspectors" onclick="switchRightWingTab('inspectors')">Inspectors</button>
-        <button class="right-wing-tab-btn" data-tab="equation" onclick="switchRightWingTab('equation')">Equation</button>
-        <button class="right-wing-tab-btn" data-tab="notes" onclick="switchRightWingTab('notes')">Notes</button>
+        <button class="right-wing-tab-btn active" data-tab="context" onclick="switchRightWingTab('context')" title="Open context tools tab">Context</button>
+        <button class="right-wing-tab-btn" data-tab="inspectors" onclick="switchRightWingTab('inspectors')" title="Open inspectors tab">Inspectors</button>
+        <button class="right-wing-tab-btn" data-tab="equation" onclick="switchRightWingTab('equation')" title="Open equation tools tab">Equation</button>
+        <button class="right-wing-tab-btn" data-tab="notes" onclick="switchRightWingTab('notes')" title="Open notes and scratchpad tab">Notes</button>
       </div>
 
       <div class="right-wing-panels">
         <div id="right-tab-context" class="right-wing-tab-panel active">
           <div class="panel-section">
             <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
-            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()">View/Edit Primer</button>
-            <button style="width: 100%; margin-top: 6px;" onclick="injectPrimerIntoThreads(false)">Sync AI Context Now</button>
+            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()" title="Open the primer editor">View/Edit Primer</button>
+            <button style="width: 100%; margin-top: 6px;" onclick="injectPrimerIntoThreads(false)" title="Inject primer context into both AI lanes">Sync AI Context Now</button>
             <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Review and edit the primer before syncing context to AI threads.</div>
           </div>
 
           <div class="panel-section">
             <div class="panel-section-title">AI Testing</div>
-            <button style="width: 100%;" onclick="openAiTestingModal()">Open AI Testing Suite</button>
+            <button style="width: 100%;" onclick="openAiTestingModal()" title="Open AI testing and probe tools">Open AI Testing Suite</button>
             <div style="font-size:0.75rem; color:#a6adc8; margin-top:6px; text-align:center;">Run model probe benchmarks from the dedicated AI Testing workspace.</div>
           </div>
 
@@ -1074,8 +1073,8 @@
               </select>
             </div>
             <div class="btn-group" style="margin-top: 5px;">
-              <button onclick="runEmpiricalAnalysis()">🧪 Create Analysis Plan</button>
-              <button onclick="openEmpiricalPrimer()">Edit Analysis Plan</button>
+              <button onclick="runEmpiricalAnalysis()" title="Generate a new empirical analysis plan">🧪 Create Analysis Plan</button>
+              <button onclick="openEmpiricalPrimer()" title="Open the current analysis plan in editor">Edit Analysis Plan</button>
             </div>
             <div id="analysis-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
               Ready to create or edit analysis plan.
@@ -1109,7 +1108,7 @@
                 <label for="cosmo-z">Redshift z</label>
                 <input id="cosmo-z" type="number" step="0.01" value="0.0">
               </div>
-              <button style="width: 100%;" onclick="runCosmologyMetrics()">Compute Metrics</button>
+              <button style="width: 100%;" onclick="runCosmologyMetrics()" title="Run configured cosmology metrics workflow">Compute Metrics</button>
             </div>
           </div>
         </div>
@@ -1119,11 +1118,11 @@
             <div class="panel-section-title">Equation Development</div>
             <textarea id="latex-input" class="chat-input" placeholder="Simplified LaTeX..."></textarea>
             <div class="btn-group" style="margin-top: 5px;">
-              <button onclick="cleanLaTeX()">🧹 Quick Clean</button>
-              <button onclick="previewEquation()">Render Preview</button>
-              <button onclick="loadMasterAxiomIntoEquationPanel()">View Axiom File</button>
-              <button onclick="openMasterAxiomEditor()">Edit Axiom File</button>
-              <button class="btn-large btn-special" onclick="saveEquation()">💾 Save to Workspace</button>
+              <button onclick="cleanLaTeX()" title="Normalize and clean equation formatting">🧹 Quick Clean</button>
+              <button onclick="previewEquation()" title="Render equation preview">Render Preview</button>
+              <button onclick="loadMasterAxiomIntoEquationPanel()" title="Load master axiom content into equation panel">View Axiom File</button>
+              <button onclick="openMasterAxiomEditor()" title="Open the master axiom file in editor">Edit Axiom File</button>
+              <button class="btn-large btn-special" onclick="saveEquation()" title="Save equation output to workspace markdown">💾 Save to Workspace</button>
             </div>
             <div id="equation-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
               Equation tools ready.
@@ -1135,17 +1134,17 @@
           <div class="panel-section" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
             <div class="panel-section-title">Scratchpad / Idea Pad</div>
             <div style="display: flex; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
-              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('bold')" title="Bold"><b>B</b></button>
-              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('italic')" title="Italic"><i>I</i></button>
-              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\\int_{0}^{\\infty}')" title="Insert Integral">∫ LaTeX</button>
-              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\n--- Note ---\n')" title="Insert Divider">Divider</button>
-              <button style="padding: 3px 8px; font-size: 0.7rem; margin-left: auto; color: var(--accent);" onclick="clearScratchpad()">Clear</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('bold')" title="Apply bold formatting"><b>B</b></button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('italic')" title="Apply italic formatting"><i>I</i></button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\\int_{0}^{\\infty}')" title="Insert integral LaTeX snippet">∫ LaTeX</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\n--- Note ---\n')" title="Insert note divider">Divider</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem; margin-left: auto; color: var(--accent);" onclick="clearScratchpad()" title="Clear scratchpad content">Clear</button>
             </div>
             <div id="scratchpad-content" contenteditable="true" style="flex: 1; min-height: 0; background-color: var(--bg-darker); border: 1px solid var(--border-panel); border-radius: 4px; padding: 10px; color: var(--text); font-family: monospace; font-size: 0.8rem; overflow-y: auto; outline: none;" placeholder="Jot down raw ideas, equations, or script snippets..."></div>
             <div class="btn-group" style="margin-top: 5px;">
-              <button onclick="saveScratchpad(false)">💾 Save</button>
-              <button onclick="saveScratchpad(true)">💾 Save As...</button>
-              <button class="btn-large" onclick="passScratchpadIntoPrimer()">➡ Pass Into Primer</button>
+              <button onclick="saveScratchpad(false)" title="Save scratchpad to default note file">💾 Save</button>
+              <button onclick="saveScratchpad(true)" title="Save scratchpad to a new file path">💾 Save As...</button>
+              <button class="btn-large" onclick="passScratchpadIntoPrimer()" title="Append scratchpad notes into primer context">➡ Pass Into Primer</button>
             </div>
           </div>
         </div>
@@ -1171,8 +1170,8 @@
       </div>
 
       <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
-        <button onclick="document.getElementById('restore-modal').style.display='none'">Cancel</button>
-        <button style="background-color: #f38ba8; color: var(--bg-darker); font-weight: bold;" onclick="executeRestore()">
+        <button onclick="document.getElementById('restore-modal').style.display='none'" title="Close without restoring">Cancel</button>
+        <button style="background-color: #f38ba8; color: var(--bg-darker); font-weight: bold;" onclick="executeRestore()" title="Restore selected local snapshot now">
           Restore Snapshot
         </button>
       </div>
@@ -1186,10 +1185,10 @@
   
         <!-- Tab Navigation -->
         <div class="tab-navigation" style="display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 5px;">
-          <button class="tab-btn active" style="background: none; border: none; color: var(--accent); cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('locations')">📁 Locations</button>
-          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('apps')">💻 System & Apps</button>
-          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('ai')">🤖 AI Models</button>
-          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('appearance')">🎨 Appearance</button>
+          <button class="tab-btn active" style="background: none; border: none; color: var(--accent); cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('locations')" title="Open location and path settings">📁 Locations</button>
+          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('apps')" title="Open system app and GitHub settings">💻 System & Apps</button>
+          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('ai')" title="Open AI provider and model settings">🤖 AI Models</button>
+          <button class="tab-btn" style="background: none; border: none; color: #6c7086; cursor: pointer; padding: 5px; font-weight: bold;" onclick="switchSettingsTab('appearance')" title="Open theme and color settings">🎨 Appearance</button>
         </div>
   
         <!-- Tab 1: Locations -->
@@ -1198,28 +1197,28 @@
             <label for="settings-project-root">Project Root Directory</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="settings-project-root">
-              <button onclick="browseForDirectory('project-root')">Browse</button>
+              <button onclick="browseForDirectory('project-root')" title="Select project root directory">Browse</button>
             </div>
           </div>
           <div class="form-group">
             <label for="settings-theory-dir">Theory Markdown Directory</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="settings-theory-dir">
-              <button onclick="browseForDirectory('theory-dir')">Browse</button>
+              <button onclick="browseForDirectory('theory-dir')" title="Select theory markdown directory">Browse</button>
             </div>
           </div>
           <div class="form-group">
             <label for="settings-master-axiom">Master Axiom File</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="settings-master-axiom">
-              <button onclick="browseForFile('master-axiom')">Browse</button>
+              <button onclick="browseForFile('master-axiom')" title="Select master axiom markdown file">Browse</button>
             </div>
           </div>
           <div class="form-group">
             <label for="settings-tools-dir">Tools / Analysis Directory</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="settings-tools-dir" placeholder="/path/to/analysis or tools">
-              <button onclick="browseForDirectory('tools-dir')">Browse</button>
+              <button onclick="browseForDirectory('tools-dir')" title="Select tools and analysis directory">Browse</button>
             </div>
             <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Used to build the project-awareness tool inventory for the AI briefing packet.</div>
           </div>
@@ -1227,15 +1226,15 @@
             <label for="settings-import-source">Theory Source File</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="settings-import-source" placeholder="/path/to/manuscript.txt or theory.md">
-              <button onclick="browseForFile('import-source', ['md', 'txt', 'docx', 'doc'])">Browse</button>
+              <button onclick="browseForFile('import-source', ['md', 'txt', 'docx', 'doc'])" title="Select source manuscript or theory file">Browse</button>
             </div>
           </div>
           <div class="form-group">
-            <button type="button" onclick="importTheorySource()" style="width: 100%;">📦 Import Theory Source into Folder</button>
+            <button type="button" onclick="importTheorySource()" style="width: 100%;" title="Import source file into theory markdown sections">📦 Import Theory Source into Folder</button>
             <div id="theory-import-status" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Creates markdown sections and an equations file inside the configured theory folder.</div>
           </div>
           <div class="form-group">
-            <button type="button" onclick="generateAxiomFromTheory()" style="width: 100%;">🧠 Generate Master Axiom from Theory Folder</button>
+            <button type="button" onclick="generateAxiomFromTheory()" style="width: 100%;" title="Generate master axiom from configured theory directory">🧠 Generate Master Axiom from Theory Folder</button>
             <div id="axiom-generation-status" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Uses the configured theory markdown directory and Gemini 1.5 Pro when an API key is available.</div>
           </div>
         </div>
@@ -1358,9 +1357,9 @@
 			</div>
 			
         <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
-          <button onclick="closeSettingsModal()">Cancel</button>
-          <button id="save-prefs-btn" style="background-color: var(--accent); color: var(--bg-darker);" onclick="saveSettings()">
-            <span id="save-btn-text">Save Configuration</span>
+          <button onclick="closeSettingsModal()" title="Close settings without saving">Cancel</button>
+          <button id="save-prefs-btn" style="background-color: var(--accent); color: var(--bg-darker);" onclick="saveSettings()" title="Save current settings to local configuration">
+            <span id="save-btn-text">Save Settings</span>
           </button>
         </div>
       </div>
@@ -1377,7 +1376,7 @@
         <label for="theory-profile-name-input">Profile Name</label>
         <div style="display: flex; gap: 8px;">
           <input id="theory-profile-name-input" type="text" placeholder="BMI Theory">
-          <button type="button" onclick="saveTheoryStateProfile()">Save Current</button>
+          <button type="button" onclick="saveTheoryStateProfile()" title="Save current workspace settings as a named profile">Save Current</button>
         </div>
       </div>
 
@@ -1391,13 +1390,13 @@
 
       <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; flex-wrap: wrap;">
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button type="button" onclick="loadTheoryStateProfile()">Load Selected</button>
-          <button type="button" onclick="renameTheoryStateProfile()">Rename Selected</button>
-          <button type="button" onclick="deleteTheoryStateProfile()">Delete Selected</button>
+          <button type="button" onclick="loadTheoryStateProfile()" title="Load the selected theory profile">Load Selected</button>
+          <button type="button" onclick="renameTheoryStateProfile()" title="Rename the selected theory profile">Rename Selected</button>
+          <button type="button" onclick="deleteTheoryStateProfile()" title="Delete the selected theory profile">Delete Selected</button>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button type="button" onclick="refreshTheoryProfilesList()">Refresh</button>
-          <button type="button" onclick="closeTheoryProfilesModal()">Close</button>
+          <button type="button" onclick="refreshTheoryProfilesList()" title="Reload profiles from storage">Refresh</button>
+          <button type="button" onclick="closeTheoryProfilesModal()" title="Close theory profiles modal">Close</button>
         </div>
       </div>
     </div>
@@ -1407,10 +1406,13 @@
     <div id="manuscript-tools-content" class="modal-content" style="width: 760px; max-width: 92vw; max-height: 92vh; overflow: auto;">
       <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <span>Manuscript Tools</span>
-        <button type="button" onclick="toggleManuscriptToolsMaximize()" style="padding: 4px 8px;">⤢ Maximize</button>
+        <button type="button" onclick="toggleManuscriptToolsMaximize()" style="padding: 4px 8px;" title="Toggle maximized manuscript tools view">⤢ Maximize</button>
       </div>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
         Render a single markdown file or combine theory markdown files into a master manuscript, then export it as Markdown, PDF, or DOCX.
+      </p>
+      <p style="font-size: 0.78rem; color: var(--accent-dim); margin-top: -6px; margin-bottom: 12px;">
+        PDF and DOCX conversion uses Pandoc. If export fails, install Pandoc and retry.
       </p>
 
       <div class="form-group">
@@ -1425,7 +1427,7 @@
         <label for="manuscript-source-file">Source File</label>
         <div style="display: flex; gap: 5px;">
           <input type="text" id="manuscript-source-file" placeholder="Choose a markdown file to render">
-          <button onclick="browseForFile('manuscript-source-file', ['md'])">Browse</button>
+          <button onclick="browseForFile('manuscript-source-file', ['md'])" title="Select a markdown source file">Browse</button>
         </div>
       </div>
 
@@ -1435,7 +1437,7 @@
             <label for="manuscript-source-dir">Source Documents Directory</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="manuscript-source-dir" placeholder="Choose the folder that contains the markdown files to combine">
-              <button onclick="browseForDirectory('manuscript-source-dir')">Browse</button>
+              <button onclick="browseForDirectory('manuscript-source-dir')" title="Select source documents directory">Browse</button>
             </div>
             <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Defaults to the configured Theory Markdown Directory when left empty.</div>
           </div>
@@ -1443,7 +1445,7 @@
             <label for="manuscript-output-dir">Output Directory</label>
             <div style="display: flex; gap: 5px;">
               <input type="text" id="manuscript-output-dir" placeholder="Choose where to save the rendered file">
-              <button onclick="browseForDirectory('manuscript-output-dir')">Browse</button>
+              <button onclick="browseForDirectory('manuscript-output-dir')" title="Select manuscript output directory">Browse</button>
             </div>
           </div>
         </div>
@@ -1453,9 +1455,9 @@
           <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; min-height:280px; max-height:420px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-          <button onclick="moveManuscriptSelection(-1)">↑ Move Up</button>
-          <button onclick="moveManuscriptSelection(1)">↓ Move Down</button>
-          <button onclick="refreshManuscriptFileList()">↻ Refresh List</button>
+          <button onclick="moveManuscriptSelection(-1)" title="Move selected file earlier in output order">↑ Move Up</button>
+          <button onclick="moveManuscriptSelection(1)" title="Move selected file later in output order">↓ Move Down</button>
+          <button onclick="refreshManuscriptFileList()" title="Rescan source directory and refresh file list">↻ Refresh List</button>
         </div>
       </div>
 
@@ -1463,7 +1465,7 @@
         <label for="manuscript-output-dir">Output Directory</label>
         <div style="display: flex; gap: 5px;">
           <input type="text" id="manuscript-output-dir" placeholder="Choose where to save the rendered file">
-          <button onclick="browseForDirectory('manuscript-output-dir')">Browse</button>
+          <button onclick="browseForDirectory('manuscript-output-dir')" title="Select manuscript output directory">Browse</button>
         </div>
       </div>
 
@@ -1485,8 +1487,9 @@
       </div>
 
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
-        <button onclick="closeManuscriptToolsModal()">Close</button>
-        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()">Render</button>
+        <button onclick="openMarkdownDocsFromManuscriptTools()" title="Switch to markdown document viewer">Markdown Viewer</button>
+        <button onclick="closeManuscriptToolsModal()" title="Close manuscript tools modal">Close</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()" title="Render output using selected mode and format">Render</button>
       </div>
     </div>
   </div>
@@ -1495,7 +1498,7 @@
     <div id="ai-testing-content" class="modal-content" style="width: 820px; max-width: 94vw; max-height: 92vh; overflow: auto;">
       <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <span>AI Testing</span>
-        <button type="button" onclick="closeAiTestingModal()" style="padding: 4px 8px;">Close</button>
+        <button type="button" onclick="closeAiTestingModal()" style="padding: 4px 8px;" title="Close AI testing modal">Close</button>
       </div>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
         Benchmark contextual retrieval and model consistency using your currently loaded theory workspace.
@@ -1514,9 +1517,9 @@
           </div>
         </div>
         <div class="btn-group" style="margin-top: 5px;">
-          <button onclick="saveCurrentProbeAsSuite()">Save Suite</button>
-          <button onclick="deleteSelectedProbeSuite()">Delete Suite</button>
-          <button onclick="runSelectedProbeSuite()">Run Selected Suite</button>
+          <button onclick="saveCurrentProbeAsSuite()" title="Save current probe configuration as a named suite">Save Suite</button>
+          <button onclick="deleteSelectedProbeSuite()" title="Delete the selected saved probe suite">Delete Suite</button>
+          <button onclick="runSelectedProbeSuite()" title="Run all tests in the selected suite">Run Selected Suite</button>
         </div>
         <div class="form-group">
           <label for="context-probe-question">Probe Question</label>
@@ -1541,13 +1544,13 @@
           </div>
         </div>
         <div class="btn-group" style="margin-top: 5px;">
-          <button onclick="runContextProbe()">Run Probe (Both Panes)</button>
-          <button onclick="runContextProbeBatch()">Run Batch (Current Pair)</button>
-          <button onclick="resetContextProbeHistory()">Reset Probe History</button>
+          <button onclick="runContextProbe()" title="Run one probe against both AI panes">Run Probe (Both Panes)</button>
+          <button onclick="runContextProbeBatch()" title="Run a batch probe for the current lane pair">Run Batch (Current Pair)</button>
+          <button onclick="resetContextProbeHistory()" title="Clear saved probe history metrics">Reset Probe History</button>
         </div>
         <div class="btn-group" style="margin-top: 5px;">
-          <button onclick="resetSinglePaneContext('left')">Reset Left Pane</button>
-          <button onclick="resetSinglePaneContext('right')">Reset Right Pane</button>
+          <button onclick="resetSinglePaneContext('left')" title="Reset left pane conversation context">Reset Left Pane</button>
+          <button onclick="resetSinglePaneContext('right')" title="Reset right pane conversation context">Reset Right Pane</button>
         </div>
         <div style="display: flex; gap: 10px; font-size: 0.72rem; color: var(--accent-dim); margin-top: 4px; flex-wrap: wrap;">
           <div id="left-pane-history-mode-label">Left pane history mode: ON</div>
@@ -1560,7 +1563,7 @@
           Tuning indicator will appear after probe runs.
         </div>
         <div class="btn-group" style="margin-top: 6px;">
-          <button id="context-probe-open-report-btn" onclick="openLatestContextProbeReport()" style="display: none;">Open Report</button>
+          <button id="context-probe-open-report-btn" onclick="openLatestContextProbeReport()" style="display: none;" title="Open latest generated probe report">Open Report</button>
         </div>
         <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
       </div>
@@ -1580,7 +1583,7 @@
         <li>For stronger secret handling, use environment variables or an OS keychain flow.</li>
       </ul>
       <div style="display: flex; justify-content: flex-end; gap: 10px;">
-        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="dismissSecurityNote()">Understood</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="dismissSecurityNote()" title="Dismiss security note">Understood</button>
       </div>
     </div>
   </div>
@@ -1627,9 +1630,9 @@
         Draft status: ready.
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 10px;">
-        <button onclick="refreshExitDraft()">Refresh Draft</button>
-        <button onclick="closeExitDialog()">Cancel</button>
-        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="confirmExitSession()">Prepare & Exit</button>
+        <button onclick="refreshExitDraft()" title="Regenerate session draft content">Refresh Draft</button>
+        <button onclick="closeExitDialog()" title="Close without exiting">Cancel</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="confirmExitSession()" title="Prepare recap artifacts and exit session">Prepare & Exit</button>
       </div>
     </div>
   </div>
@@ -1645,10 +1648,10 @@
         First-session note: if no primer file exists yet, it will be generated after workspace context is available.
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px;">
-        <button onclick="refreshBriefingPacketEditor()">Refresh</button>
-        <button onclick="saveBriefingPacketEdits()">Save Packet</button>
-        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="syncBriefingPacketToThreads()">Sync To AI Threads</button>
-        <button onclick="closeBriefingPacketEditor()">Close</button>
+        <button onclick="refreshBriefingPacketEditor()" title="Reload primer content from disk">Refresh</button>
+        <button onclick="saveBriefingPacketEdits()" title="Save primer packet changes">Save Packet</button>
+        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="syncBriefingPacketToThreads()" title="Send primer packet context to both AI lanes">Sync To AI Threads</button>
+        <button onclick="closeBriefingPacketEditor()" title="Close primer editor modal">Close</button>
       </div>
     </div>
   </div>
@@ -1660,13 +1663,13 @@
         Loading document...
       </div>
       <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-        <input id="help-doc-search-input" type="text" placeholder="Search help (e.g., workspaces)" onkeydown="if(event.key==='Enter'){searchHelpDocs();}">
-        <button type="button" onclick="searchHelpDocs()">Search</button>
+        <input id="help-doc-search-input" type="text" placeholder="Search help (e.g., workspaces)" title="Type a help query. Press Enter to search." onkeydown="if(event.key==='Enter'){searchHelpDocs();}">
+        <button type="button" onclick="searchHelpDocs()" title="Search all help documents (Enter)">Search</button>
       </div>
       <div id="help-doc-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
       <div id="help-doc-content" class="help-doc-rendered">Loading...</div>
       <div style="display: flex; justify-content: flex-end; margin-top: 12px; gap: 8px;">
-        <button onclick="closeHelpDocModal()">Close</button>
+        <button onclick="closeHelpDocModal()" title="Close help modal">Close</button>
       </div>
     </div>
   </div>
@@ -1679,14 +1682,22 @@
       </div>
 
       <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
-        <input id="markdown-docs-directory" type="text" placeholder="Markdown directory (from Customization -> Theory Markdown Directory)">
-        <button type="button" onclick="browseForDirectory('markdown-docs-directory')">Browse</button>
-        <button type="button" onclick="refreshMarkdownDocumentsList()">Load</button>
+        <input id="markdown-docs-directory" type="text" placeholder="Markdown directory (from Customize -> Locations -> Theory Markdown Directory)">
+        <button type="button" onclick="browseForDirectory('markdown-docs-directory')" title="Select markdown documents directory">Browse</button>
+        <button type="button" onclick="refreshMarkdownDocumentsList()" title="Load markdown files from selected directory">Load</button>
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+        <input id="markdown-docs-output-dir" type="text" placeholder="PDF output directory (defaults to workspace root)">
+        <button type="button" onclick="browseForDirectory('markdown-docs-output-dir')" title="Select output directory for PDF exports">Browse</button>
+      </div>
+      <div style="margin-top: -2px; margin-bottom: 8px; font-size: 0.78rem; color: var(--accent-dim);">
+        PDF export uses the same Pandoc conversion pipeline as Manuscript Tools.
       </div>
 
       <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-        <input id="markdown-docs-search-input" type="text" placeholder="Search markdown docs (e.g., workspaces)" onkeydown="if(event.key==='Enter'){searchMarkdownDocuments();}">
-        <button type="button" onclick="searchMarkdownDocuments()">Search</button>
+        <input id="markdown-docs-search-input" type="text" placeholder="Search markdown docs (e.g., workspaces)" title="Type a markdown query. Press Enter to search." onkeydown="if(event.key==='Enter'){searchMarkdownDocuments();}">
+        <button type="button" onclick="searchMarkdownDocuments()" title="Search loaded markdown files (Enter)">Search</button>
       </div>
 
       <div id="markdown-docs-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
@@ -1712,8 +1723,10 @@
           Editing opens your configured CLI editor (or system default) and closing the editor triggers git add + commit for the selected markdown file.
         </div>
         <div style="display: flex; gap: 8px;">
-          <button type="button" onclick="editSelectedMarkdownDocument()">Edit</button>
-          <button type="button" onclick="closeMarkdownDocumentsModal()">Close</button>
+          <button type="button" onclick="openManuscriptToolsFromMarkdownDocs()" title="Switch to manuscript tools with current context">Manuscript Tools</button>
+          <button type="button" onclick="editSelectedMarkdownDocument()" title="Open selected markdown file in configured editor">Edit</button>
+          <button type="button" style="background-color: var(--accent); color: var(--bg-darker);" onclick="exportSelectedMarkdownToPdf()" title="Export selected markdown document to PDF">Export PDF</button>
+          <button type="button" onclick="closeMarkdownDocumentsModal()" title="Close markdown documents modal">Close</button>
         </div>
       </div>
     </div>
@@ -3255,7 +3268,7 @@
         const encodedName = encodeURIComponent(String(profileName || ''));
         const isSelected = theoryProfilesState.selectedProfile === profileName;
         const isActive = theoryProfilesState.activeProfile === profileName;
-        return `<button type="button" class="theory-profile-item${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}" onclick="selectTheoryProfileFromEncoded('${encodedName}')"><span>${safeName}</span>${isActive ? '<span class="theory-profile-badge">active</span>' : ''}</button>`;
+        return `<button type="button" class="theory-profile-item${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}" onclick="selectTheoryProfileFromEncoded('${encodedName}')" title="Select theory profile ${safeName}"><span>${safeName}</span>${isActive ? '<span class="theory-profile-badge">active</span>' : ''}</button>`;
       }).join('');
     }
 
@@ -3734,7 +3747,7 @@ async function restoreVersion() {
       const saveBtnText = document.getElementById("save-btn-text");
       saveBtn.classList.remove("success");
       saveBtn.disabled = false;
-      saveBtnText.textContent = "Save Configuration";
+      saveBtnText.textContent = "Save Settings";
     }
 
     function openManuscriptToolsModal() {
@@ -3745,6 +3758,59 @@ async function restoreVersion() {
       document.getElementById('manuscript-tools-modal').style.display = 'flex';
       refreshManuscriptFileList();
       toggleManuscriptMode(document.getElementById('manuscript-mode').value);
+    }
+
+    function openManuscriptToolsFromMarkdownDocs() {
+      const selectedMarkdownPath = String(markdownDocsState?.selectedPath || '').trim();
+      const markdownDirectory = String(markdownDocsState?.directory || '').trim();
+      const markdownOutputDir = String(document.getElementById('markdown-docs-output-dir')?.value || '').trim();
+
+      closeMarkdownDocumentsModal();
+      openManuscriptToolsModal();
+
+      const modeSelect = document.getElementById('manuscript-mode');
+      if (modeSelect && selectedMarkdownPath) {
+        modeSelect.value = 'single';
+        toggleManuscriptMode('single');
+        const sourceFileInput = document.getElementById('manuscript-source-file');
+        if (sourceFileInput) {
+          sourceFileInput.value = selectedMarkdownPath;
+        }
+      }
+
+      const sourceDirInput = document.getElementById('manuscript-source-dir');
+      if (sourceDirInput && !sourceDirInput.value.trim() && markdownDirectory) {
+        sourceDirInput.value = markdownDirectory;
+      }
+
+      const outputDirInput = document.getElementById('manuscript-output-dir');
+      if (outputDirInput && !outputDirInput.value.trim()) {
+        outputDirInput.value = markdownOutputDir || currentWorkspacePath || markdownDirectory;
+      }
+    }
+
+    async function openMarkdownDocsFromManuscriptTools() {
+      const sourceDir = String(document.getElementById('manuscript-source-dir')?.value || '').trim();
+      const outputDir = String(document.getElementById('manuscript-output-dir')?.value || '').trim();
+
+      closeManuscriptToolsModal();
+      await openMarkdownDocumentsModal();
+
+      const markdownDirInput = document.getElementById('markdown-docs-directory');
+      let directoryUpdated = false;
+      if (markdownDirInput && !markdownDirInput.value.trim() && sourceDir) {
+        markdownDirInput.value = sourceDir;
+        directoryUpdated = true;
+      }
+
+      const markdownOutputInput = document.getElementById('markdown-docs-output-dir');
+      if (markdownOutputInput && !markdownOutputInput.value.trim() && outputDir) {
+        markdownOutputInput.value = outputDir;
+      }
+
+      if (directoryUpdated) {
+        await refreshMarkdownDocumentsList();
+      }
     }
 
     function openAiTestingModal() {
@@ -3827,7 +3893,7 @@ async function restoreVersion() {
               </div>
               <div style="display:flex; align-items:center; gap:6px;">
                 <span style="font-size:0.75rem; color:${selected ? 'var(--accent)' : 'var(--text-muted)'};">${statusLabel}</span>
-                <button type="button" onclick="toggleManuscriptEntry(${index}); event.stopPropagation();">${selected ? 'Exclude' : 'Include'}</button>
+                <button type="button" onclick="toggleManuscriptEntry(${index}); event.stopPropagation();" title="${selected ? 'Exclude this file from render output' : 'Include this file in render output'}">${selected ? 'Exclude' : 'Include'}</button>
               </div>
             </div>`;
           }).join('')
@@ -4028,7 +4094,7 @@ async function restoreVersion() {
         const relative = String(doc?.relative_path || path || 'Untitled');
         const encodedPath = escapeForInlineSingleQuotedJs(path);
         const selected = markdownDocsState.selectedPath === path;
-        return `<button type="button" onclick="selectMarkdownDocumentFromEncoded('${encodedPath}')" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border-color)'}; border-radius:4px; padding:7px; background:${selected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)'}; color:var(--text);"><div style="font-size:0.82rem;">${escapeHelpHtml(relative)}</div></button>`;
+        return `<button type="button" onclick="selectMarkdownDocumentFromEncoded('${encodedPath}')" title="Open preview for ${escapeHelpHtml(relative)}" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border-color)'}; border-radius:4px; padding:7px; background:${selected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)'}; color:var(--text);"><div style="font-size:0.82rem;">${escapeHelpHtml(relative)}</div></button>`;
       }).join('');
     }
 
@@ -4050,7 +4116,7 @@ async function restoreVersion() {
         const score = Number(row?.score || 0);
         const snippet = escapeHelpHtml(row?.snippet || '');
         return [
-          `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.03); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')">`,
+          `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.03); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')" title="Open search result document">`,
           `<div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:4px;"><strong>${title}</strong><span style="font-size:0.75rem; color:var(--text-muted);">score ${score}</span></div>`,
           `<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">${relative}</div>`,
           `<div style="font-size:0.8rem; color:var(--text);">${snippet}</div>`,
@@ -4062,12 +4128,16 @@ async function restoreVersion() {
     async function openMarkdownDocumentsModal() {
       const modal = document.getElementById('markdown-docs-modal');
       const dirInput = document.getElementById('markdown-docs-directory');
+      const outputInput = document.getElementById('markdown-docs-output-dir');
       if (!modal || !dirInput) return;
 
       modal.style.display = 'flex';
       const defaultDir = String(currentConfig?.theory_md_dir || '').trim();
       if (!dirInput.value.trim() && defaultDir) {
         dirInput.value = defaultDir;
+      }
+      if (outputInput && !outputInput.value.trim()) {
+        outputInput.value = String(currentWorkspacePath || '').trim() || defaultDir;
       }
 
       await refreshMarkdownDocumentsList();
@@ -4101,7 +4171,7 @@ async function restoreVersion() {
         const statusLabel = dirty
           ? 'Local-save mode: selected file has unsynchronized local changes.'
           : 'Local-save mode: selected file is currently clean.';
-        return `${statusLabel} GitHub credentials are not configured in Customization, so commits are not auto-created.`;
+        return `${statusLabel} GitHub credentials are not configured in Customize, so commits are not auto-created.`;
       }
 
       const dirty = payload.dirty === true;
@@ -4164,7 +4234,7 @@ async function restoreVersion() {
     async function refreshMarkdownDocumentsList() {
       const directory = getMarkdownDocsDirectory();
       if (!directory) {
-        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customization first.');
+        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customize -> Locations first.');
         return;
       }
 
@@ -4242,7 +4312,7 @@ async function restoreVersion() {
       const query = String(document.getElementById('markdown-docs-search-input')?.value || '').trim();
 
       if (!directory) {
-        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customization first.');
+        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customize -> Locations first.');
         return;
       }
 
@@ -4314,6 +4384,45 @@ async function restoreVersion() {
         appendTerminalLog(`Markdown editor launch error: ${err}`);
         alert(`Could not open editor: ${err}`);
         setMarkdownGitFeedback(`Edit workflow failed: ${err}`);
+      }
+    }
+
+    async function exportSelectedMarkdownToPdf() {
+      const filePath = String(markdownDocsState.selectedPath || '').trim();
+      if (!filePath) {
+        alert('Select a markdown document first.');
+        return;
+      }
+
+      const outputDirInput = document.getElementById('markdown-docs-output-dir');
+      const selectedOutputDir = String(outputDirInput?.value || '').trim() || String(currentWorkspacePath || '').trim() || String(markdownDocsState.directory || '').trim();
+      if (!selectedOutputDir) {
+        alert('Choose an output directory first.');
+        return;
+      }
+
+      if (outputDirInput) {
+        outputDirInput.value = selectedOutputDir;
+      }
+
+      try {
+        setMarkdownDocsMeta(`Exporting ${filePath} to PDF in ${selectedOutputDir} ...`);
+        const response = await invoke('render_manuscript', {
+          mode: 'single',
+          sourceFile: filePath,
+          files: [],
+          outputDir: selectedOutputDir,
+          format: 'pdf',
+          useForTraining: false,
+          sourceDir: null
+        });
+        const result = typeof response === 'string' ? JSON.parse(response) : response;
+        const outputPath = result?.output_path || '(unknown path)';
+        setMarkdownDocsMeta(`PDF export complete: ${outputPath}`);
+        appendTerminalLog(`Markdown PDF export complete: ${outputPath}`);
+      } catch (err) {
+        setMarkdownDocsMeta(`PDF export failed: ${err}`);
+        appendTerminalLog(`Markdown PDF export failed: ${err}`);
       }
     }
 
@@ -4555,7 +4664,7 @@ async function restoreVersion() {
         const score = Number(row?.score || 0);
         const snippet = escapeHelpHtml(row?.snippet || '');
         return [
-          `<button type="button" style="width: 100%; text-align: left; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; background: rgba(255,255,255,0.03); color: var(--text);" onclick="openHelpDoc('${id}');">`,
+          `<button type="button" style="width: 100%; text-align: left; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; background: rgba(255,255,255,0.03); color: var(--text);" onclick="openHelpDoc('${id}');" title="Open help document ${title}">`,
           `<div style="display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px;"><strong>${title}</strong><span style="font-size: 0.75rem; color: var(--text-muted);">score ${score}</span></div>`,
           `<div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">${path}</div>`,
           `<div style="font-size: 0.8rem; color: var(--text);">${snippet}</div>`,
@@ -5572,7 +5681,7 @@ async function restoreVersion() {
         win.innerHTML = `
             <div class="window-header" style="cursor: move; margin-bottom: 5px; border-bottom: 1px solid var(--border-color);">
                 Equation Preview 
-                <button onclick="this.parentElement.parentElement.remove()">X</button>
+                <button onclick="this.parentElement.parentElement.remove()" title="Close equation preview window">X</button>
             </div>
             <div class="equation-content">${latexSvg}</div>
         `;

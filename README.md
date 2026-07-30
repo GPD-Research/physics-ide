@@ -23,6 +23,19 @@ The version 7 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-07-30)
+
+- added a built-in Markdown Documents viewer with rendered preview, fuzzy search, and editor launch workflow;
+- added single-document PDF export from Markdown Documents with output-directory selection;
+- connected Markdown Documents and Manuscript Tools with cross-navigation buttons for rapid workflow switching;
+- improved manuscript rendering/export behavior so PDF and DOCX are generated through Pandoc conversion;
+- added explicit GitHub Username/PAT settings and aligned markdown save behavior with configured GitHub mode vs local-save mode;
+- expanded the in-app Help system with:
+   - GUI Button Glossary,
+   - Push/Pull Context and Common Errors,
+   - Startup Initial Setup Workflow and Checklist;
+- completed a UI housekeeping pass with terminology alignment and broad tooltip coverage (including keyboard Enter hints on chat/search flows).
+
 ### Today's progress (2026-07-28)
 
 - confirmed reliable Gemini model communication from the desktop app;
@@ -85,6 +98,7 @@ The project has moved from a simple desktop shell toward a more practical theory
 - Node.js and npm
 - Rust toolchain
 - Tauri prerequisites for your OS
+- Pandoc (required for real PDF and DOCX manuscript/markdown export)
 
 ### Run locally
 
@@ -150,6 +164,7 @@ sudo apt install -y \
    curl \
    wget \
    file \
+   pandoc \
    libgtk-3-dev \
    libayatana-appindicator3-dev \
    librsvg2-dev \

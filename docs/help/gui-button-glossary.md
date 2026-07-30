@@ -44,11 +44,10 @@ Notes:
 
 - Customize: Open settings/customization modal.
 - Edit Project Title (pencil): Rename the displayed project title.
-- Open Folder: Load a directory as active workspace.
+- Open Workspace: Load a directory as active workspace.
 - Export ASCII Tree: Generate and save workspace tree text file.
 - Pull: Run git pull in the active workspace repository.
 - Push: Run git push in the active workspace repository (main/master guarded).
-- Manuscript Tools (workspace button): Quick open manuscript tools modal.
 
 ## Terminal Panel Controls
 
@@ -124,7 +123,7 @@ Notes:
 
 ### Footer Buttons
 - Cancel: Close settings without applying new edits.
-- Save Preferences: Persist settings to local app config.
+- Save Settings: Persist settings to local app config.
 
 ## Theory Profiles Modal
 

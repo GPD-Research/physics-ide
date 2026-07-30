@@ -4,7 +4,7 @@ Use this checklist when running Physics IDE for the first time on a new machine 
 
 ## Phase 1: Open a Project Workspace
 
-1. Click Open Workspace/Open Folder.
+1. Click Open Workspace.
 2. Select your project root directory.
 3. Confirm file tree appears and Project Status root updates.
 
@@ -49,7 +49,7 @@ In Customize -> AI Models:
 1. Paste Gemini API key and/or OpenAI API key.
 2. Choose provider per pane.
 3. Choose model per pane.
-4. Save Preferences.
+4. Save Settings.
 
 Success criteria:
 - Left and right pane prompts return responses.
