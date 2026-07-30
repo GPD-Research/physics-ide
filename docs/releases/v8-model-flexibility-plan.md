@@ -1,118 +1,178 @@
-# v8.0.0 Model Flexibility Plan
+# v8.0.0 Final Build Plan
 
-Current baseline: v7 stream (post cloud-first provider transition)
+Current baseline: v7 stream (project-aware AI workflow stabilized)
 Target milestone: v8.0.0
 
-## Why v8
+## v8 product statement
 
-v7 established stable cloud-provider behavior and strong context probe reliability.
-v8 should focus on user-controlled model freedom while preserving reliability and testability.
+v8 should make physics-IDE feel intentionally organized and theory-agnostic:
 
-## v7 status snapshot
+- daily research stays in the main left/right wing workspace;
+- occasional setup and maintenance flows move into the top-menu Tools dropdown;
+- Customize becomes appearance and AI preference control;
+- model/provider flexibility is fully user-driven without code edits.
 
-### Completed in v7 stream
+## Locked UX architecture for v8
 
-- [x] OpenAI/Gemini cloud-first provider path is active in UI and backend runtime.
-- [x] Legacy Ollama runtime/backend path removed.
-- [x] AI Testing moved into dedicated top-menu workflow.
-- [x] Context probe upgraded from filename-only to semantic content evidence grounding.
-- [x] Probe suite storage and reusable per-theory test suite execution added.
-- [x] Batch/suite report generation and in-tool Open Report action added.
-- [x] Context probe reliability reached 16/16 in user validation run.
+### 1) Main workspace wings = day-to-day theory work
 
-### Remaining to formalize before v7 tag
+Keep these in the main GUI:
 
-- [x] Write explicit v7 release checklist and tagging gates (similar to v6 checklist).
-- [ ] Cross-platform packaging smoke checks (Linux/Windows/macOS) recorded for this feature set.
-- [x] Final release notes for v7 feature deltas.
+- dual AI lanes and thread workflow;
+- project tree, editing, scratchpad, iterative analysis loops;
+- active testing actions that are used routinely inside a work session.
 
-## v8 scope: user-defined OpenAI/Gemini models
+### 2) Tools menu = occasional workflows
 
-### Goal
+Tools should contain actions that are not used every day:
 
-Allow users to enter any model ID for OpenAI or Gemini (as enabled in their provider project settings), validate quickly, and benchmark in AI Testing without code edits.
+- theory import setup and verification;
+- master axiom generation/regeneration;
+- briefing packet compile/refresh;
+- manuscript render/export;
+- snapshot/version utilities.
 
-### Core requirements
+### 3) Customize menu = fast-changing preferences
 
-- [ ] Add advanced model input fields (freeform) per pane for OpenAI and Gemini.
-- [ ] Keep presets, but allow custom override IDs.
-- [ ] Add Validate Model action per pane/provider.
-- [ ] Persist custom model IDs in user settings.
-- [ ] Use custom IDs directly in runtime dispatch.
-- [ ] Keep safe fallback behavior when custom model fails.
+Customize should focus on settings users may change often:
 
-## v8 scope: workflow polish and UI real-estate control
+- AI provider/model preferences and custom model IDs;
+- theme and color system;
+- typography controls;
+- translucency and visual polish controls.
 
-### Goal
+## Core v8 feature tracks
 
-Make v8 feel polished and user-directed by moving workflow tools into top-menu flows and allowing users to control left/right pane visibility from View.
+### Track A: Theory Import Setup tool (Tools dropdown)
 
-### Tools menu integration
+Goal: replace scattered setup steps with one explicit checklist surface, without forcing a strict wizard.
 
-- [ ] Move mature workflow actions into top-menu Tools.
-- [ ] Keep Tools organized by category (manuscript, testing, data, utilities).
-- [ ] Reduce left/right wing control clutter by removing duplicated action surfaces.
-- [ ] Ensure each Tools action reports status and output location clearly.
+Deliverables:
 
-### View menu expansion
+- [ ] Add `Tools > Theory Import Setup` panel.
+- [ ] Show explicit checklist stages:
+	- `Import`
+	- `Scan`
+	- `Master axiom`
+	- `Briefing`
+	- `Run experiments`
+	- `Score outcomes`
+- [ ] Add status badges per stage (`Not started`, `In progress`, `Complete`, `Needs attention`).
+- [ ] Add evidence text per stage (which file/artifact satisfied the step).
+- [ ] Add one-click action buttons for each stage (run existing command wiring).
+- [ ] Add `Run all missing` helper for first-time onboarding.
 
-- [ ] Add View toggles for major left-pane elements (file tree, terminal, primer widgets where applicable).
-- [ ] Add View toggles for major right-pane elements (AI/testing widgets and auxiliary panels).
-- [ ] Persist View visibility preferences across restarts.
-- [ ] Add quick "reset layout" option in View.
+Verification rules (theory-agnostic):
 
-### Primer workflow simplification
+- [ ] Import complete if theory markdown directory exists and contains markdown files.
+- [ ] Scan complete if scan returns non-zero files and topic evidence.
+- [ ] Master axiom complete if target file exists with required sections.
+- [ ] Briefing complete if `ai_briefing.md`, `session_recap.md`, `project_awareness.md`, and `workspace_tree.txt` exist.
+- [ ] Run experiments complete if at least one experiment artifact is recorded in configured experiment output location.
+- [ ] Score outcomes complete if a scorecard/report artifact exists with timestamped run metadata.
 
-- [ ] Evaluate which primer tasks can be automated by project-aware AI context.
-- [ ] Add optional "Idea Pad to Primer" flow that can append user notes into primer context.
-- [ ] Keep Customize focused on file locations while automating primer assembly where safe.
-- [ ] Add traceability notes showing what user text was promoted into primer context.
+### Track B: User-defined OpenAI/Gemini model IDs
 
-### UX quality targets
+Goal: users can run provider-supported model IDs directly with clear validation and reporting.
 
-- [ ] Improve discoverability of workflows through top-menu-first navigation.
-- [ ] Decrease time-to-first-use for new sessions with fewer mandatory setup steps.
-- [ ] Keep human-directed theory evolution primary while AI handles repetitive context stitching.
+Deliverables:
 
-### Validation and safety
+- [ ] Freeform model ID inputs per pane/provider, while keeping presets.
+- [ ] Per-pane validate action for configured model ID.
+- [ ] Persist custom IDs in user settings.
+- [ ] Runtime dispatch honors custom IDs first, then safe fallback behavior.
+- [ ] Error text clearly explains unsupported model/endpoint combinations.
 
-- [ ] Clear error messages for unsupported model/endpoint combinations.
-- [ ] Keep current stable defaults available as one-click reset.
-- [ ] Add a lightweight compatibility check before full probe/batch runs.
-- [ ] Ensure probe suite metrics are keyed by actual custom model ID.
+### Track C: Workflow consolidation and layout control
 
-### AI Testing integration
+Goal: reduce UI clutter while preserving fast daily work.
 
-- [ ] Add "Run probe against current custom models" action (no extra setup).
-- [ ] Add suite metadata showing provider/model IDs used in each run.
-- [ ] Include model IDs in summary report headers.
+Deliverables:
 
-### Compatibility notes
+- [ ] Move mature, non-daily actions from main surfaces into Tools.
+- [ ] Keep Tools grouped by category and make output paths obvious.
+- [ ] Add View toggles for major left/right pane elements.
+- [ ] Persist View states and provide `Reset layout` action.
 
-- [ ] Document endpoint caveat: some legacy model families may not support current chat request shape.
-- [ ] For unsupported families, provide direct next-step guidance (switch model or endpoint mode if/when supported).
+### Track D: Visual and typography polish
 
-## Suggested v8 implementation phases
+Goal: modernize visual language without reducing readability.
 
-### Phase 1: UI + persistence
+Deliverables:
 
-- Add custom model fields and save/load behavior.
-- No backend endpoint changes yet.
+- [ ] Add translucent dropdown/panel styling controls.
+- [ ] Introduce gradient-capable surface tokens.
+- [ ] Add font role controls (title, descriptor, tooltip, small/body text).
+- [ ] Ship a curated starter font set (readability-first plus a few expressive options).
 
-### Phase 2: runtime + validation
+## Existing automation baseline (as of v7)
 
-- Validate custom IDs and dispatch with robust fallback/errors.
-- Ensure provider normalization remains safe.
+Workflow coverage for `Import -> Scan -> Master axiom -> Briefing -> Run experiments -> Score outcomes`:
 
-### Phase 3: testing/reporting hardening
+- import: semi-automated;
+- scan: automated;
+- master axiom: automated;
+- briefing: automated;
+- run experiments: partially automated primitives;
+- score outcomes: mostly manual/gap.
 
-- Add model metadata into AI Testing outputs and suite runs.
-- Add release-gate checklist for model flexibility.
+v8 closes the usability gap by adding explicit checklist verification in one Tool surface.
 
-## Exit criteria for v8
+## Theory repository strategy (parallel to v8 app work)
 
-- [ ] User can run custom OpenAI model ID without code changes.
-- [ ] User can run custom Gemini model ID without code changes.
-- [ ] Validation errors are actionable and specific.
-- [ ] AI Testing suites preserve and report exact model IDs.
-- [ ] Stability remains at or above current probe quality baseline.
+The app remains theory-agnostic. Model repos are validation content, not hardcoded behavior.
+
+Parallel deliverables:
+
+- [ ] Create `lambda-cdm` repository with canonical structure (`src/`, `data/`, `manuscript/`, root README).
+- [ ] Create `ptolemaic-model-edu` repository with canonical structure and explicit educational/refuted labeling.
+- [ ] Define shared model-pack metadata contract used by both repos.
+- [ ] Add known-result benchmark artifacts for Lambda CDM to calibrate IDE workflows.
+- [ ] Add known-limitation and pedagogical contrast tests for Ptolemaic model.
+
+## Implementation phases
+
+### Phase 1: Foundations (Tools entry + verifier backend)
+
+- [ ] Add checklist verifier backend command and response schema.
+- [ ] Implement file/artifact evidence checks for all six stages.
+- [ ] Add initial Tools menu entry and panel shell.
+
+### Phase 2: Action wiring and reliability
+
+- [ ] Connect panel actions to existing import/axiom/briefing commands.
+- [ ] Add safe handling for missing paths/config and actionable errors.
+- [ ] Add `Run all missing` and `Next recommended step` guidance.
+
+### Phase 3: Model flexibility + testing metadata
+
+- [ ] Complete custom model ID inputs, validation, and persistence.
+- [ ] Include provider/model IDs in probe suite runs and report headers.
+- [ ] Add compatibility checks before batch probe execution.
+
+### Phase 4: UI polish and migration cleanup
+
+- [ ] Move remaining non-daily setup controls from Customize/main surfaces to Tools.
+- [ ] Land translucency, gradients, and typography role controls.
+- [ ] Keep main wings optimized for daily research cadence.
+
+## v8 acceptance criteria
+
+- [ ] Tools menu contains a functioning `Theory Import Setup` workflow panel.
+- [ ] Checklist states are machine-verified, not only instructional text.
+- [ ] Users can complete full onboarding/import without hunting across scattered menus.
+- [ ] User-defined OpenAI and Gemini model IDs run without code edits.
+- [ ] AI testing reports include exact provider/model metadata.
+- [ ] Main GUI remains focused on day-to-day theory work.
+- [ ] No theory-specific hardcoding is introduced for Lambda CDM or other models.
+
+## Out of scope for v8
+
+- Full, mandatory wizard flow with strict step-locking.
+- Theory-specific parser branches that change core behavior by model name.
+
+## Immediate next actions
+
+- [ ] Open two new theory repositories (`lambda-cdm`, `ptolemaic-model-edu`).
+- [ ] Add initial model-pack metadata template to both repos.
+- [ ] Start v8 Phase 1 in app code: checklist verifier plus Tools menu entry.

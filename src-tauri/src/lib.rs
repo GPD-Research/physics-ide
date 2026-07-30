@@ -942,6 +942,291 @@ fn generate_exit_session_draft(
     Ok(payload.to_string())
 }
 
+fn has_required_master_axiom_sections(content: &str) -> (bool, Vec<String>) {
+    let required_sections = [
+        "## Core Axiom",
+        "## Hypothesis",
+        "## Predictions",
+        "## Observational Consequences",
+    ];
+
+    let lower = content.to_ascii_lowercase();
+    let mut missing = Vec::new();
+    for section in required_sections {
+        if !lower.contains(&section.to_ascii_lowercase()) {
+            missing.push(section.to_string());
+        }
+    }
+
+    (missing.is_empty(), missing)
+}
+
+fn collect_named_artifacts(search_roots: &[PathBuf], keywords: &[&str], limit: usize) -> Vec<String> {
+    let mut found = Vec::new();
+
+    for root in search_roots {
+        if !root.exists() || !root.is_dir() {
+            continue;
+        }
+
+        let mut files = Vec::new();
+        if recursive_file_scan(root, &mut files).is_err() {
+            continue;
+        }
+
+        for path in files {
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+
+            if keywords.iter().any(|keyword| file_name.contains(keyword)) {
+                found.push(path.to_string_lossy().to_string());
+                if found.len() >= limit {
+                    return found;
+                }
+            }
+        }
+    }
+
+    found
+}
+
+fn build_theory_import_checklist(
+    project_root: &Path,
+    theory_dir: &str,
+    master_axiom_path: &Path,
+    tools_dir: &str,
+) -> serde_json::Value {
+    let theory_path = PathBuf::from(theory_dir);
+    let scan = scan_markdown_theory(theory_dir);
+    let files_scanned = scan["files_scanned"].as_u64().unwrap_or(0) as usize;
+    let heading_count = scan["headings"].as_array().map(|items| items.len()).unwrap_or(0);
+    let summary_count = scan["file_summaries"].as_array().map(|items| items.len()).unwrap_or(0);
+
+    let import_complete = theory_path.exists() && theory_path.is_dir() && files_scanned > 0;
+    let import_stage = serde_json::json!({
+        "id": "import",
+        "label": "Import",
+        "status": if import_complete { "complete" } else { "needs_attention" },
+        "evidence": format!("Theory directory: {} | Markdown files scanned: {}", theory_path.to_string_lossy(), files_scanned),
+        "missing_items": if import_complete {
+            Vec::<String>::new()
+        } else {
+            vec!["Import theory source and ensure markdown files are present in the configured theory directory.".to_string()]
+        }
+    });
+
+    let scan_complete = files_scanned > 0 && (heading_count > 0 || summary_count > 0);
+    let scan_stage = serde_json::json!({
+        "id": "scan",
+        "label": "Scan",
+        "status": if scan_complete { "complete" } else { "needs_attention" },
+        "evidence": format!(
+            "Files scanned: {} | Heading cues: {} | Summary cues: {}",
+            files_scanned,
+            heading_count,
+            summary_count
+        ),
+        "missing_items": if scan_complete {
+            Vec::<String>::new()
+        } else {
+            vec!["Run scan after import and verify the corpus contains headings or non-empty summaries.".to_string()]
+        }
+    });
+
+    let (axiom_complete, mut axiom_missing) = if master_axiom_path.exists() {
+        match fs::read_to_string(master_axiom_path) {
+            Ok(content) => has_required_master_axiom_sections(&content),
+            Err(_) => (false, vec!["Master axiom exists but could not be read.".to_string()]),
+        }
+    } else {
+        (false, vec!["Master axiom file does not exist yet.".to_string()])
+    };
+
+    if !axiom_complete && master_axiom_path.exists() && axiom_missing.is_empty() {
+        axiom_missing.push("Master axiom is missing one or more required sections.".to_string());
+    }
+
+    let axiom_stage = serde_json::json!({
+        "id": "master_axiom",
+        "label": "Master axiom",
+        "status": if axiom_complete { "complete" } else { "needs_attention" },
+        "evidence": format!("Master axiom path: {}", master_axiom_path.to_string_lossy()),
+        "missing_items": axiom_missing
+    });
+
+    let briefing_files = [
+        project_root.join("ai_briefing.md"),
+        project_root.join("session_recap.md"),
+        project_root.join("project_awareness.md"),
+        project_root.join("workspace_tree.txt"),
+    ];
+    let mut missing_briefing = Vec::new();
+    let mut existing_briefing = Vec::new();
+    for file in briefing_files {
+        if file.exists() {
+            existing_briefing.push(file.to_string_lossy().to_string());
+        } else {
+            missing_briefing.push(file.to_string_lossy().to_string());
+        }
+    }
+    let briefing_complete = missing_briefing.is_empty();
+    let briefing_stage = serde_json::json!({
+        "id": "briefing",
+        "label": "Briefing",
+        "status": if briefing_complete { "complete" } else { "needs_attention" },
+        "evidence": format!("Generated files present: {}", existing_briefing.len()),
+        "artifacts": existing_briefing,
+        "missing_items": if briefing_complete {
+            Vec::<String>::new()
+        } else {
+            vec![format!("Missing briefing artifacts: {}", missing_briefing.join(", "))]
+        }
+    });
+
+    let mut artifact_roots = vec![
+        project_root.join("experiments"),
+        project_root.join("analysis"),
+        project_root.join("reports"),
+        project_root.join("results"),
+        project_root.join("benchmarks"),
+        project_root.join("output"),
+        project_root.join("outputs"),
+        project_root.join("artifacts"),
+    ];
+
+    if !tools_dir.trim().is_empty() {
+        artifact_roots.push(PathBuf::from(tools_dir));
+    }
+
+    let experiment_artifacts = collect_named_artifacts(
+        &artifact_roots,
+        &["experiment", "probe", "batch", "suite", "analysis", "metrics", "run"],
+        8,
+    );
+    let experiments_complete = !experiment_artifacts.is_empty();
+    let experiments_stage = serde_json::json!({
+        "id": "run_experiments",
+        "label": "Run experiments",
+        "status": if experiments_complete { "complete" } else { "needs_attention" },
+        "evidence": format!("Detected experiment-related artifacts: {}", experiment_artifacts.len()),
+        "artifacts": experiment_artifacts,
+        "missing_items": if experiments_complete {
+            Vec::<String>::new()
+        } else {
+            vec!["No experiment artifacts found yet. Run at least one probe, analysis, or experiment output flow and save results under experiments/results/reports paths.".to_string()]
+        }
+    });
+
+    let score_artifacts = collect_named_artifacts(
+        &artifact_roots,
+        &["score", "scoring", "benchmark", "evaluation", "validation", "accuracy", "pass_fail"],
+        8,
+    );
+    let scoring_complete = !score_artifacts.is_empty();
+    let scoring_stage = serde_json::json!({
+        "id": "score_outcomes",
+        "label": "Score outcomes",
+        "status": if scoring_complete { "complete" } else { "needs_attention" },
+        "evidence": format!("Detected scoring-related artifacts: {}", score_artifacts.len()),
+        "artifacts": score_artifacts,
+        "missing_items": if scoring_complete {
+            Vec::<String>::new()
+        } else {
+            vec!["No scoring artifacts found yet. Save at least one evaluation/benchmark/scorecard artifact after running experiments.".to_string()]
+        }
+    });
+
+    let stages = vec![
+        import_stage,
+        scan_stage,
+        axiom_stage,
+        briefing_stage,
+        experiments_stage,
+        scoring_stage,
+    ];
+
+    let completed_count = stages
+        .iter()
+        .filter(|stage| stage["status"].as_str().unwrap_or_default() == "complete")
+        .count();
+
+    let next_step = stages
+        .iter()
+        .find(|stage| stage["status"].as_str().unwrap_or_default() != "complete")
+        .and_then(|stage| stage["label"].as_str())
+        .unwrap_or("All stages complete")
+        .to_string();
+
+    serde_json::json!({
+        "status": if completed_count == stages.len() { "complete" } else { "incomplete" },
+        "project_root": project_root.to_string_lossy().to_string(),
+        "theory_directory": theory_path.to_string_lossy().to_string(),
+        "master_axiom_file": master_axiom_path.to_string_lossy().to_string(),
+        "completed_count": completed_count,
+        "total_count": stages.len(),
+        "next_recommended_step": next_step,
+        "stages": stages,
+        "notes": [
+            "Checklist verification is artifact-based and theory-agnostic.",
+            "Experiment and scoring stages rely on detected saved outputs; add explicit output folders for stronger verification fidelity."
+        ]
+    })
+}
+
+#[tauri::command]
+fn verify_theory_import_checklist(
+    workspace_path: String,
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let current_path = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?
+        .clone();
+
+    let mut config = AppConfig::default();
+    if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
+        }
+    }
+    apply_unset_path_defaults(&mut config);
+
+    let preferred_workspace = if workspace_path.trim().is_empty() {
+        current_path
+    } else {
+        workspace_path.trim().to_string()
+    };
+
+    let project_root = resolve_workspace_root(&preferred_workspace, &config)
+        .ok_or_else(|| "No valid workspace root available. Load a workspace first.".to_string())?;
+
+    let theory_dir = if !config.theory_md_dir.is_empty() {
+        config.theory_md_dir.clone()
+    } else {
+        project_root.to_string_lossy().to_string()
+    };
+
+    let master_axiom_path = if config.master_axiom_file.trim().is_empty() {
+        project_root.join("master_axiom.md")
+    } else {
+        PathBuf::from(&config.master_axiom_file)
+    };
+
+    let checklist = build_theory_import_checklist(
+        &project_root,
+        &theory_dir,
+        &master_axiom_path,
+        &config.tools_dir,
+    );
+
+    Ok(checklist.to_string())
+}
+
 #[tauri::command]
 fn get_master_axiom_snapshot(
     workspace_path: String,
@@ -3216,6 +3501,67 @@ mod tests {
     }
 
     #[test]
+    fn theory_import_checklist_marks_complete_when_all_artifacts_exist() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_checklist_complete_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("theory")).unwrap();
+        fs::create_dir_all(temp_dir.join("reports")).unwrap();
+
+        fs::write(
+            temp_dir.join("theory").join("chapter_1.md"),
+            "# Lambda CDM Notes\n\nThis chapter summarizes assumptions and predictions.\n",
+        )
+        .unwrap();
+
+        fs::write(
+            temp_dir.join("master_axiom.md"),
+            "## Core Axiom\n\ntext\n\n## Hypothesis\n\ntext\n\n## Predictions\n\ntext\n\n## Observational Consequences\n\ntext\n",
+        )
+        .unwrap();
+
+        fs::write(temp_dir.join("ai_briefing.md"), "briefing").unwrap();
+        fs::write(temp_dir.join("session_recap.md"), "recap").unwrap();
+        fs::write(temp_dir.join("project_awareness.md"), "awareness").unwrap();
+        fs::write(temp_dir.join("workspace_tree.txt"), "tree").unwrap();
+        fs::write(temp_dir.join("reports").join("experiment_run_001.md"), "artifact").unwrap();
+        fs::write(temp_dir.join("reports").join("scorecard_validation_001.json"), "{}").unwrap();
+
+        let checklist = build_theory_import_checklist(
+            &temp_dir,
+            temp_dir.join("theory").to_str().unwrap(),
+            &temp_dir.join("master_axiom.md"),
+            "",
+        );
+
+        assert_eq!(checklist["status"].as_str().unwrap(), "complete");
+        assert_eq!(checklist["completed_count"].as_u64().unwrap(), 6);
+    }
+
+    #[test]
+    fn theory_import_checklist_surfaces_missing_steps() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_checklist_incomplete_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("theory")).unwrap();
+
+        fs::write(
+            temp_dir.join("theory").join("chapter_1.md"),
+            "# Incomplete Theory\n\nA short draft.\n",
+        )
+        .unwrap();
+
+        let checklist = build_theory_import_checklist(
+            &temp_dir,
+            temp_dir.join("theory").to_str().unwrap(),
+            &temp_dir.join("master_axiom.md"),
+            "",
+        );
+
+        assert_eq!(checklist["status"].as_str().unwrap(), "incomplete");
+        assert!(checklist["completed_count"].as_u64().unwrap() < checklist["total_count"].as_u64().unwrap());
+        assert_eq!(checklist["next_recommended_step"].as_str().unwrap(), "Master axiom");
+    }
+
+    #[test]
     fn deserialize_save_user_settings_payload_accepts_camel_and_snake_case() {
         let camel_payload = serde_json::json!({
             "editor": "vim",
@@ -3380,6 +3726,7 @@ pub fn run() {
             export_workspace_tree,
             send_llm_prompt,
             compile_ai_briefing,
+            verify_theory_import_checklist,
             import_theory_source_command,
             generate_master_axiom_from_theory,
             list_markdown_files,
