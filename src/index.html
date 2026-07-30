@@ -691,12 +691,120 @@
       .form-group label { display: block; margin-bottom: 5px; font-size: 0.85rem; color: #a6adc8; }
       .form-group select, .form-group input { width: 100%; padding: 8px; background: var(--bg-darker); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text); box-sizing: border-box; }
       .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
+
+      .theory-profiles-list {
+        max-height: 280px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: rgba(0,0,0,0.12);
+        padding: 6px;
+      }
+
+      .theory-profile-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        text-align: left;
+        background: transparent;
+        color: var(--text);
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 7px 8px;
+        margin-bottom: 4px;
+        cursor: pointer;
+      }
+
+      .theory-profile-item:hover {
+        border-color: var(--border-color);
+        background: rgba(255,255,255,0.03);
+      }
+
+      .theory-profile-item.selected {
+        border-color: var(--accent);
+        background: rgba(255,255,255,0.06);
+      }
+
+      .theory-profile-item.active {
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+      }
+
+      .theory-profile-badge {
+        font-size: 0.72rem;
+        color: var(--bg-darker);
+        background: var(--accent);
+        border-radius: 12px;
+        padding: 1px 8px;
+      }
       
       #save-prefs-btn.success { background-color: #2e7d32 !important; color: #ffffff; border-color: #2e7d32; }
       .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.1); }
       .pane-config-block h4 { margin: 0 0 8px 0; font-size: 0.85rem; color: var(--accent-dim); }
       .chat-attach-btn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border-color); background: var(--bg-darker); color: var(--accent); font-size: 1.15rem; cursor: pointer; }
       .chat-attach-btn:hover { background: var(--bg-panel); }
+
+      .help-doc-rendered {
+        margin: 0;
+        overflow: auto;
+        flex: 1;
+        min-height: 280px;
+        background: var(--bg-darker);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 14px;
+        font-size: 0.9rem;
+        line-height: 1.55;
+      }
+
+      .help-doc-rendered h1,
+      .help-doc-rendered h2,
+      .help-doc-rendered h3,
+      .help-doc-rendered h4 {
+        margin-top: 0.8rem;
+        margin-bottom: 0.45rem;
+        color: var(--accent);
+      }
+
+      .help-doc-rendered h1 { font-size: 1.25rem; }
+      .help-doc-rendered h2 { font-size: 1.1rem; }
+      .help-doc-rendered h3 { font-size: 1rem; }
+      .help-doc-rendered h4 { font-size: 0.95rem; }
+
+      .help-doc-rendered p,
+      .help-doc-rendered ul,
+      .help-doc-rendered ol,
+      .help-doc-rendered blockquote {
+        margin-top: 0.38rem;
+        margin-bottom: 0.38rem;
+      }
+
+      .help-doc-rendered code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.84rem;
+        background: rgba(255,255,255,0.07);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+
+      .help-doc-rendered pre {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 10px;
+        overflow: auto;
+      }
+
+      .help-doc-rendered a {
+        color: var(--accent-dim);
+      }
+
+      .help-doc-rendered blockquote {
+        border-left: 3px solid var(--border-color);
+        padding-left: 10px;
+        color: var(--text-muted);
+      }
     </style>
 </head>
 <body>
@@ -706,11 +814,13 @@
     <div class="menu-item">
       File
 	  <div class="dropdown-content">
-        <a href="#" onclick="alert('Creating new theory sheet...')">New Theory Sheet</a>
+        <a href="#" onclick="startNewTheorySheet(); return false;">New Theory Sheet</a>
         <a href="#" onclick="loadWorkspace()">Open Workspace</a>
+        <a href="#" onclick="openTheoryProfilesModal(); return false;">Theory Profiles...</a>
         <a href="#" onclick="saveVersion()">Save as Version</a>
         <a href="#" onclick="restoreVersion()">Restore Version</a>
         <a href="#" onclick="saveHypothesis()">Save as Hypothesis</a>
+        <a href="#" onclick="terminateHypothesisBranch()">Terminate Hypothesis</a>
         <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 4px 0;">
         <a href="#" onclick="openExitDialog(); return false;">Exit</a>
       </div>
@@ -738,8 +848,15 @@
     <div class="menu-item">
       Tools
       <div class="dropdown-content">
+        <div class="menu-section">Workflows</div>
+        <a href="#" onclick="openMarkdownDocumentsModal(); return false;">Markdown Documents</a>
         <a href="#" onclick="openManuscriptToolsModal(); return false;">Manuscript Tools</a>
         <a href="#" onclick="openAiTestingModal(); return false;">AI Testing</a>
+        <div class="menu-section">Help</div>
+        <a href="#" onclick="openHelpDoc('app-layers'); return false;">App Layers</a>
+        <a href="#" onclick="openHelpDoc('gui-button-glossary'); return false;">GUI Button Glossary</a>
+        <a href="#" onclick="openHelpDoc('push-pull-context-and-errors'); return false;">Push/Pull and Errors</a>
+        <a href="#" onclick="openHelpDoc('startup-initial-setup-checklist'); return false;">Startup Setup Checklist</a>
       </div>
     </div>
     <div class="menu-item" onclick="openSettingsModal()">Customize</div>
@@ -1043,11 +1160,11 @@
       <div class="modal-header" style="color: #f38ba8;">⚠️ Restore Version</div>
       
       <p style="font-size: 0.85rem; color: #a6adc8; margin-bottom: 15px;">
-        Warning: This will perform a hard reset. All unsaved progress and files created after this version will be wiped.
+        Warning: This restores a local version snapshot from the versions folder. Unsaved progress and files created after that snapshot will be replaced.
       </p>
 
       <div class="form-group">
-        <label for="version-select">Select Version Tag</label>
+        <label for="version-select">Select Local Version</label>
         <select id="version-select">
           <!-- Tags will be dynamically injected here -->
         </select>
@@ -1056,7 +1173,7 @@
       <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
         <button onclick="document.getElementById('restore-modal').style.display='none'">Cancel</button>
         <button style="background-color: #f38ba8; color: var(--bg-darker); font-weight: bold;" onclick="executeRestore()">
-          Hard Restore
+          Restore Snapshot
         </button>
       </div>
     </div>
@@ -1132,6 +1249,15 @@
                   <div class="form-group">
                     <label for="settings-terminal">Terminal Application</label>
                     <input type="text" id="settings-terminal">
+                  </div>
+                  <div class="form-group">
+                    <label for="settings-github-username">GitHub Username (optional)</label>
+                    <input type="text" id="settings-github-username" placeholder="octocat">
+                  </div>
+                  <div class="form-group">
+                    <label for="settings-github-api-key">GitHub API Key / PAT (optional)</label>
+                    <input type="password" id="settings-github-api-key" placeholder="ghp_...">
+                    <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">When both username and API key are set, markdown editor close uses git add + commit mode. Without them, local-save mode is used.</div>
                   </div>
         </div>
   
@@ -1238,6 +1364,43 @@
           </button>
         </div>
       </div>
+  </div>
+
+  <div id="theory-profiles-modal" class="modal" style="z-index: 1120;">
+    <div class="modal-content" style="width: 640px; max-width: 94vw; max-height: 90vh; overflow: auto;">
+      <div class="modal-header">Theory Profiles</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0; margin-bottom: 10px;">
+        Save, load, rename, and remove per-theory IDE states.
+      </p>
+
+      <div class="form-group" style="margin-bottom: 10px;">
+        <label for="theory-profile-name-input">Profile Name</label>
+        <div style="display: flex; gap: 8px;">
+          <input id="theory-profile-name-input" type="text" placeholder="BMI Theory">
+          <button type="button" onclick="saveTheoryStateProfile()">Save Current</button>
+        </div>
+      </div>
+
+      <div id="theory-profiles-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; min-height: 18px;">
+        Loading saved profiles...
+      </div>
+
+      <div id="theory-profiles-list" class="theory-profiles-list">
+        <div style="color: var(--text-muted); padding: 4px 2px;">No profiles loaded yet.</div>
+      </div>
+
+      <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" onclick="loadTheoryStateProfile()">Load Selected</button>
+          <button type="button" onclick="renameTheoryStateProfile()">Rename Selected</button>
+          <button type="button" onclick="deleteTheoryStateProfile()">Delete Selected</button>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" onclick="refreshTheoryProfilesList()">Refresh</button>
+          <button type="button" onclick="closeTheoryProfilesModal()">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="manuscript-tools-modal" class="modal" style="z-index: 1100;">
@@ -1490,6 +1653,72 @@
     </div>
   </div>
 
+  <div id="help-doc-modal" class="modal" style="z-index: 1130;">
+    <div class="modal-content" style="width: 760px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-header" id="help-doc-title">Help</div>
+      <div id="help-doc-meta" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+        Loading document...
+      </div>
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <input id="help-doc-search-input" type="text" placeholder="Search help (e.g., workspaces)" onkeydown="if(event.key==='Enter'){searchHelpDocs();}">
+        <button type="button" onclick="searchHelpDocs()">Search</button>
+      </div>
+      <div id="help-doc-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
+      <div id="help-doc-content" class="help-doc-rendered">Loading...</div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 12px; gap: 8px;">
+        <button onclick="closeHelpDocModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="markdown-docs-modal" class="modal" style="z-index: 1135;">
+    <div class="modal-content" style="width: 980px; max-width: 97vw; max-height: 92vh; display: flex; flex-direction: column;">
+      <div class="modal-header">Markdown Documents</div>
+      <div id="markdown-docs-meta" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+        Load your markdown directory to browse and search documents.
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+        <input id="markdown-docs-directory" type="text" placeholder="Markdown directory (from Customization -> Theory Markdown Directory)">
+        <button type="button" onclick="browseForDirectory('markdown-docs-directory')">Browse</button>
+        <button type="button" onclick="refreshMarkdownDocumentsList()">Load</button>
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <input id="markdown-docs-search-input" type="text" placeholder="Search markdown docs (e.g., workspaces)" onkeydown="if(event.key==='Enter'){searchMarkdownDocuments();}">
+        <button type="button" onclick="searchMarkdownDocuments()">Search</button>
+      </div>
+
+      <div id="markdown-docs-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
+
+      <div id="markdown-docs-git-feedback" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.12);">
+        Git save feedback will appear here after selecting a document.
+      </div>
+
+      <div style="display: flex; gap: 10px; min-height: 360px; flex: 1;">
+        <div style="width: 32%; min-width: 240px; border: 1px solid var(--border-color); border-radius: 6px; background: rgba(0,0,0,0.12); display: flex; flex-direction: column; min-height: 0;">
+          <div style="padding: 8px; border-bottom: 1px solid var(--border-color); font-size: 0.8rem; color: var(--text-muted);">Documents</div>
+          <div id="markdown-docs-list" style="overflow: auto; padding: 6px; flex: 1; min-height: 0;"></div>
+        </div>
+
+        <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+          <div id="markdown-docs-title" style="font-size: 0.95rem; color: var(--accent); margin-bottom: 6px;">No document selected</div>
+          <div id="markdown-docs-content" class="help-doc-rendered" style="min-height: 0;">Select a markdown document to preview it.</div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; margin-top: 12px; gap: 8px;">
+        <div style="font-size: 0.78rem; color: var(--text-muted); align-self: center;">
+          Editing opens your configured CLI editor (or system default) and closing the editor triggers git add + commit for the selected markdown file.
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" onclick="editSelectedMarkdownDocument()">Edit</button>
+          <button type="button" onclick="closeMarkdownDocumentsModal()">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const { invoke } = window.__TAURI__.core;
     const SECURITY_NOTE_DISMISSED_KEY = 'physics-ide-security-note-dismissed-v1';
@@ -1525,8 +1754,22 @@
       evidence: [],
       loadedAt: 0,
     };
+    let theoryProfilesState = {
+      activeProfile: '',
+      profiles: [],
+      selectedProfile: ''
+    };
     let latestContextProbeReportPath = '';
     let latestContextProbeReportPaths = [];
+    let activeHelpDocId = '';
+    let helpDocSearchResults = [];
+    let markdownDocsState = {
+      directory: '',
+      documents: [],
+      selectedPath: '',
+      searchResults: []
+    };
+    let markdownGitFeedbackTimer = null;
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
     const rightTitles = ["R1: Speculation & Horizons", "R2: Layman Metaphor & Visuals", "R3: Wild Expansion"];
@@ -1953,6 +2196,8 @@
         
         document.getElementById('settings-editor').value = currentConfig.editor;
         document.getElementById('settings-terminal').value = currentConfig.terminal_app;
+        document.getElementById('settings-github-username').value = currentConfig.github_username || "";
+        document.getElementById('settings-github-api-key').value = currentConfig.github_api_key || "";
         const leftProvider = normalizeProviderForV7(currentConfig.left_provider || 'openai');
         const rightProvider = normalizeProviderForV7(currentConfig.right_provider || 'openai');
         const leftModel = normalizeModelForProvider(leftProvider, currentConfig.left_model || getDefaultModelForPane('left', leftProvider));
@@ -2957,6 +3202,261 @@
         appendTerminalLog("Equation cleaned.");
     }
 
+    function suggestTheoryProfileName() {
+      const projectTitle = (document.getElementById('project-title-display')?.innerText || '').trim();
+      if (projectTitle) {
+        return projectTitle;
+      }
+
+      const fromSettingsRoot = (document.getElementById('settings-project-root')?.value || '').trim();
+      const fromWorkspace = String(currentWorkspacePath || '').trim();
+      const candidate = fromSettingsRoot || fromWorkspace;
+      if (!candidate) return 'Untitled Theory';
+
+      const parts = candidate.replace(/\\+$/g, '').split(/[\\/]/).filter(Boolean);
+      return parts.length > 0 ? parts[parts.length - 1] : 'Untitled Theory';
+    }
+
+    function resolveProfileSelection(rawSelection, profileNames) {
+      const input = String(rawSelection || '').trim();
+      if (!input) return '';
+      const numeric = Number.parseInt(input, 10);
+      if (!Number.isNaN(numeric) && numeric >= 1 && numeric <= profileNames.length) {
+        return profileNames[numeric - 1];
+      }
+      return input;
+    }
+
+    function setTheoryProfilesStatus(message) {
+      const statusEl = document.getElementById('theory-profiles-status');
+      if (statusEl) {
+        statusEl.textContent = String(message || '').trim();
+      }
+    }
+
+    function renderTheoryProfilesList() {
+      const listContainer = document.getElementById('theory-profiles-list');
+      if (!listContainer) return;
+
+      const profiles = Array.isArray(theoryProfilesState.profiles) ? theoryProfilesState.profiles : [];
+      if (profiles.length === 0) {
+        listContainer.innerHTML = '<div style="color: var(--text-muted); padding: 4px 2px;">No saved theory profiles yet. Use "Save Current" to create one.</div>';
+        return;
+      }
+
+      listContainer.innerHTML = profiles.map((profileName) => {
+        const safeName = String(profileName || '').replace(/[&<>"']/g, (m) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;'
+        })[m]);
+        const encodedName = encodeURIComponent(String(profileName || ''));
+        const isSelected = theoryProfilesState.selectedProfile === profileName;
+        const isActive = theoryProfilesState.activeProfile === profileName;
+        return `<button type="button" class="theory-profile-item${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}" onclick="selectTheoryProfileFromEncoded('${encodedName}')"><span>${safeName}</span>${isActive ? '<span class="theory-profile-badge">active</span>' : ''}</button>`;
+      }).join('');
+    }
+
+    function selectTheoryProfileFromEncoded(encodedName) {
+      try {
+        selectTheoryProfile(decodeURIComponent(String(encodedName || '')));
+      } catch (_err) {
+        selectTheoryProfile(String(encodedName || ''));
+      }
+    }
+
+    function selectTheoryProfile(profileName) {
+      theoryProfilesState.selectedProfile = String(profileName || '').trim();
+      const input = document.getElementById('theory-profile-name-input');
+      if (input && theoryProfilesState.selectedProfile) {
+        input.value = theoryProfilesState.selectedProfile;
+      }
+      renderTheoryProfilesList();
+    }
+
+    async function refreshTheoryProfilesList() {
+      setTheoryProfilesStatus('Loading profiles...');
+      try {
+        const response = await invoke('list_theory_profiles');
+        const listing = typeof response === 'string' ? JSON.parse(response) : response;
+        const profiles = Array.isArray(listing?.profiles) ? listing.profiles : [];
+        const activeProfile = String(listing?.active_profile || '').trim();
+
+        theoryProfilesState.profiles = profiles;
+        theoryProfilesState.activeProfile = activeProfile;
+        if (!theoryProfilesState.selectedProfile || !profiles.includes(theoryProfilesState.selectedProfile)) {
+          theoryProfilesState.selectedProfile = activeProfile || profiles[0] || '';
+        }
+
+        renderTheoryProfilesList();
+        if (profiles.length === 0) {
+          setTheoryProfilesStatus('No saved profiles. Save the current theory state to create one.');
+        } else {
+          setTheoryProfilesStatus(`Loaded ${profiles.length} profile(s).`);
+        }
+      } catch (err) {
+        setTheoryProfilesStatus(`Failed to load profiles: ${err}`);
+        appendTerminalLog(`Theory profiles list error: ${err}`);
+      }
+    }
+
+    async function openTheoryProfilesModal() {
+      const modal = document.getElementById('theory-profiles-modal');
+      if (!modal) return;
+      modal.style.display = 'flex';
+
+      const input = document.getElementById('theory-profile-name-input');
+      if (input) {
+        input.value = theoryProfilesState.selectedProfile || suggestTheoryProfileName();
+      }
+
+      await refreshTheoryProfilesList();
+    }
+
+    function closeTheoryProfilesModal() {
+      const modal = document.getElementById('theory-profiles-modal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
+    }
+
+    function getSelectedProfileOrAlert() {
+      const selected = String(theoryProfilesState.selectedProfile || '').trim();
+      if (!selected) {
+        alert('Select a theory profile first.');
+        return '';
+      }
+      return selected;
+    }
+
+    async function saveTheoryStateProfile() {
+      const input = document.getElementById('theory-profile-name-input');
+      const profileName = (input?.value || '').trim() || suggestTheoryProfileName();
+      if (!profileName) {
+        alert('Enter a profile name before saving.');
+        return;
+      }
+
+      try {
+        const response = await invoke('save_theory_profile', { profileName });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        theoryProfilesState.selectedProfile = payload.saved_profile || profileName;
+        appendTerminalLog(`Theory state saved: ${payload.saved_profile || profileName}`);
+        setTheoryProfilesStatus(`Saved profile: ${payload.saved_profile || profileName}`);
+        await refreshTheoryProfilesList();
+      } catch (err) {
+        appendTerminalLog(`Theory state save error: ${err}`);
+        alert(`Could not save theory state: ${err}`);
+      }
+    }
+
+    async function loadTheoryStateProfile() {
+      const selectedName = getSelectedProfileOrAlert();
+      if (!selectedName) return;
+
+      try {
+        const loadResponse = await invoke('load_theory_profile', { profileName: selectedName });
+        const payload = typeof loadResponse === 'string' ? JSON.parse(loadResponse) : loadResponse;
+        theoryProfilesState.selectedProfile = payload.loaded_profile || selectedName;
+        appendTerminalLog(`Loaded theory state: ${payload.loaded_profile || selectedName}`);
+
+        await initializeApp();
+        await refreshTheoryProfilesList();
+        setTheoryProfilesStatus(`Loaded profile: ${payload.loaded_profile || selectedName}`);
+      } catch (err) {
+        appendTerminalLog(`Theory state load error: ${err}`);
+        alert(`Could not load theory state: ${err}`);
+      }
+    }
+
+    async function renameTheoryStateProfile() {
+      const selectedName = getSelectedProfileOrAlert();
+      if (!selectedName) return;
+
+      const input = document.getElementById('theory-profile-name-input');
+      const requestedName = String(input?.value || '').trim();
+      if (!requestedName) {
+        alert('Enter a new profile name in the Profile Name field.');
+        return;
+      }
+
+      try {
+        const response = await invoke('rename_theory_profile', {
+          currentName: selectedName,
+          newName: requestedName
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        theoryProfilesState.selectedProfile = payload.renamed_to || requestedName;
+        appendTerminalLog(`Renamed theory profile: ${selectedName} -> ${payload.renamed_to || requestedName}`);
+        setTheoryProfilesStatus(`Renamed profile to ${payload.renamed_to || requestedName}`);
+        await refreshTheoryProfilesList();
+      } catch (err) {
+        appendTerminalLog(`Theory profile rename error: ${err}`);
+        alert(`Could not rename profile: ${err}`);
+      }
+    }
+
+    async function deleteTheoryStateProfile() {
+      const selectedName = getSelectedProfileOrAlert();
+      if (!selectedName) return;
+
+      const confirmed = window.confirm(`Delete theory profile "${selectedName}"? This cannot be undone.`);
+      if (!confirmed) return;
+
+      try {
+        const response = await invoke('delete_theory_profile', { profileName: selectedName });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        appendTerminalLog(`Deleted theory profile: ${payload.deleted_profile || selectedName}`);
+        theoryProfilesState.selectedProfile = '';
+        setTheoryProfilesStatus(`Deleted profile: ${payload.deleted_profile || selectedName}`);
+        await refreshTheoryProfilesList();
+      } catch (err) {
+        appendTerminalLog(`Theory profile delete error: ${err}`);
+        alert(`Could not delete profile: ${err}`);
+      }
+    }
+
+    function resetWorkspaceTreeToFirstRun() {
+      const treeContainer = document.getElementById('file-tree-container');
+      if (treeContainer) {
+        treeContainer.innerHTML = '<div style="color: #6c7086; padding: 6px 10px; font-style: italic;">First-session mode active. Load a workspace to begin a new theory setup.</div>';
+      }
+    }
+
+    async function startNewTheorySheet() {
+      const confirmed = window.confirm('Close the current theory and return the IDE to first-session mode? Unsaved profile changes can be lost.');
+      if (!confirmed) return;
+
+      try {
+        const response = await invoke('close_active_theory');
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+
+        currentWorkspacePath = '';
+        startupPrimerInjected = false;
+        activeBriefingPacketPath = '';
+        probeAppendixCandidateCache.rootPath = '';
+        probeAppendixCandidateCache.candidates = [];
+        probeAppendixCandidateCache.loadedAt = 0;
+        probeEvidenceCache.rootPath = '';
+        probeEvidenceCache.query = '';
+        probeEvidenceCache.evidence = [];
+        probeEvidenceCache.loadedAt = 0;
+
+        chatHistories.left = [[], [], []];
+        chatHistories.right = [[], [], []];
+
+        resetWorkspaceTreeToFirstRun();
+        await initializeApp();
+
+        appendTerminalLog(payload?.message || 'Theory closed. First-session mode active.');
+      } catch (err) {
+        appendTerminalLog(`New Theory Sheet error: ${err}`);
+        alert(`Could not reset theory sheet: ${err}`);
+      }
+    }
+
     async function loadWorkspace() {
       try {
         const defaultPath = currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || undefined;
@@ -2972,6 +3472,18 @@
         currentWorkspacePath = selectedPath;
         await invoke('save_root_directory', { path: selectedPath });
         await fetchAndRenderDirectory(selectedPath);
+
+        if (currentConfig) {
+          currentConfig.last_root_dir = selectedPath;
+          currentConfig.project_root_dir = selectedPath;
+          if ((currentConfig.theory_md_dir || '').trim() === '') {
+            currentConfig.theory_md_dir = selectedPath;
+          }
+          document.getElementById('settings-project-root').value = currentConfig.project_root_dir;
+          document.getElementById('settings-theory-dir').value = currentConfig.theory_md_dir;
+        }
+
+        await injectPrimerIntoThreads(true);
       } catch (err) {
         appendTerminalLog(`Error loading workspace: ${err}`);
       }
@@ -3097,7 +3609,7 @@ async function restoreVersion() {
       }
       
       try {
-        // 1. Ask Rust for all available tags in this directory
+        // 1. Ask Rust for all locally saved version snapshots in this workspace
         const tags = await invoke('get_version_tags', { rootPath: currentWorkspacePath });
         
         if (tags.length === 0) {
@@ -3132,7 +3644,7 @@ async function restoreVersion() {
         document.getElementById('restore-modal').style.display = 'none';
 
         try {
-            // Tell Rust to execute the hard reset
+            // Tell Rust to restore from the selected local snapshot
             const result = await invoke('restore_version', { tag: selectedTag, rootPath: currentWorkspacePath });
             appendTerminalLog(result);
             alert(result);
@@ -3475,6 +3987,641 @@ async function restoreVersion() {
     async function openBriefingPacketEditor() {
       document.getElementById('briefing-packet-modal').style.display = 'flex';
       await refreshBriefingPacketEditor();
+    }
+
+    function escapeForInlineSingleQuotedJs(value) {
+      return encodeURIComponent(String(value || ''));
+    }
+
+    function decodeInlineSingleQuotedJs(value) {
+      try {
+        return decodeURIComponent(String(value || ''));
+      } catch (_err) {
+        return String(value || '');
+      }
+    }
+
+    function getMarkdownDocsDirectory() {
+      const inputDir = String(document.getElementById('markdown-docs-directory')?.value || '').trim();
+      if (inputDir) return inputDir;
+      const configured = String(currentConfig?.theory_md_dir || '').trim();
+      if (configured) return configured;
+      return '';
+    }
+
+    function setMarkdownDocsMeta(message) {
+      const meta = document.getElementById('markdown-docs-meta');
+      if (meta) meta.textContent = String(message || '').trim();
+    }
+
+    function renderMarkdownDocumentsList() {
+      const listEl = document.getElementById('markdown-docs-list');
+      if (!listEl) return;
+
+      if (!Array.isArray(markdownDocsState.documents) || markdownDocsState.documents.length === 0) {
+        listEl.innerHTML = '<div style="color: var(--text-muted); padding: 6px;">No markdown files found.</div>';
+        return;
+      }
+
+      listEl.innerHTML = markdownDocsState.documents.map((doc) => {
+        const path = String(doc?.path || '');
+        const relative = String(doc?.relative_path || path || 'Untitled');
+        const encodedPath = escapeForInlineSingleQuotedJs(path);
+        const selected = markdownDocsState.selectedPath === path;
+        return `<button type="button" onclick="selectMarkdownDocumentFromEncoded('${encodedPath}')" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border-color)'}; border-radius:4px; padding:7px; background:${selected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)'}; color:var(--text);"><div style="font-size:0.82rem;">${escapeHelpHtml(relative)}</div></button>`;
+      }).join('');
+    }
+
+    function renderMarkdownSearchResults() {
+      const container = document.getElementById('markdown-docs-search-results');
+      if (!container) return;
+
+      if (!Array.isArray(markdownDocsState.searchResults) || markdownDocsState.searchResults.length === 0) {
+        container.style.display = 'none';
+        container.innerHTML = '';
+        return;
+      }
+
+      container.style.display = 'block';
+      container.innerHTML = markdownDocsState.searchResults.map((row) => {
+        const encoded = escapeForInlineSingleQuotedJs(row?.path || '');
+        const title = escapeHelpHtml(row?.title || row?.relative_path || 'Markdown Document');
+        const relative = escapeHelpHtml(row?.relative_path || row?.path || '');
+        const score = Number(row?.score || 0);
+        const snippet = escapeHelpHtml(row?.snippet || '');
+        return [
+          `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.03); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')">`,
+          `<div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:4px;"><strong>${title}</strong><span style="font-size:0.75rem; color:var(--text-muted);">score ${score}</span></div>`,
+          `<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">${relative}</div>`,
+          `<div style="font-size:0.8rem; color:var(--text);">${snippet}</div>`,
+          `</button>`
+        ].join('');
+      }).join('');
+    }
+
+    async function openMarkdownDocumentsModal() {
+      const modal = document.getElementById('markdown-docs-modal');
+      const dirInput = document.getElementById('markdown-docs-directory');
+      if (!modal || !dirInput) return;
+
+      modal.style.display = 'flex';
+      const defaultDir = String(currentConfig?.theory_md_dir || '').trim();
+      if (!dirInput.value.trim() && defaultDir) {
+        dirInput.value = defaultDir;
+      }
+
+      await refreshMarkdownDocumentsList();
+    }
+
+    function closeMarkdownDocumentsModal() {
+      const modal = document.getElementById('markdown-docs-modal');
+      if (modal) modal.style.display = 'none';
+      markdownDocsState.searchResults = [];
+      renderMarkdownSearchResults();
+      if (markdownGitFeedbackTimer) {
+        clearInterval(markdownGitFeedbackTimer);
+        markdownGitFeedbackTimer = null;
+      }
+    }
+
+    function setMarkdownGitFeedback(message) {
+      const feedback = document.getElementById('markdown-docs-git-feedback');
+      if (feedback) {
+        feedback.textContent = String(message || '').trim();
+      }
+    }
+
+    function formatMarkdownGitFeedback(payload) {
+      if (!payload || payload.is_repo !== true) {
+        return payload?.message || 'Workspace is not a git repository. Local-save mode is active.';
+      }
+
+      if (payload.local_save_only === true || payload.github_configured === false) {
+        const dirty = payload.dirty === true;
+        const statusLabel = dirty
+          ? 'Local-save mode: selected file has unsynchronized local changes.'
+          : 'Local-save mode: selected file is currently clean.';
+        return `${statusLabel} GitHub credentials are not configured in Customization, so commits are not auto-created.`;
+      }
+
+      const dirty = payload.dirty === true;
+      const staged = payload.staged === true;
+      const unstaged = payload.unstaged === true;
+      const statusLabel = dirty
+        ? (staged && unstaged
+          ? 'Pending changes (staged + unstaged).'
+          : staged
+            ? 'Pending staged changes.'
+            : 'Pending unstaged changes.')
+        : 'Clean working state for selected file.';
+
+      const commit = payload.last_commit;
+      const commitLabel = commit && commit.short_hash
+        ? `Last commit: ${commit.short_hash} - ${commit.subject || '(no subject)'}`
+        : 'No commit history found for selected file.';
+
+      return `${statusLabel} ${commitLabel}`;
+    }
+
+    async function refreshMarkdownGitFeedback(filePath = null, quiet = false) {
+      const path = String(filePath || markdownDocsState.selectedPath || '').trim();
+      const workspaceRoot = String(currentWorkspacePath || '').trim() || String(markdownDocsState.directory || '').trim();
+      if (!path || !workspaceRoot) {
+        if (!quiet) {
+          setMarkdownGitFeedback('Select a markdown file and load a workspace to see git save feedback.');
+        }
+        return;
+      }
+
+      try {
+        const response = await invoke('get_markdown_git_feedback', {
+          workspaceRoot,
+          filePath: path
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        setMarkdownGitFeedback(formatMarkdownGitFeedback(payload));
+      } catch (err) {
+        setMarkdownGitFeedback(`Git feedback unavailable: ${err}`);
+      }
+    }
+
+    function startMarkdownGitFeedbackPolling(filePath) {
+      if (markdownGitFeedbackTimer) {
+        clearInterval(markdownGitFeedbackTimer);
+      }
+
+      let pollsRemaining = 90; // about 3 minutes at 2s interval
+      markdownGitFeedbackTimer = setInterval(async () => {
+        pollsRemaining -= 1;
+        await refreshMarkdownGitFeedback(filePath, true);
+        if (pollsRemaining <= 0 && markdownGitFeedbackTimer) {
+          clearInterval(markdownGitFeedbackTimer);
+          markdownGitFeedbackTimer = null;
+        }
+      }, 2000);
+    }
+
+    async function refreshMarkdownDocumentsList() {
+      const directory = getMarkdownDocsDirectory();
+      if (!directory) {
+        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customization first.');
+        return;
+      }
+
+      markdownDocsState.directory = directory;
+      setMarkdownDocsMeta(`Loading markdown files from ${directory} ...`);
+
+      try {
+        const response = await invoke('list_markdown_documents', { directoryPath: directory });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        markdownDocsState.documents = Array.isArray(payload?.documents) ? payload.documents : [];
+        if (!markdownDocsState.documents.some((doc) => doc.path === markdownDocsState.selectedPath)) {
+          markdownDocsState.selectedPath = markdownDocsState.documents[0]?.path || '';
+        }
+        renderMarkdownDocumentsList();
+        setMarkdownDocsMeta(`Loaded ${markdownDocsState.documents.length} markdown file(s) from ${directory}.`);
+
+        if (markdownDocsState.selectedPath) {
+          await loadMarkdownDocument(markdownDocsState.selectedPath);
+          await refreshMarkdownGitFeedback(markdownDocsState.selectedPath);
+        } else {
+          document.getElementById('markdown-docs-title').textContent = 'No document selected';
+          document.getElementById('markdown-docs-content').innerHTML = 'No markdown files found in this directory.';
+          setMarkdownGitFeedback('No markdown files found.');
+        }
+      } catch (err) {
+        setMarkdownDocsMeta(`Failed to load markdown documents: ${err}`);
+        appendTerminalLog(`Markdown Documents load error: ${err}`);
+        setMarkdownGitFeedback(`Git feedback unavailable: ${err}`);
+      }
+    }
+
+    function selectMarkdownDocumentFromEncoded(encodedPath) {
+      const decoded = decodeInlineSingleQuotedJs(encodedPath);
+      if (!decoded) return;
+      selectMarkdownDocument(decoded);
+    }
+
+    async function selectMarkdownDocument(path) {
+      markdownDocsState.selectedPath = String(path || '').trim();
+      renderMarkdownDocumentsList();
+      await loadMarkdownDocument(markdownDocsState.selectedPath);
+      await refreshMarkdownGitFeedback(markdownDocsState.selectedPath);
+    }
+
+    async function loadMarkdownDocument(path) {
+      const directory = markdownDocsState.directory || getMarkdownDocsDirectory();
+      const targetPath = String(path || '').trim();
+      if (!directory || !targetPath) return;
+
+      const titleEl = document.getElementById('markdown-docs-title');
+      const contentEl = document.getElementById('markdown-docs-content');
+      if (!titleEl || !contentEl) return;
+
+      titleEl.textContent = 'Loading...';
+      contentEl.innerHTML = '<p>Loading document...</p>';
+
+      try {
+        const response = await invoke('read_markdown_document', {
+          directoryPath: directory,
+          filePath: targetPath
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+
+        titleEl.textContent = payload?.title || payload?.relative_path || 'Markdown Document';
+        contentEl.innerHTML = renderMarkdownToHtml(payload?.content || '');
+      } catch (err) {
+        titleEl.textContent = 'Unable to load document';
+        contentEl.innerHTML = `<p>${escapeHelpHtml(String(err || 'Unknown error'))}</p>`;
+        appendTerminalLog(`Markdown Documents read error: ${err}`);
+      }
+    }
+
+    async function searchMarkdownDocuments() {
+      const directory = markdownDocsState.directory || getMarkdownDocsDirectory();
+      const query = String(document.getElementById('markdown-docs-search-input')?.value || '').trim();
+
+      if (!directory) {
+        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customization first.');
+        return;
+      }
+
+      if (!query) {
+        markdownDocsState.searchResults = [];
+        renderMarkdownSearchResults();
+        setMarkdownDocsMeta(`Showing files from ${directory}.`);
+        return;
+      }
+
+      setMarkdownDocsMeta(`Searching markdown documents for "${query}"...`);
+
+      try {
+        const response = await invoke('search_markdown_documents', {
+          directoryPath: directory,
+          query
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        markdownDocsState.searchResults = Array.isArray(payload?.results) ? payload.results : [];
+        renderMarkdownSearchResults();
+
+        if (markdownDocsState.searchResults.length === 0) {
+          setMarkdownDocsMeta(`No markdown documents matched "${query}".`);
+          return;
+        }
+
+        const top = markdownDocsState.searchResults[0];
+        setMarkdownDocsMeta(`Found ${markdownDocsState.searchResults.length} match(es). Top result: ${top?.title || top?.relative_path || 'unknown'}.`);
+        if (top?.path) {
+          await selectMarkdownDocument(top.path);
+        }
+      } catch (err) {
+        markdownDocsState.searchResults = [];
+        renderMarkdownSearchResults();
+        setMarkdownDocsMeta(`Markdown search failed: ${err}`);
+        appendTerminalLog(`Markdown Documents search error: ${err}`);
+      }
+    }
+
+    async function editSelectedMarkdownDocument() {
+      const filePath = String(markdownDocsState.selectedPath || '').trim();
+      if (!filePath) {
+        alert('Select a markdown document first.');
+        return;
+      }
+
+      const workspaceRoot = String(currentWorkspacePath || '').trim() || String(markdownDocsState.directory || '').trim();
+      if (!workspaceRoot) {
+        alert('No active workspace is loaded. Load a workspace first so git-level save can run.');
+        return;
+      }
+
+      const payload = {
+        file_path: filePath,
+        terminal_app: currentConfig?.terminal_app || 'x-terminal-emulator',
+        editor: currentConfig?.editor || ''
+      };
+
+      try {
+        const result = await invoke('edit_markdown_document_with_git_save', {
+          payload,
+          workspaceRoot
+        });
+        appendTerminalLog(result);
+        setMarkdownDocsMeta('Editor launched. Closing it will save locally; git commit is only auto-run when GitHub remote is configured. Use Refresh to reload the rendered preview.');
+        setMarkdownGitFeedback(result);
+        startMarkdownGitFeedbackPolling(filePath);
+      } catch (err) {
+        appendTerminalLog(`Markdown editor launch error: ${err}`);
+        alert(`Could not open editor: ${err}`);
+        setMarkdownGitFeedback(`Edit workflow failed: ${err}`);
+      }
+    }
+
+    async function openHelpDoc(docId) {
+      const normalizedDocId = String(docId || '').trim().toLowerCase();
+      if (!normalizedDocId) return;
+
+      const modal = document.getElementById('help-doc-modal');
+      const titleEl = document.getElementById('help-doc-title');
+      const metaEl = document.getElementById('help-doc-meta');
+      const contentEl = document.getElementById('help-doc-content');
+      if (!modal || !titleEl || !metaEl || !contentEl) return;
+
+      activeHelpDocId = normalizedDocId;
+      modal.style.display = 'flex';
+      titleEl.textContent = 'Help';
+      metaEl.textContent = 'Loading document...';
+      contentEl.innerHTML = '<p>Loading...</p>';
+
+      const searchInput = document.getElementById('help-doc-search-input');
+      if (searchInput && !searchInput.value.trim()) {
+        searchInput.value = '';
+      }
+
+      try {
+        const response = await invoke('get_help_doc', { docId: normalizedDocId });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+
+        titleEl.textContent = payload?.title || 'Help';
+        metaEl.textContent = payload?.path ? `Source: ${payload.path}` : 'Built-in help document';
+        const markdown = payload?.content || 'No help content available.';
+        contentEl.innerHTML = renderMarkdownToHtml(markdown);
+      } catch (err) {
+        metaEl.textContent = `Failed to load help document: ${err}`;
+        contentEl.innerHTML = '<p>Unable to load this help document.</p>';
+        appendTerminalLog(`Help doc error (${normalizedDocId}): ${err}`);
+      }
+    }
+
+    function escapeHelpHtml(value) {
+      return String(value || '').replace(/[&<>"']/g, (m) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[m]);
+    }
+
+    function sanitizeHelpLink(url) {
+      const trimmed = String(url || '').trim();
+      if (!trimmed) return '#';
+
+      const lowered = trimmed.toLowerCase();
+      if (lowered.startsWith('javascript:') || lowered.startsWith('data:')) {
+        return '#';
+      }
+
+      return escapeHelpHtml(trimmed);
+    }
+
+    function renderInlineMathLatex(text) {
+      if (!window.katex || !text) return text;
+
+      return text.replace(/\$([^\n$]+?)\$/g, (_match, expr) => {
+        try {
+          return window.katex.renderToString(expr, { throwOnError: false });
+        } catch (_err) {
+          return `$${escapeHelpHtml(expr)}$`;
+        }
+      });
+    }
+
+    function renderMarkdownInline(text) {
+      let safe = escapeHelpHtml(text || '');
+
+      safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => {
+        const cleanUrl = sanitizeHelpLink(url);
+        return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      });
+
+      safe = safe.replace(/`([^`]+)`/g, (_m, code) => `<code>${code}</code>`);
+      safe = safe.replace(/\*\*([^*]+)\*\*/g, (_m, strongText) => `<strong>${strongText}</strong>`);
+      safe = safe.replace(/\*([^*]+)\*/g, (_m, emText) => `<em>${emText}</em>`);
+      safe = renderInlineMathLatex(safe);
+      return safe;
+    }
+
+    function renderDisplayMathBlock(expr) {
+      const trimmed = String(expr || '').trim();
+      if (!trimmed) return '';
+      if (!window.katex) return `<pre><code>${escapeHelpHtml(trimmed)}</code></pre>`;
+
+      try {
+        return window.katex.renderToString(trimmed, { throwOnError: false, displayMode: true });
+      } catch (_err) {
+        return `<pre><code>${escapeHelpHtml(trimmed)}</code></pre>`;
+      }
+    }
+
+    function renderMarkdownToHtml(markdownText) {
+      const src = String(markdownText || '').replace(/\r\n/g, '\n');
+      const lines = src.split('\n');
+      const html = [];
+      let i = 0;
+      let inCodeFence = false;
+      let codeBuffer = [];
+      let listMode = '';
+      let paragraphBuffer = [];
+
+      function closeParagraph() {
+        if (paragraphBuffer.length === 0) return;
+        html.push(`<p>${renderMarkdownInline(paragraphBuffer.join(' '))}</p>`);
+        paragraphBuffer = [];
+      }
+
+      function closeList() {
+        if (!listMode) return;
+        html.push(listMode === 'ol' ? '</ol>' : '</ul>');
+        listMode = '';
+      }
+
+      while (i < lines.length) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith('```')) {
+          closeParagraph();
+          closeList();
+          if (!inCodeFence) {
+            inCodeFence = true;
+            codeBuffer = [];
+          } else {
+            const code = escapeHelpHtml(codeBuffer.join('\n'));
+            html.push(`<pre><code>${code}</code></pre>`);
+            inCodeFence = false;
+            codeBuffer = [];
+          }
+          i += 1;
+          continue;
+        }
+
+        if (inCodeFence) {
+          codeBuffer.push(line);
+          i += 1;
+          continue;
+        }
+
+        const displayMathMatch = trimmed.match(/^\$\$([\s\S]+)\$\$$/);
+        if (displayMathMatch) {
+          closeParagraph();
+          closeList();
+          html.push(renderDisplayMathBlock(displayMathMatch[1]));
+          i += 1;
+          continue;
+        }
+
+        if (!trimmed) {
+          closeParagraph();
+          closeList();
+          i += 1;
+          continue;
+        }
+
+        const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+        if (heading) {
+          closeParagraph();
+          closeList();
+          const level = heading[1].length;
+          html.push(`<h${level}>${renderMarkdownInline(heading[2])}</h${level}>`);
+          i += 1;
+          continue;
+        }
+
+        const blockquote = trimmed.match(/^>\s?(.*)$/);
+        if (blockquote) {
+          closeParagraph();
+          closeList();
+          html.push(`<blockquote>${renderMarkdownInline(blockquote[1])}</blockquote>`);
+          i += 1;
+          continue;
+        }
+
+        const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+        if (ordered) {
+          closeParagraph();
+          if (listMode !== 'ol') {
+            closeList();
+            listMode = 'ol';
+            html.push('<ol>');
+          }
+          html.push(`<li>${renderMarkdownInline(ordered[1])}</li>`);
+          i += 1;
+          continue;
+        }
+
+        const unordered = trimmed.match(/^[-*]\s+(.+)$/);
+        if (unordered) {
+          closeParagraph();
+          if (listMode !== 'ul') {
+            closeList();
+            listMode = 'ul';
+            html.push('<ul>');
+          }
+          html.push(`<li>${renderMarkdownInline(unordered[1])}</li>`);
+          i += 1;
+          continue;
+        }
+
+        paragraphBuffer.push(trimmed);
+        i += 1;
+      }
+
+      closeParagraph();
+      closeList();
+
+      if (inCodeFence && codeBuffer.length > 0) {
+        html.push(`<pre><code>${escapeHelpHtml(codeBuffer.join('\n'))}</code></pre>`);
+      }
+
+      return html.join('\n');
+    }
+
+    function renderHelpSearchResults() {
+      const container = document.getElementById('help-doc-search-results');
+      if (!container) return;
+
+      if (!Array.isArray(helpDocSearchResults) || helpDocSearchResults.length === 0) {
+        container.style.display = 'none';
+        container.innerHTML = '';
+        return;
+      }
+
+      container.style.display = 'block';
+      container.innerHTML = helpDocSearchResults.map((row) => {
+        const id = escapeHelpHtml(row?.id || '');
+        const title = escapeHelpHtml(row?.title || 'Untitled Help');
+        const path = escapeHelpHtml(row?.path || '');
+        const score = Number(row?.score || 0);
+        const snippet = escapeHelpHtml(row?.snippet || '');
+        return [
+          `<button type="button" style="width: 100%; text-align: left; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; background: rgba(255,255,255,0.03); color: var(--text);" onclick="openHelpDoc('${id}');">`,
+          `<div style="display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px;"><strong>${title}</strong><span style="font-size: 0.75rem; color: var(--text-muted);">score ${score}</span></div>`,
+          `<div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">${path}</div>`,
+          `<div style="font-size: 0.8rem; color: var(--text);">${snippet}</div>`,
+          `</button>`
+        ].join('');
+      }).join('');
+    }
+
+    async function searchHelpDocs() {
+      const input = document.getElementById('help-doc-search-input');
+      const query = String(input?.value || '').trim();
+      const metaEl = document.getElementById('help-doc-meta');
+
+      if (!query) {
+        helpDocSearchResults = [];
+        renderHelpSearchResults();
+        if (metaEl && activeHelpDocId) {
+          metaEl.textContent = `Source: docs/help/${activeHelpDocId}.md`;
+        }
+        return;
+      }
+
+      if (metaEl) {
+        metaEl.textContent = `Searching help for "${query}"...`;
+      }
+
+      try {
+        const response = await invoke('search_help_docs', { query });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        helpDocSearchResults = Array.isArray(payload?.results) ? payload.results : [];
+        renderHelpSearchResults();
+
+        if (helpDocSearchResults.length === 0) {
+          if (metaEl) {
+            metaEl.textContent = `No help documents matched "${query}".`;
+          }
+          return;
+        }
+
+        const topResult = helpDocSearchResults[0];
+        if (metaEl) {
+          metaEl.textContent = `Found ${helpDocSearchResults.length} help match(es). Top result: ${topResult?.title || topResult?.id || 'unknown'}.`;
+        }
+
+        const topDocId = String(topResult?.id || '').trim();
+        if (topDocId && topDocId !== activeHelpDocId) {
+          await openHelpDoc(topDocId);
+        }
+      } catch (err) {
+        helpDocSearchResults = [];
+        renderHelpSearchResults();
+        if (metaEl) {
+          metaEl.textContent = `Help search failed: ${err}`;
+        }
+        appendTerminalLog(`Help search error: ${err}`);
+      }
+    }
+
+    function closeHelpDocModal() {
+      const modal = document.getElementById('help-doc-modal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
+      helpDocSearchResults = [];
+      renderHelpSearchResults();
+      activeHelpDocId = '';
     }
 
     function closeBriefingPacketEditor() {
@@ -3840,6 +4987,8 @@ async function restoreVersion() {
       const term = document.getElementById('settings-terminal').value;
       const geminiKey = document.getElementById('settings-gemini-key').value;
       const openaiKey = document.getElementById('settings-openai-key').value;
+      const githubUsername = document.getElementById('settings-github-username').value;
+      const githubApiKey = document.getElementById('settings-github-api-key').value;
       const leftProvider = document.getElementById('settings-left-provider').value;
       const leftModelRaw = document.getElementById('settings-left-model').value;
       const rightProvider = document.getElementById('settings-right-provider').value;
@@ -3861,6 +5010,8 @@ async function restoreVersion() {
         terminal_app: term,
         gemini_key: geminiKey,
         openai_key: openaiKey,
+        github_username: githubUsername,
+        github_api_key: githubApiKey,
         left_provider: leftProvider,
         left_model: leftModel,
         right_provider: rightProvider,
@@ -3884,6 +5035,8 @@ async function restoreVersion() {
         currentConfig.terminal_app = term;
         currentConfig.gemini_api_key = geminiKey;
         currentConfig.openai_api_key = openaiKey;
+        currentConfig.github_username = githubUsername;
+        currentConfig.github_api_key = githubApiKey;
         currentConfig.left_provider = leftProvider;
         currentConfig.left_model = leftModel;
         currentConfig.right_provider = rightProvider;
@@ -4459,6 +5612,79 @@ async function restoreVersion() {
 	    }
 	}
 
+  async function saveHypothesis() {
+    if (!currentWorkspacePath) {
+      alert("Please load a workspace directory first!");
+      return;
+    }
+
+    const branchName = prompt("Enter a hypothesis branch name (e.g., hypothesis/bmi-lensing-test):");
+    if (!branchName) return;
+
+    try {
+      const result = await invoke('save_as_hypothesis', {
+        name: branchName,
+        rootPath: currentWorkspacePath
+      });
+      appendTerminalLog(result);
+      alert(result);
+    } catch (err) {
+      appendTerminalLog(`Hypothesis Error: ${err}`);
+      alert(`Failed to create hypothesis branch: ${err}`);
+    }
+  }
+
+  async function terminateHypothesisBranch() {
+    if (!currentWorkspacePath) {
+      alert("Please load a workspace directory first!");
+      return;
+    }
+
+    try {
+      const currentBranch = await invoke('get_current_branch', { rootPath: currentWorkspacePath });
+      if (!currentBranch || currentBranch === 'main' || currentBranch === 'master') {
+        alert(`Current branch is '${currentBranch || 'unknown'}'. Switch to a hypothesis branch first.`);
+        return;
+      }
+
+      const confirmed = confirm(`Terminate hypothesis branch '${currentBranch}' and switch back to main/master?`);
+      if (!confirmed) return;
+
+      try {
+        const result = await invoke('terminate_hypothesis_branch', {
+          rootPath: currentWorkspacePath,
+          branchName: currentBranch,
+          force: false
+        });
+        appendTerminalLog(result);
+        alert(result);
+        await fetchAndRenderDirectory(currentWorkspacePath);
+        return;
+      } catch (err) {
+        const errText = String(err || '');
+        const likelyUnmerged = /not fully merged|is not fully merged|unmerged/i.test(errText);
+        if (!likelyUnmerged) {
+          throw err;
+        }
+
+        const forceConfirm = confirm(`Branch '${currentBranch}' is not fully merged. Force delete it?`);
+        if (!forceConfirm) return;
+
+        const forcedResult = await invoke('terminate_hypothesis_branch', {
+          rootPath: currentWorkspacePath,
+          branchName: currentBranch,
+          force: true
+        });
+        appendTerminalLog(forcedResult);
+        alert(forcedResult);
+        await fetchAndRenderDirectory(currentWorkspacePath);
+      }
+    } catch (err) {
+      appendTerminalLog(`Hypothesis Termination Error: ${err}`);
+      alert(`Failed to terminate hypothesis branch: ${err}`);
+    }
+  }
+
 	async function saveVersion() {
 	      // 1. Ensure a workspace is actually loaded first
 	      if (!currentWorkspacePath) {
@@ -4466,7 +5692,7 @@ async function restoreVersion() {
 	        return;
 	      }
 	
-		  const tag = prompt("Enter a version tag (e.g., v1.0.0):");
+      const tag = prompt("Enter a local version name (e.g., v1.0.0). Allowed: letters, numbers, '-', '_', '.':");
 		  if (!tag) return;
 	
       try {

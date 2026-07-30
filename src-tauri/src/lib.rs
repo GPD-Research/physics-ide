@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
@@ -96,6 +97,10 @@ fn build_file_editor_command(payload: &LaunchFileEditorPayload) -> Result<(Strin
     Ok(("xdg-open".to_string(), vec![file_path.to_string()]))
 }
 
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct CosmologyMetrics {
     pub scale_factor: f64,
@@ -148,6 +153,8 @@ pub struct AppConfig {
     terminal_app: String,
     gemini_api_key: String,
     openai_api_key: String,
+    github_username: String,
+    github_api_key: String,
     left_provider: String,
     left_model: String,
     right_provider: String,
@@ -167,6 +174,12 @@ pub struct AppConfig {
     first_session_completed: bool,
 }
 
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct TheoryProfilesStore {
+    active_profile: String,
+    profiles: BTreeMap<String, AppConfig>,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -175,6 +188,8 @@ impl Default for AppConfig {
             terminal_app: String::new(),
             gemini_api_key: String::new(),
             openai_api_key: String::new(),
+            github_username: String::new(),
+            github_api_key: String::new(),
             left_provider: "openai".to_string(),
             left_model: "gpt-4.1".to_string(),
             right_provider: "openai".to_string(),
@@ -214,6 +229,10 @@ pub struct SaveUserSettingsPayload {
     pub gemini_key: String,
     #[serde(alias = "openaiKey")]
     pub openai_key: String,
+    #[serde(default, alias = "githubUsername")]
+    pub github_username: String,
+    #[serde(default, alias = "githubApiKey")]
+    pub github_api_key: String,
     #[serde(alias = "leftProvider")]
     pub left_provider: String,
     #[serde(alias = "leftModel")]
@@ -290,6 +309,11 @@ fn default_home_dir() -> Option<String> {
 }
 
 fn apply_unset_path_defaults(config: &mut AppConfig) {
+    // Keep startup blank for first-session mode so a theory can be truly closed.
+    if !config.first_session_completed {
+        return;
+    }
+
     let Some(home_dir) = default_home_dir() else {
         return;
     };
@@ -865,6 +889,618 @@ fn save_app_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), Str
     fs::write(config_path, config_json).map_err(|e| e.to_string())
 }
 
+fn get_theory_profiles_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    path.push("theory_profiles.json");
+    Ok(path)
+}
+
+fn load_theory_profiles_store(app: &AppHandle) -> Result<TheoryProfilesStore, String> {
+    let path = get_theory_profiles_path(app)?;
+    if !path.exists() {
+        return Ok(TheoryProfilesStore::default());
+    }
+
+    let contents = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    Ok(serde_json::from_str::<TheoryProfilesStore>(&contents).unwrap_or_default())
+}
+
+fn save_theory_profiles_store(app: &AppHandle, store: &TheoryProfilesStore) -> Result<(), String> {
+    let path = get_theory_profiles_path(app)?;
+    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
+}
+
+fn normalize_profile_name(raw_name: &str) -> Result<String, String> {
+    let trimmed = raw_name.trim();
+    if trimmed.is_empty() {
+        return Err("Profile name cannot be empty".to_string());
+    }
+    if trimmed.len() > 120 {
+        return Err("Profile name is too long (max 120 characters)".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+#[derive(Clone)]
+struct HelpDocRecord {
+    id: &'static str,
+    title: &'static str,
+    path: &'static str,
+    content: &'static str,
+}
+
+fn help_docs_catalog() -> Vec<HelpDocRecord> {
+    vec![
+        HelpDocRecord {
+            id: "app-layers",
+            title: "App Layers",
+            path: "docs/help/app-layers.md",
+            content: include_str!("../../docs/help/app-layers.md"),
+        },
+        HelpDocRecord {
+            id: "gui-button-glossary",
+            title: "GUI Button Glossary",
+            path: "docs/help/gui-button-glossary.md",
+            content: include_str!("../../docs/help/gui-button-glossary.md"),
+        },
+        HelpDocRecord {
+            id: "push-pull-context-and-errors",
+            title: "Push/Pull Context and Common Errors",
+            path: "docs/help/push-pull-context-and-errors.md",
+            content: include_str!("../../docs/help/push-pull-context-and-errors.md"),
+        },
+        HelpDocRecord {
+            id: "startup-initial-setup-checklist",
+            title: "Startup Initial Setup Workflow and Checklist",
+            path: "docs/help/startup-initial-setup-checklist.md",
+            content: include_str!("../../docs/help/startup-initial-setup-checklist.md"),
+        },
+    ]
+}
+
+fn normalize_help_query_tokens(query: &str) -> Vec<String> {
+    query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_string())
+        .collect()
+}
+
+fn find_help_doc_by_id(doc_id: &str) -> Option<HelpDocRecord> {
+    let normalized = doc_id.trim().to_lowercase();
+    help_docs_catalog()
+        .into_iter()
+        .find(|doc| doc.id == normalized)
+}
+
+fn bounded_levenshtein(a: &str, b: &str, max_distance: usize) -> Option<usize> {
+    if a == b {
+        return Some(0);
+    }
+
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+
+    if a_chars.is_empty() {
+        return (b_chars.len() <= max_distance).then_some(b_chars.len());
+    }
+    if b_chars.is_empty() {
+        return (a_chars.len() <= max_distance).then_some(a_chars.len());
+    }
+
+    let len_a = a_chars.len();
+    let len_b = b_chars.len();
+    if len_a.abs_diff(len_b) > max_distance {
+        return None;
+    }
+
+    let mut prev: Vec<usize> = (0..=len_b).collect();
+    let mut curr: Vec<usize> = vec![0; len_b + 1];
+
+    for (i, ca) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+
+        for (j, cb) in b_chars.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            let deletion = prev[j + 1] + 1;
+            let insertion = curr[j] + 1;
+            let substitution = prev[j] + cost;
+            let best = deletion.min(insertion).min(substitution);
+            curr[j + 1] = best;
+        }
+
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    let distance = prev[len_b];
+    (distance <= max_distance).then_some(distance)
+}
+
+fn fuzzy_match_distance(token: &str, text: &str) -> Option<usize> {
+    if token.is_empty() {
+        return None;
+    }
+
+    let max_distance = if token.len() <= 4 { 1 } else { 2 };
+    let mut best: Option<usize> = None;
+
+    for word in text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        if word.len().abs_diff(token.len()) > max_distance {
+            continue;
+        }
+
+        if let Some(distance) = bounded_levenshtein(token, word, max_distance) {
+            match best {
+                Some(current) if current <= distance => {}
+                _ => best = Some(distance),
+            }
+            if distance == 0 {
+                break;
+            }
+        }
+    }
+
+    best
+}
+
+fn compute_help_doc_score(doc: &HelpDocRecord, tokens: &[String]) -> i32 {
+    if tokens.is_empty() {
+        return 0;
+    }
+
+    let title = doc.title.to_lowercase();
+    let content = doc.content.to_lowercase();
+    let mut score = 0;
+
+    for token in tokens {
+        let mut exact_hit = false;
+
+        if title.contains(token) {
+            score += 7;
+            exact_hit = true;
+        }
+        if content.contains(token) {
+            score += 3;
+            exact_hit = true;
+        }
+
+        if token.ends_with('s') && token.len() > 2 {
+            let singular = &token[..token.len() - 1];
+            if title.contains(singular) {
+                score += 4;
+                exact_hit = true;
+            }
+            if content.contains(singular) {
+                score += 2;
+                exact_hit = true;
+            }
+        }
+
+        if !exact_hit {
+            if let Some(distance) = fuzzy_match_distance(token, &title) {
+                score += match distance {
+                    0 => 6,
+                    1 => 4,
+                    _ => 2,
+                };
+            }
+
+            if let Some(distance) = fuzzy_match_distance(token, &content) {
+                score += match distance {
+                    0 => 2,
+                    1 => 1,
+                    _ => 1,
+                };
+            }
+        }
+    }
+
+    score
+}
+
+fn build_help_doc_snippet(content: &str, tokens: &[String]) -> String {
+    let lowered = content.replace('\n', " ").to_lowercase();
+
+    let mut hit_index = 0usize;
+    for token in tokens {
+        if let Some(index) = lowered.find(token) {
+            hit_index = index;
+            break;
+        }
+        if token.ends_with('s') && token.len() > 2 {
+            let singular = &token[..token.len() - 1];
+            if let Some(index) = lowered.find(singular) {
+                hit_index = index;
+                break;
+            }
+        }
+    }
+
+    let start = hit_index.saturating_sub(80);
+    let end = (hit_index + 160).min(lowered.len());
+    let mut snippet = lowered[start..end].trim().to_string();
+
+    if start > 0 {
+        snippet = format!("...{}", snippet);
+    }
+    if end < lowered.len() {
+        snippet.push_str("...");
+    }
+    snippet
+}
+
+fn build_markdown_doc_snippet(content: &str, tokens: &[String]) -> String {
+    let lowered = content.replace('\n', " ").to_lowercase();
+
+    let mut hit_index = 0usize;
+    for token in tokens {
+        if let Some(index) = lowered.find(token) {
+            hit_index = index;
+            break;
+        }
+        if token.ends_with('s') && token.len() > 2 {
+            let singular = &token[..token.len() - 1];
+            if let Some(index) = lowered.find(singular) {
+                hit_index = index;
+                break;
+            }
+        }
+    }
+
+    let start = hit_index.saturating_sub(80);
+    let end = (hit_index + 160).min(lowered.len());
+    let mut snippet = lowered[start..end].trim().to_string();
+
+    if start > 0 {
+        snippet = format!("...{}", snippet);
+    }
+    if end < lowered.len() {
+        snippet.push_str("...");
+    }
+    snippet
+}
+
+fn collect_markdown_files_recursive(root: &Path) -> Result<Vec<PathBuf>, String> {
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Directory does not exist: {}", root.to_string_lossy()));
+    }
+
+    fn scan(dir: &Path, acc: &mut Vec<PathBuf>) -> Result<(), String> {
+        let skip_dirs = [
+            ".git",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".idea",
+            ".vscode",
+            "versions",
+        ];
+
+        for entry in fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {e}"))? {
+            let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|e| format!("Failed to read file type: {e}"))?;
+
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            if file_type.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if skip_dirs.iter().any(|skip| skip.eq_ignore_ascii_case(&name)) {
+                    continue;
+                }
+                scan(&path, acc)?;
+                continue;
+            }
+
+            if file_type.is_file() {
+                let is_md = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.eq_ignore_ascii_case("md"))
+                    .unwrap_or(false);
+                if is_md {
+                    acc.push(path);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    scan(root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn is_path_within_root(path: &Path, root: &Path) -> bool {
+    if let (Ok(canon_path), Ok(canon_root)) = (path.canonicalize(), root.canonicalize()) {
+        canon_path.starts_with(canon_root)
+    } else {
+        false
+    }
+}
+
+fn compute_markdown_doc_score(title: &str, content: &str, tokens: &[String]) -> i32 {
+    if tokens.is_empty() {
+        return 0;
+    }
+
+    let title_lower = title.to_lowercase();
+    let content_lower = content.to_lowercase();
+    let mut score = 0;
+
+    for token in tokens {
+        let mut exact_hit = false;
+
+        if title_lower.contains(token) {
+            score += 7;
+            exact_hit = true;
+        }
+        if content_lower.contains(token) {
+            score += 3;
+            exact_hit = true;
+        }
+
+        if token.ends_with('s') && token.len() > 2 {
+            let singular = &token[..token.len() - 1];
+            if title_lower.contains(singular) {
+                score += 4;
+                exact_hit = true;
+            }
+            if content_lower.contains(singular) {
+                score += 2;
+                exact_hit = true;
+            }
+        }
+
+        if !exact_hit {
+            if let Some(distance) = fuzzy_match_distance(token, &title_lower) {
+                score += match distance {
+                    0 => 6,
+                    1 => 4,
+                    _ => 2,
+                };
+            }
+
+            if let Some(distance) = fuzzy_match_distance(token, &content_lower) {
+                score += match distance {
+                    0 => 2,
+                    1 => 1,
+                    _ => 1,
+                };
+            }
+        }
+    }
+
+    score
+}
+
+#[tauri::command]
+fn get_help_doc(doc_id: String) -> Result<String, String> {
+    let normalized = doc_id.trim();
+    if normalized.is_empty() {
+        return Err("Help document id cannot be empty.".to_string());
+    }
+
+    let doc = find_help_doc_by_id(normalized)
+        .ok_or_else(|| format!("Help document '{}' not found.", normalized))?;
+
+    let payload = serde_json::json!({
+        "id": doc.id,
+        "title": doc.title,
+        "path": doc.path,
+        "content": doc.content
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn search_help_docs(query: String) -> Result<String, String> {
+    let tokens = normalize_help_query_tokens(&query);
+    if tokens.is_empty() {
+        return Ok(serde_json::json!({
+            "query": query,
+            "results": []
+        })
+        .to_string());
+    }
+
+    let mut ranked: Vec<serde_json::Value> = help_docs_catalog()
+        .into_iter()
+        .filter_map(|doc| {
+            let score = compute_help_doc_score(&doc, &tokens);
+            if score <= 0 {
+                return None;
+            }
+
+            Some(serde_json::json!({
+                "id": doc.id,
+                "title": doc.title,
+                "path": doc.path,
+                "score": score,
+                "snippet": build_help_doc_snippet(doc.content, &tokens)
+            }))
+        })
+        .collect();
+
+    ranked.sort_by(|a, b| {
+        let score_a = a.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        let score_b = b.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        score_b.cmp(&score_a)
+    });
+
+    let payload = serde_json::json!({
+        "query": query,
+        "results": ranked
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn list_markdown_documents(directory_path: String) -> Result<String, String> {
+    let root = PathBuf::from(directory_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Markdown directory does not exist: {}", directory_path));
+    }
+
+    let docs: Vec<serde_json::Value> = collect_markdown_files_recursive(&root)?
+        .into_iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap_or(path.as_path())
+                .to_string_lossy()
+                .to_string();
+            serde_json::json!({
+                "path": path.to_string_lossy().to_string(),
+                "relative_path": relative
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "directory": root.to_string_lossy().to_string(),
+        "documents": docs
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn read_markdown_document(directory_path: String, file_path: String) -> Result<String, String> {
+    let root = PathBuf::from(directory_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Markdown directory does not exist: {}", directory_path));
+    }
+
+    let doc_path = PathBuf::from(file_path.trim());
+    if !doc_path.exists() || !doc_path.is_file() {
+        return Err(format!("Markdown file does not exist: {}", file_path));
+    }
+
+    if !is_path_within_root(&doc_path, &root) {
+        return Err("Requested markdown file is outside of the configured markdown directory.".to_string());
+    }
+
+    let content = fs::read_to_string(&doc_path).map_err(|e| format!("Failed to read markdown file: {e}"))?;
+    let relative = doc_path
+        .strip_prefix(&root)
+        .unwrap_or(doc_path.as_path())
+        .to_string_lossy()
+        .to_string();
+
+    let title = content
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                Some(trimmed.trim_start_matches('#').trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| {
+            doc_path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Markdown Document".to_string())
+        });
+
+    Ok(serde_json::json!({
+        "title": title,
+        "path": doc_path.to_string_lossy().to_string(),
+        "relative_path": relative,
+        "content": content
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn search_markdown_documents(directory_path: String, query: String) -> Result<String, String> {
+    let root = PathBuf::from(directory_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Markdown directory does not exist: {}", directory_path));
+    }
+
+    let tokens = normalize_help_query_tokens(&query);
+    if tokens.is_empty() {
+        return Ok(serde_json::json!({
+            "query": query,
+            "results": []
+        })
+        .to_string());
+    }
+
+    let mut results = Vec::new();
+    for path in collect_markdown_files_recursive(&root)? {
+        let content = match fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        let relative = path
+            .strip_prefix(&root)
+            .unwrap_or(path.as_path())
+            .to_string_lossy()
+            .to_string();
+
+        let title = content
+            .lines()
+            .find_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') {
+                    Some(trimmed.trim_start_matches('#').trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| relative.clone());
+
+        let score = compute_markdown_doc_score(&title, &content, &tokens);
+        if score <= 0 {
+            continue;
+        }
+
+        results.push(serde_json::json!({
+            "title": title,
+            "path": path.to_string_lossy().to_string(),
+            "relative_path": relative,
+            "score": score,
+            "snippet": build_markdown_doc_snippet(&content, &tokens)
+        }));
+    }
+
+    results.sort_by(|a, b| {
+        let score_a = a.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        let score_b = b.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        score_b.cmp(&score_a)
+    });
+
+    Ok(serde_json::json!({
+        "query": query,
+        "results": results
+    })
+    .to_string())
+}
+
 #[tauri::command]
 fn generate_exit_session_draft(
     workspace_path: String,
@@ -1311,6 +1947,202 @@ fn get_initial_state(app: AppHandle) -> AppConfig {
 }
 
 #[tauri::command]
+fn list_theory_profiles(app: AppHandle) -> Result<String, String> {
+    let store = load_theory_profiles_store(&app)?;
+    let profile_names: Vec<String> = store.profiles.keys().cloned().collect();
+
+    let payload = serde_json::json!({
+        "active_profile": store.active_profile,
+        "profiles": profile_names,
+        "count": store.profiles.len()
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn save_theory_profile(profile_name: String, state: tauri::State<AppState>, app: AppHandle) -> Result<String, String> {
+    let normalized_name = normalize_profile_name(&profile_name)?;
+    let config_path = get_config_path(&app)?;
+    let mut config = if let Ok(data) = fs::read_to_string(config_path) {
+        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
+    } else {
+        AppConfig::default()
+    };
+
+    let workspace_path = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?
+        .clone();
+    let workspace_trimmed = workspace_path.trim();
+    if !workspace_trimmed.is_empty() {
+        config.last_root_dir = workspace_trimmed.to_string();
+        if config.project_root_dir.trim().is_empty() {
+            config.project_root_dir = workspace_trimmed.to_string();
+        }
+    }
+
+    save_app_config(&app, &config)?;
+
+    let mut store = load_theory_profiles_store(&app)?;
+    store.profiles.insert(normalized_name.clone(), config);
+    store.active_profile = normalized_name.clone();
+    save_theory_profiles_store(&app, &store)?;
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "saved_profile": normalized_name,
+        "count": store.profiles.len()
+    });
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn load_theory_profile(profile_name: String, state: tauri::State<AppState>, app: AppHandle) -> Result<String, String> {
+    let normalized_name = normalize_profile_name(&profile_name)?;
+    let mut store = load_theory_profiles_store(&app)?;
+    let profile = store
+        .profiles
+        .get(&normalized_name)
+        .cloned()
+        .ok_or_else(|| format!("Theory profile '{}' was not found", normalized_name))?;
+
+    let workspace_path = if !profile.project_root_dir.trim().is_empty() {
+        profile.project_root_dir.trim().to_string()
+    } else {
+        profile.last_root_dir.trim().to_string()
+    };
+
+    save_app_config(&app, &profile)?;
+
+    let mut runtime_workspace = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?;
+    *runtime_workspace = workspace_path.clone();
+
+    store.active_profile = normalized_name.clone();
+    save_theory_profiles_store(&app, &store)?;
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "loaded_profile": normalized_name,
+        "workspace_path": workspace_path
+    });
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn rename_theory_profile(current_name: String, new_name: String, app: AppHandle) -> Result<String, String> {
+    let current_normalized = normalize_profile_name(&current_name)?;
+    let new_normalized = normalize_profile_name(&new_name)?;
+
+    if current_normalized == new_normalized {
+        let payload = serde_json::json!({
+            "status": "ok",
+            "renamed_from": current_normalized,
+            "renamed_to": new_normalized,
+            "count": load_theory_profiles_store(&app)?.profiles.len()
+        });
+        return Ok(payload.to_string());
+    }
+
+    let mut store = load_theory_profiles_store(&app)?;
+    if !store.profiles.contains_key(&current_normalized) {
+        return Err(format!("Theory profile '{}' was not found", current_normalized));
+    }
+    if store.profiles.contains_key(&new_normalized) {
+        return Err(format!("Theory profile '{}' already exists", new_normalized));
+    }
+
+    let profile = store
+        .profiles
+        .remove(&current_normalized)
+        .ok_or_else(|| format!("Theory profile '{}' was not found", current_normalized))?;
+    store.profiles.insert(new_normalized.clone(), profile);
+
+    if store.active_profile == current_normalized {
+        store.active_profile = new_normalized.clone();
+    }
+
+    save_theory_profiles_store(&app, &store)?;
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "renamed_from": current_normalized,
+        "renamed_to": new_normalized,
+        "count": store.profiles.len(),
+        "active_profile": store.active_profile
+    });
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn delete_theory_profile(profile_name: String, app: AppHandle) -> Result<String, String> {
+    let normalized_name = normalize_profile_name(&profile_name)?;
+    let mut store = load_theory_profiles_store(&app)?;
+
+    let removed = store.profiles.remove(&normalized_name);
+    if removed.is_none() {
+        return Err(format!("Theory profile '{}' was not found", normalized_name));
+    }
+
+    if store.active_profile == normalized_name {
+        store.active_profile = String::new();
+    }
+
+    save_theory_profiles_store(&app, &store)?;
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "deleted_profile": normalized_name,
+        "count": store.profiles.len(),
+        "active_profile": store.active_profile
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+fn close_active_theory(state: tauri::State<AppState>, app: AppHandle) -> Result<String, String> {
+    let config_path = get_config_path(&app)?;
+    let mut config = if let Ok(data) = fs::read_to_string(config_path) {
+        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
+    } else {
+        AppConfig::default()
+    };
+
+    config.last_root_dir = String::new();
+    config.project_root_dir = String::new();
+    config.theory_md_dir = String::new();
+    config.master_axiom_file = String::new();
+    config.tools_dir = String::new();
+    config.reuse_notes_next_session = false;
+    config.first_session_completed = false;
+
+    save_app_config(&app, &config)?;
+
+    let mut runtime_workspace = state
+        .workspace_path
+        .lock()
+        .map_err(|_| "Workspace path mutex poisoned".to_string())?;
+    *runtime_workspace = String::new();
+
+    if let Ok(mut store) = load_theory_profiles_store(&app) {
+        store.active_profile = String::new();
+        let _ = save_theory_profiles_store(&app, &store);
+    }
+
+    let payload = serde_json::json!({
+        "status": "ok",
+        "message": "Active theory closed. App returned to first-session mode."
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
 fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
     let path_buf = std::path::PathBuf::from(&path);
     
@@ -1376,14 +2208,110 @@ fn git_pull(state: tauri::State<AppState>) -> Result<String, String> {
 #[tauri::command]
 #[allow(non_snake_case)]
 fn restore_version(tag: String, rootPath: String) -> Result<String, String> {
+    let normalized_tag = normalize_version_tag(&tag)?;
+    let root = std::path::Path::new(&rootPath);
+
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Workspace path is invalid: {}", rootPath));
+    }
+
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let versions_dir = root.join("versions");
+    let snapshot_dir = versions_dir.join(&normalized_tag);
+
+    if !snapshot_dir.exists() || !snapshot_dir.is_dir() {
+        return Err(format!("Version '{}' not found in local versions folder.", normalized_tag));
+    }
+
+    fn should_skip_version_copy(name: &str) -> bool {
+        matches!(
+            name,
+            ".git" | "versions" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode"
+        )
+    }
+
+    fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+
+            if should_skip_version_copy(name.as_ref()) {
+                continue;
+            }
+
+            let file_type = entry.file_type()?;
+            let entry_path = entry.path();
+            let dest_path = dst.join(&file_name);
+
+            if file_type.is_symlink() {
+                continue;
+            } else if file_type.is_dir() {
+                copy_recursive(&entry_path, &dest_path)?;
+            } else if file_type.is_file() {
+                std::fs::copy(&entry_path, &dest_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    // Remove existing workspace content except .git and versions before restore.
+    for entry in std::fs::read_dir(&root).map_err(|e| format!("Failed to read workspace root: {}", e))? {
+        let entry = entry.map_err(|e| format!("Failed to read workspace entry: {}", e))?;
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+
+        if name.as_ref() == ".git" || name.as_ref() == "versions" {
+            continue;
+        }
+
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("Failed to remove directory during restore ({}): {}", path.to_string_lossy(), e))?;
+        } else {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove file during restore ({}): {}", path.to_string_lossy(), e))?;
+        }
+    }
+
+    copy_recursive(&snapshot_dir, &root)
+        .map_err(|e| format!("Failed to restore local version '{}': {}", normalized_tag, e))?;
+
+    Ok(format!(
+        "Local version '{}' restored from {}",
+        normalized_tag,
+        snapshot_dir.to_string_lossy()
+    ))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+fn save_as_hypothesis(name: String, rootPath: String) -> Result<String, String> {
+    let branch_name = name.trim();
+    if branch_name.is_empty() {
+        return Err("Hypothesis branch name cannot be empty.".to_string());
+    }
+
+    let repo_check = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(&rootPath)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !repo_check.status.success() {
+        return Err("This workspace is not an active git repository.".to_string());
+    }
+
     let output = std::process::Command::new("git")
-        .args(["reset", "--hard", &tag])
+        .args(["checkout", "-b", branch_name])
         .current_dir(&rootPath)
         .output()
         .map_err(|e| e.to_string())?;
 
     if output.status.success() {
-        Ok(format!("Project flushed. Rolled back strictly to version {}.", tag))
+        Ok(format!("Hypothesis branch '{}' created. Sandbox activated.", branch_name))
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
@@ -1391,28 +2319,128 @@ fn restore_version(tag: String, rootPath: String) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn save_as_hypothesis(name: String, rootPath: String) -> Result<String, String> {
-    std::process::Command::new("git").arg("init").current_dir(&rootPath).output().ok();
-    std::process::Command::new("git").args(["add", "."]).current_dir(&rootPath).output().ok();
-    std::process::Command::new("git").args(["commit", "-m", "Auto-commit before branching"]).current_dir(&rootPath).output().ok();
-
+fn get_current_branch(rootPath: String) -> Result<String, String> {
     let output = std::process::Command::new("git")
-        .args(["checkout", "-b", &name])
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&rootPath)
         .output()
         .map_err(|e| e.to_string())?;
 
     if output.status.success() {
-        Ok(format!("Hypothesis branch '{}' created. Sandbox activated.", name))
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+fn terminate_hypothesis_branch(rootPath: String, branchName: String, force: bool) -> Result<String, String> {
+    let target_branch = branchName.trim();
+    if target_branch.is_empty() {
+        return Err("Branch name cannot be empty.".to_string());
+    }
+
+    if matches!(target_branch, "main" | "master") {
+        return Err("Refusing to terminate primary branch (main/master).".to_string());
+    }
+
+    let current_output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&rootPath)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !current_output.status.success() {
+        return Err(String::from_utf8_lossy(&current_output.stderr).trim().to_string());
+    }
+
+    let current_branch = String::from_utf8_lossy(&current_output.stdout).trim().to_string();
+
+    let main_exists = std::process::Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/main"])
+        .current_dir(&rootPath)
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+    let master_exists = std::process::Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/master"])
+        .current_dir(&rootPath)
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+
+    if current_branch == target_branch {
+        let fallback = if main_exists {
+            "main"
+        } else if master_exists {
+            "master"
+        } else {
+            return Err("No fallback branch (main/master) found for checkout before deletion.".to_string());
+        };
+
+        let checkout_output = std::process::Command::new("git")
+            .args(["checkout", fallback])
+            .current_dir(&rootPath)
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        if !checkout_output.status.success() {
+            return Err(format!(
+                "Failed to checkout '{}' before branch termination: {}",
+                fallback,
+                String::from_utf8_lossy(&checkout_output.stderr).trim()
+            ));
+        }
+    }
+
+    let delete_flag = if force { "-D" } else { "-d" };
+    let delete_output = std::process::Command::new("git")
+        .args(["branch", delete_flag, target_branch])
+        .current_dir(&rootPath)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !delete_output.status.success() {
+        return Err(String::from_utf8_lossy(&delete_output.stderr).trim().to_string());
+    }
+
+    let fallback_now = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&rootPath)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    Ok(format!(
+        "Hypothesis branch '{}' terminated. Active branch: {}",
+        target_branch, fallback_now
+    ))
 }
 
 #[tauri::command]
 fn git_push(state: tauri::State<AppState>) -> Result<String, String> {
     let current_path = state.workspace_path.lock().map_err(|_| "Mutex poisoned")?.clone();
     if current_path.is_empty() { return Err("No workspace loaded.".to_string()); }
+
+    let branch_output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&current_path)
+        .output()
+        .map_err(|e| format!("Failed to inspect current branch: {}", e))?;
+
+    if !branch_output.status.success() {
+        return Err(String::from_utf8_lossy(&branch_output.stderr).trim().to_string());
+    }
+
+    let current_branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+    if current_branch != "main" && current_branch != "master" {
+        return Err(format!(
+            "Push blocked on branch '{}'. Hypothesis branches are local-only; merge or restore into main/master before pushing.",
+            current_branch
+        ));
+    }
 
     let output = std::process::Command::new("git")
         .arg("push")
@@ -3080,6 +4108,254 @@ fn launch_file_editor(payload: LaunchFileEditorPayload) -> Result<String, String
 }
 
 #[tauri::command]
+fn edit_markdown_document_with_git_save(payload: LaunchFileEditorPayload, workspace_root: String, app: tauri::AppHandle) -> Result<String, String> {
+    let file_path = payload.file_path.trim();
+    if file_path.is_empty() {
+        return Err("No markdown file path provided.".to_string());
+    }
+
+    let workspace_root = workspace_root.trim();
+    if workspace_root.is_empty() {
+        return Err("Workspace root is required for git-level save.".to_string());
+    }
+
+    let workspace_root_path = PathBuf::from(workspace_root);
+    if !workspace_root_path.exists() || !workspace_root_path.is_dir() {
+        return Err(format!("Workspace root does not exist: {}", workspace_root));
+    }
+
+    let markdown_path = PathBuf::from(file_path);
+    if !markdown_path.exists() || !markdown_path.is_file() {
+        return Err(format!("Markdown file does not exist: {}", file_path));
+    }
+
+    if !is_path_within_root(&markdown_path, &workspace_root_path) {
+        return Err("Markdown file is outside the active workspace root.".to_string());
+    }
+
+    let git_check = std::process::Command::new("git")
+        .args(["-C", workspace_root, "rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map_err(|e| format!("Failed to verify git repository: {}", e))?;
+
+    let git_repo_available = git_check.status.success();
+    let github_configured = if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&data) {
+                !config.github_username.trim().is_empty() && !config.github_api_key.trim().is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let editor_cmd = if payload.editor.trim().is_empty() {
+        std::env::var("EDITOR")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "sensible-editor".to_string())
+    } else {
+        payload.editor.trim().to_string()
+    };
+
+    let terminal_app = if payload.terminal_app.trim().is_empty() {
+        "x-terminal-emulator".to_string()
+    } else {
+        payload.terminal_app.trim().to_string()
+    };
+
+    let file_for_shell = shell_single_quote(file_path);
+    let root_for_shell = shell_single_quote(workspace_root);
+    let commit_msg = format!(
+        "docs: update {}",
+        markdown_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "markdown document".to_string())
+    );
+    let commit_for_shell = shell_single_quote(&commit_msg);
+
+    let script = if git_repo_available && github_configured {
+        format!(
+            "{editor} {file}; git -C {root} add -- {file}; git -C {root} commit -m {message} || echo 'No commit created (no changes or commit blocked).'",
+            editor = editor_cmd,
+            file = file_for_shell,
+            root = root_for_shell,
+            message = commit_for_shell
+        )
+    } else {
+        format!(
+            "{editor} {file}; sync; echo 'Local save mode complete.'",
+            editor = editor_cmd,
+            file = file_for_shell
+        )
+    };
+
+    let mut cmd = std::process::Command::new(&terminal_app);
+    if terminal_app.contains("gnome-terminal") {
+        cmd.args(["--", "bash", "-lc", &script]);
+    } else {
+        cmd.args(["-e", "bash", "-lc", &script]);
+    }
+
+    cmd.current_dir(&workspace_root_path)
+        .spawn()
+        .map_err(|e| format!("Failed to launch terminal/editor workflow: {}", e))?;
+
+    if git_repo_available && github_configured {
+        Ok(format!(
+            "Opened editor for {}. Closing the editor will trigger git add + commit.",
+            file_path
+        ))
+    } else if git_repo_available {
+        Ok(format!(
+            "Opened editor for {} in local-save mode (GitHub remote not configured). Closing the editor keeps changes local.",
+            file_path
+        ))
+    } else {
+        Ok(format!(
+            "Opened editor for {} in local-save mode (no git repository). Closing the editor keeps changes local.",
+            file_path
+        ))
+    }
+}
+
+#[tauri::command]
+fn get_markdown_git_feedback(workspace_root: String, file_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let workspace_root = workspace_root.trim();
+    let file_path = file_path.trim();
+
+    if workspace_root.is_empty() {
+        return Err("Workspace root is required.".to_string());
+    }
+    if file_path.is_empty() {
+        return Err("Markdown file path is required.".to_string());
+    }
+
+    let workspace_root_path = PathBuf::from(workspace_root);
+    let markdown_path = PathBuf::from(file_path);
+
+    if !workspace_root_path.exists() || !workspace_root_path.is_dir() {
+        return Err(format!("Workspace root does not exist: {}", workspace_root));
+    }
+    if !markdown_path.exists() || !markdown_path.is_file() {
+        return Err(format!("Markdown file does not exist: {}", file_path));
+    }
+    if !is_path_within_root(&markdown_path, &workspace_root_path) {
+        return Err("Markdown file is outside the active workspace root.".to_string());
+    }
+
+    let git_check = std::process::Command::new("git")
+        .args(["-C", workspace_root, "rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map_err(|e| format!("Failed to verify git repository: {}", e))?;
+
+    if !git_check.status.success() {
+        return Ok(serde_json::json!({
+            "is_repo": false,
+            "github_configured": false,
+            "local_save_only": true,
+            "message": "Workspace is not a git repository. Local-save mode is active."
+        })
+        .to_string());
+    }
+
+    let github_configured = if let Ok(config_path) = get_config_path(&app) {
+        if let Ok(data) = fs::read_to_string(config_path) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&data) {
+                !config.github_username.trim().is_empty() && !config.github_api_key.trim().is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let status_output = std::process::Command::new("git")
+        .args(["-C", workspace_root, "status", "--porcelain", "--", file_path])
+        .output()
+        .map_err(|e| format!("Failed to query git status: {}", e))?;
+
+    let status_text = String::from_utf8_lossy(&status_output.stdout).to_string();
+    let status_lines: Vec<String> = status_text
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    let mut staged = false;
+    let mut unstaged = false;
+    for line in &status_lines {
+        let bytes = line.as_bytes();
+        if bytes.len() >= 2 {
+            let index_status = bytes[0] as char;
+            let worktree_status = bytes[1] as char;
+            if index_status != ' ' && index_status != '?' {
+                staged = true;
+            }
+            if worktree_status != ' ' {
+                unstaged = true;
+            }
+            if index_status == '?' && worktree_status == '?' {
+                unstaged = true;
+            }
+        }
+    }
+
+    let log_output = std::process::Command::new("git")
+        .args([
+            "-C",
+            workspace_root,
+            "log",
+            "-n",
+            "1",
+            "--pretty=format:%H|%s|%ct",
+            "--",
+            file_path,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to query git log: {}", e))?;
+
+    let log_text = String::from_utf8_lossy(&log_output.stdout).trim().to_string();
+    let last_commit = if log_text.is_empty() {
+        serde_json::Value::Null
+    } else {
+        let parts: Vec<&str> = log_text.splitn(3, '|').collect();
+        let hash = parts.first().copied().unwrap_or("").to_string();
+        let subject = parts.get(1).copied().unwrap_or("").to_string();
+        let epoch = parts
+            .get(2)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        serde_json::json!({
+            "hash": hash,
+            "short_hash": hash.chars().take(10).collect::<String>(),
+            "subject": subject,
+            "epoch": epoch
+        })
+    };
+
+    Ok(serde_json::json!({
+        "is_repo": true,
+        "github_configured": github_configured,
+        "local_save_only": !github_configured,
+        "dirty": !status_lines.is_empty(),
+        "staged": staged,
+        "unstaged": unstaged,
+        "status_lines": status_lines,
+        "last_commit": last_commit
+    })
+    .to_string())
+}
+
+#[tauri::command]
 fn detach_terminal_shell(state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
     // 1. Grab the current active workspace directory
     let current_path = state.workspace_path.lock().map_err(|_| "Mutex poisoned")?.clone();
@@ -3113,28 +4389,56 @@ fn detach_terminal_shell(state: tauri::State<AppState>, app: tauri::AppHandle) -
 #[tauri::command]
 #[allow(non_snake_case)]
 fn get_version_tags(rootPath: String) -> Result<Vec<String>, String> {
-    let output = std::process::Command::new("git")
-        .arg("tag")
-        .current_dir(&rootPath)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Split the output by lines, trim whitespace, and ignore empty lines
-        let tags: Vec<String> = stdout
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        Ok(tags)
-    } else {
-        Err("Failed to fetch tags. Is this folder an active repository?".to_string())
+    let root = std::path::Path::new(&rootPath);
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Workspace path is invalid: {}", rootPath));
     }
+
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let versions_dir = root.join("versions");
+
+    if !versions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut tags = Vec::new();
+    for entry in std::fs::read_dir(&versions_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.trim().is_empty() {
+                tags.push(name);
+            }
+        }
+    }
+
+    tags.sort();
+    tags.reverse();
+    Ok(tags)
+}
+
+fn normalize_version_tag(raw_tag: &str) -> Result<String, String> {
+    let trimmed = raw_tag.trim();
+    if trimmed.is_empty() {
+        return Err("Version tag cannot be empty.".to_string());
+    }
+    if trimmed.len() > 120 {
+        return Err("Version tag is too long (max 120 characters).".to_string());
+    }
+
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err("Version tag may only include letters, numbers, '-', '_', and '.'.".to_string());
+    }
+
+    Ok(trimmed.to_string())
 }
 
 #[tauri::command]
 fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
+    let normalized_tag = normalize_version_tag(&tag)?;
     let src = std::path::Path::new(&root_path);
 
     if !src.exists() {
@@ -3146,12 +4450,16 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
     }
 
     let src = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
-    let parent = src.parent().ok_or_else(|| "Invalid parent directory".to_string())?;
-    let folder_name = src.file_name().ok_or_else(|| "Invalid file name".to_string())?;
-    let dest_dir = parent.join(format!("{}_{}", folder_name.to_string_lossy(), tag));
+    let versions_dir = src.join("versions");
+    std::fs::create_dir_all(&versions_dir)
+        .map_err(|e| format!("Failed to create versions directory: {}", e))?;
+    let dest_dir = versions_dir.join(&normalized_tag);
 
     if dest_dir.exists() {
-        std::fs::remove_dir_all(&dest_dir).map_err(|e| format!("Failed to replace existing version folder: {}", e))?;
+        return Err(format!(
+            "Version '{}' already exists. Choose a new version tag.",
+            normalized_tag
+        ));
     }
 
     fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
@@ -3161,7 +4469,7 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy();
 
-            if matches!(name.as_ref(), ".git" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode") {
+            if matches!(name.as_ref(), ".git" | "versions" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode") {
                 continue;
             }
 
@@ -3183,7 +4491,30 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
     copy_recursive(&src, &dest_dir)
         .map_err(|e| format!("Failed to save version: {}", e))?;
 
-    Ok(format!("Version '{}' saved successfully to {:?}", tag, dest_dir))
+    let saved_at_epoch_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let manifest = serde_json::json!({
+        "version_tag": normalized_tag,
+        "saved_at_epoch_seconds": saved_at_epoch_seconds,
+        "workspace_root": src.to_string_lossy().to_string(),
+        "mode": "local_snapshot"
+    });
+
+    let manifest_path = dest_dir.join("version_manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Failed to write version manifest: {}", e))?;
+
+    Ok(format!(
+        "Version '{}' saved locally to {}",
+        manifest["version_tag"].as_str().unwrap_or("unknown"),
+        dest_dir.to_string_lossy()
+    ))
 }
 
 #[tauri::command]
@@ -3299,6 +4630,8 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.terminal_app = payload.terminal_app;
     config.gemini_api_key = payload.gemini_key;
     config.openai_api_key = payload.openai_key;
+    config.github_username = payload.github_username;
+    config.github_api_key = payload.github_api_key;
     config.left_provider = payload.left_provider;
     config.left_model = payload.left_model;
     config.right_provider = payload.right_provider;
@@ -3312,6 +4645,10 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.custom_bg_panel = payload.custom_bg_panel;
     config.left_preserve_thread_history = payload.left_preserve_thread_history;
     config.right_preserve_thread_history = payload.right_preserve_thread_history;
+
+    if !config.project_root_dir.trim().is_empty() {
+        config.last_root_dir = config.project_root_dir.clone();
+    }
 
     let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
@@ -3450,12 +4787,23 @@ mod tests {
         fs::write(source_dir.join("build/output/ignored.txt"), "ignore me").unwrap();
 
         let result = save_as_version("v1.0.0".to_string(), source_dir.to_string_lossy().to_string()).unwrap();
-        let snapshot_dir = temp_dir.join("source_v1.0.0");
+        let snapshot_dir = source_dir.join("versions").join("v1.0.0");
 
         assert!(snapshot_dir.join("notes.md").exists());
         assert!(!snapshot_dir.join(".git").exists());
         assert!(!snapshot_dir.join("build").exists());
-        assert!(result.contains("saved successfully"));
+        assert!(snapshot_dir.join("version_manifest.json").exists());
+        assert!(result.contains("saved locally"));
+    }
+
+    #[test]
+    fn help_search_matches_common_workspace_typo() {
+        let response = search_help_docs("wokrspaces".to_string()).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let results = payload["results"].as_array().unwrap();
+
+        assert!(!results.is_empty());
+        assert_eq!(results[0]["id"].as_str().unwrap(), "app-layers");
     }
 
     #[test]
@@ -3712,12 +5060,27 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_initial_state,
+            get_help_doc,
+            search_help_docs,
+            list_markdown_documents,
+            read_markdown_document,
+            search_markdown_documents,
+            edit_markdown_document_with_git_save,
+            get_markdown_git_feedback,
+            list_theory_profiles,
+            save_theory_profile,
+            load_theory_profile,
+            rename_theory_profile,
+            delete_theory_profile,
+            close_active_theory,
             save_root_directory,
             save_user_settings,
             read_directory,
             save_as_version,
             restore_version,
             save_as_hypothesis,
+            get_current_branch,
+            terminate_hypothesis_branch,
             get_version_tags,
             save_equation_to_md,
             save_scratchpad_content,
