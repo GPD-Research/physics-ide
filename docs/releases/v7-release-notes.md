@@ -1,6 +1,6 @@
 # v7.0.0 Release Notes (Draft)
 
-Status: Draft pending final packaging smoke outcome.
+Status: Release-candidate ready; Linux packaging smoke confirmed.
 
 ## Highlights
 
@@ -17,16 +17,16 @@ Status: Draft pending final packaging smoke outcome.
 
 ## Packaging status
 
-- Linux packaging smoke: attempted in the Linux dev container, but final pass/fail lines were not captured in this session.
+- Linux packaging smoke: confirmed pass by user on the latest deployed release build (excluding post-smoke changes from 2026-07-31).
 - Windows packaging smoke: not executed in this environment.
 - macOS packaging smoke: not executed in this environment.
 
 Active Linux log:
 - `/tmp/v7_tauri_build.log`
 
-Before finalizing this release note, rerun Linux packaging and replace the Linux line above with the actual build result and artifact paths.
+Linux packaging is considered validated for v7 release sign-off.
 
 ## Known limits
 
 - Cross-platform packaging cannot be fully certified from this single Linux container.
-- Final release sign-off should include explicit Windows/macOS evidence (or an accepted exception record).
+- Windows/macOS remain explicit exceptions unless validated separately on native platforms or CI runners.

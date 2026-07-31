@@ -1642,10 +1642,17 @@ fn build_theory_import_checklist(
     let summary_count = scan["file_summaries"].as_array().map(|items| items.len()).unwrap_or(0);
 
     let import_complete = theory_path.exists() && theory_path.is_dir() && files_scanned > 0;
+    let import_status = if import_complete {
+        "complete"
+    } else if theory_path.exists() && theory_path.is_dir() {
+        "in_progress"
+    } else {
+        "not_started"
+    };
     let import_stage = serde_json::json!({
         "id": "import",
         "label": "Import",
-        "status": if import_complete { "complete" } else { "needs_attention" },
+        "status": import_status,
         "evidence": format!("Theory directory: {} | Markdown files scanned: {}", theory_path.to_string_lossy(), files_scanned),
         "missing_items": if import_complete {
             Vec::<String>::new()
@@ -1655,10 +1662,17 @@ fn build_theory_import_checklist(
     });
 
     let scan_complete = files_scanned > 0 && (heading_count > 0 || summary_count > 0);
+    let scan_status = if scan_complete {
+        "complete"
+    } else if files_scanned > 0 {
+        "in_progress"
+    } else {
+        "not_started"
+    };
     let scan_stage = serde_json::json!({
         "id": "scan",
         "label": "Scan",
-        "status": if scan_complete { "complete" } else { "needs_attention" },
+        "status": scan_status,
         "evidence": format!(
             "Files scanned: {} | Heading cues: {} | Summary cues: {}",
             files_scanned,
@@ -1685,10 +1699,23 @@ fn build_theory_import_checklist(
         axiom_missing.push("Master axiom is missing one or more required sections.".to_string());
     }
 
+    let axiom_needs_attention = axiom_missing
+        .iter()
+        .any(|item| item.to_ascii_lowercase().contains("could not be read"));
+    let axiom_status = if axiom_complete {
+        "complete"
+    } else if axiom_needs_attention {
+        "needs_attention"
+    } else if master_axiom_path.exists() {
+        "in_progress"
+    } else {
+        "not_started"
+    };
+
     let axiom_stage = serde_json::json!({
         "id": "master_axiom",
         "label": "Master axiom",
-        "status": if axiom_complete { "complete" } else { "needs_attention" },
+        "status": axiom_status,
         "evidence": format!("Master axiom path: {}", master_axiom_path.to_string_lossy()),
         "missing_items": axiom_missing
     });
@@ -1709,10 +1736,17 @@ fn build_theory_import_checklist(
         }
     }
     let briefing_complete = missing_briefing.is_empty();
+    let briefing_status = if briefing_complete {
+        "complete"
+    } else if !existing_briefing.is_empty() {
+        "in_progress"
+    } else {
+        "not_started"
+    };
     let briefing_stage = serde_json::json!({
         "id": "briefing",
         "label": "Briefing",
-        "status": if briefing_complete { "complete" } else { "needs_attention" },
+        "status": briefing_status,
         "evidence": format!("Generated files present: {}", existing_briefing.len()),
         "artifacts": existing_briefing,
         "missing_items": if briefing_complete {
@@ -1737,16 +1771,25 @@ fn build_theory_import_checklist(
         artifact_roots.push(PathBuf::from(tools_dir));
     }
 
+    let has_artifact_roots = artifact_roots.iter().any(|root| root.exists() && root.is_dir());
+
     let experiment_artifacts = collect_named_artifacts(
         &artifact_roots,
         &["experiment", "probe", "batch", "suite", "analysis", "metrics", "run"],
         8,
     );
     let experiments_complete = !experiment_artifacts.is_empty();
+    let experiments_status = if experiments_complete {
+        "complete"
+    } else if has_artifact_roots {
+        "in_progress"
+    } else {
+        "not_started"
+    };
     let experiments_stage = serde_json::json!({
         "id": "run_experiments",
         "label": "Run experiments",
-        "status": if experiments_complete { "complete" } else { "needs_attention" },
+        "status": experiments_status,
         "evidence": format!("Detected experiment-related artifacts: {}", experiment_artifacts.len()),
         "artifacts": experiment_artifacts,
         "missing_items": if experiments_complete {
@@ -1762,10 +1805,17 @@ fn build_theory_import_checklist(
         8,
     );
     let scoring_complete = !score_artifacts.is_empty();
+    let scoring_status = if scoring_complete {
+        "complete"
+    } else if has_artifact_roots {
+        "in_progress"
+    } else {
+        "not_started"
+    };
     let scoring_stage = serde_json::json!({
         "id": "score_outcomes",
         "label": "Score outcomes",
-        "status": if scoring_complete { "complete" } else { "needs_attention" },
+        "status": scoring_status,
         "evidence": format!("Detected scoring-related artifacts: {}", score_artifacts.len()),
         "artifacts": score_artifacts,
         "missing_items": if scoring_complete {
@@ -2567,6 +2617,175 @@ fn normalize_model_for_provider(provider: &str, model: &str) -> String {
     }
 }
 
+fn parse_openai_error_details_for_validation(response_text: &str) -> String {
+    if let Ok(parsed) = serde_json::from_str::<OpenAiApiErrorResponse>(response_text) {
+        let message = parsed.error.message.trim();
+        if message.is_empty() {
+            return "Unknown OpenAI error".to_string();
+        }
+        return message.to_string();
+    }
+
+    let compact = response_text.trim();
+    if compact.is_empty() {
+        "Unknown OpenAI error".to_string()
+    } else {
+        compact.to_string()
+    }
+}
+
+fn validate_openai_model(api_key: &str, model: &str) -> Result<(), String> {
+    if api_key.trim().is_empty() {
+        return Err("OpenAI API key is required for model validation.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "Validation ping"}],
+        "max_tokens": 8,
+        "temperature": 0
+    });
+
+    let response = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .map_err(|e| format!("OpenAI validation request failed: {e}"))?;
+
+    if response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .map_err(|e| format!("OpenAI validation response parsing failed: {e}"))?;
+    let details = parse_openai_error_details_for_validation(&response_text);
+    Err(format!(
+        "OpenAI model validation failed for '{}': HTTP {} - {}",
+        model,
+        status,
+        details
+    ))
+}
+
+fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
+    if api_key.trim().is_empty() {
+        return Err("Gemini API key is required for model validation.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let endpoint = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        model,
+        api_key.trim()
+    );
+    let body = serde_json::json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{ "text": "Validation ping" }]
+        }],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 8
+        }
+    });
+
+    let response = client
+        .post(&endpoint)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .map_err(|e| format!("Gemini validation request failed: {e}"))?;
+
+    if response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .map_err(|e| format!("Gemini validation response parsing failed: {e}"))?;
+    Err(format!(
+        "Gemini model validation failed for '{}': HTTP {} - {}",
+        model,
+        status,
+        response_text.trim()
+    ))
+}
+
+#[tauri::command]
+async fn validate_model_selection(provider: String, model: String, api_key: String) -> Result<String, String> {
+    let provider_normalized = provider.to_ascii_lowercase();
+    let normalized_model = normalize_model_for_provider(&provider_normalized, &model);
+
+    if normalized_model.trim().is_empty() {
+        return Err("Model ID is empty. Enter a model ID before validating.".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        match provider_normalized.as_str() {
+            "openai" => validate_openai_model(&api_key, &normalized_model)?,
+            "gemini" => validate_gemini_model(&api_key, &normalized_model)?,
+            other => {
+                return Err(format!(
+                    "Unsupported provider '{}' for validation. Choose OpenAI or Gemini.",
+                    other
+                ));
+            }
+        }
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "provider": provider_normalized,
+            "requested_model": model,
+            "normalized_model": normalized_model,
+            "message": "Model validated for chat/generative requests"
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| format!("Model validation task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn fetch_provider_model_catalog(provider: String, api_key: String) -> Result<String, String> {
+    let provider_normalized = provider.to_ascii_lowercase();
+    let trimmed_key = api_key.trim().to_string();
+
+    if trimmed_key.is_empty() {
+        return Err(format!("{} API key is required to load model catalog.", provider_normalized));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut models = match provider_normalized.as_str() {
+            "openai" => list_openai_chat_models(&client, &trimmed_key)?,
+            "gemini" => list_gemini_generate_content_models(&client, &trimmed_key)?,
+            other => {
+                return Err(format!(
+                    "Unsupported provider '{}' for model catalog. Choose OpenAI or Gemini.",
+                    other
+                ));
+            }
+        };
+
+        models.sort();
+        models.dedup();
+
+        Ok(serde_json::json!({
+            "provider": provider_normalized,
+            "models": models
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| format!("Model catalog task failed: {e}"))?
+}
+
 fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
     let mut prompt = String::new();
     for entry in history {
@@ -2793,6 +3012,69 @@ fn list_gemini_generate_content_models(
         }
     }
 
+    Ok(models)
+}
+
+fn is_chat_capable_openai_model_name(model_name: &str) -> bool {
+    let lower = model_name.to_ascii_lowercase();
+
+    if !(lower.starts_with("gpt-") || lower.starts_with("o1") || lower.starts_with("o3") || lower.starts_with("o4")) {
+        return false;
+    }
+
+    let disallowed_markers = [
+        "audio",
+        "tts",
+        "realtime",
+        "transcribe",
+        "whisper",
+        "image",
+        "vision",
+        "embedding",
+        "moderation",
+        "search",
+    ];
+
+    !disallowed_markers.iter().any(|marker| lower.contains(marker))
+}
+
+fn list_openai_chat_models(client: &reqwest::blocking::Client, api_key: &str) -> Result<Vec<String>, String> {
+    let response = client
+        .get("https://api.openai.com/v1/models")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .send()
+        .map_err(|e| format!("OpenAI model discovery failed: {e}"))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .map_err(|e| format!("OpenAI model discovery response parsing failed: {e}"))?;
+
+    if !status.is_success() {
+        let parsed_error = parse_openai_error_details_for_validation(&response_text);
+        return Err(format!(
+            "OpenAI model discovery failed with status {}: {}",
+            status, parsed_error
+        ));
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&response_text)
+        .map_err(|e| format!("OpenAI model discovery response parsing failed: {e}"))?;
+
+    let mut models = parsed
+        .get("data")
+        .and_then(|value| value.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("id").and_then(|id| id.as_str()))
+                .filter(|id| is_chat_capable_openai_model_name(id))
+                .map(|id| id.to_string())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    models.sort();
+    models.dedup();
     Ok(models)
 }
 
@@ -5127,6 +5409,8 @@ pub fn run() {
             export_workspace_tree,
             send_llm_prompt,
             compile_ai_briefing,
+            validate_model_selection,
+            fetch_provider_model_catalog,
             verify_theory_import_checklist,
             import_theory_source_command,
             generate_master_axiom_from_theory,

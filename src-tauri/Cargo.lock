@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "physics-ide"
-version = "6.0.0"
+version = "7.5.0"
 dependencies = [
  "notify",
  "reqwest 0.12.28",

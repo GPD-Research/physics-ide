@@ -12,6 +12,13 @@ v8 should make physics-IDE feel intentionally organized and theory-agnostic:
 - Customize becomes appearance and AI preference control;
 - model/provider flexibility is fully user-driven without code edits.
 
+## Current status snapshot (2026-07-31)
+
+- v8 remains in planning/early implementation.
+- One visual-polish deliverable is complete: translucent top dropdowns and terminal glass styling landed in the UI.
+- Typography role work is intentionally removed from v8 scope.
+- Core blockers to release are still Tracks A/B/C plus testing/release validation.
+
 ## Locked UX architecture for v8
 
 ### 1) Main workspace wings = day-to-day theory work
@@ -38,7 +45,6 @@ Customize should focus on settings users may change often:
 
 - AI provider/model preferences and custom model IDs;
 - theme and color system;
-- typography controls;
 - translucency and visual polish controls.
 
 ## Core v8 feature tracks
@@ -49,18 +55,18 @@ Goal: replace scattered setup steps with one explicit checklist surface, without
 
 Deliverables:
 
-- [ ] Add `Tools > Theory Import Setup` panel.
-- [ ] Show explicit checklist stages:
+- [x] Add `Tools > Theory Import Setup` panel.
+- [x] Show explicit checklist stages:
 	- `Import`
 	- `Scan`
 	- `Master axiom`
 	- `Briefing`
 	- `Run experiments`
 	- `Score outcomes`
-- [ ] Add status badges per stage (`Not started`, `In progress`, `Complete`, `Needs attention`).
-- [ ] Add evidence text per stage (which file/artifact satisfied the step).
-- [ ] Add one-click action buttons for each stage (run existing command wiring).
-- [ ] Add `Run all missing` helper for first-time onboarding.
+- [x] Add status badges per stage (`Not started`, `In progress`, `Complete`, `Needs attention`).
+- [x] Add evidence text per stage (which file/artifact satisfied the step).
+- [x] Add one-click action buttons for each stage (run existing command wiring).
+- [x] Add `Run all missing` helper for first-time onboarding.
 
 Verification rules (theory-agnostic):
 
@@ -100,10 +106,9 @@ Goal: modernize visual language without reducing readability.
 
 Deliverables:
 
-- [ ] Add translucent dropdown/panel styling controls.
+- [x] Add translucent dropdown/panel styling controls.
 - [ ] Introduce gradient-capable surface tokens.
-- [ ] Add font role controls (title, descriptor, tooltip, small/body text).
-- [ ] Ship a curated starter font set (readability-first plus a few expressive options).
+- [ ] Keep current typography stack for v8 (font experimentation deferred).
 
 ## Existing automation baseline (as of v7)
 
@@ -134,15 +139,15 @@ Parallel deliverables:
 
 ### Phase 1: Foundations (Tools entry + verifier backend)
 
-- [ ] Add checklist verifier backend command and response schema.
-- [ ] Implement file/artifact evidence checks for all six stages.
-- [ ] Add initial Tools menu entry and panel shell.
+- [x] Add checklist verifier backend command and response schema.
+- [x] Implement file/artifact evidence checks for all six stages.
+- [x] Add initial Tools menu entry and panel shell.
 
 ### Phase 2: Action wiring and reliability
 
-- [ ] Connect panel actions to existing import/axiom/briefing commands.
-- [ ] Add safe handling for missing paths/config and actionable errors.
-- [ ] Add `Run all missing` and `Next recommended step` guidance.
+- [x] Connect panel actions to existing import/axiom/briefing commands.
+- [x] Add safe handling for missing paths/config and actionable errors.
+- [x] Add `Run all missing` and `Next recommended step` guidance.
 
 ### Phase 3: Model flexibility + testing metadata
 
@@ -153,7 +158,7 @@ Parallel deliverables:
 ### Phase 4: UI polish and migration cleanup
 
 - [ ] Move remaining non-daily setup controls from Customize/main surfaces to Tools.
-- [ ] Land translucency, gradients, and typography role controls.
+- [ ] Land translucency and gradients (typography changes deferred from v8 scope).
 - [ ] Keep main wings optimized for daily research cadence.
 
 ## v8 acceptance criteria
@@ -170,6 +175,7 @@ Parallel deliverables:
 
 - Full, mandatory wizard flow with strict step-locking.
 - Theory-specific parser branches that change core behavior by model name.
+- Typography role controls and curated font-pack rollout.
 
 ## Immediate next actions
 

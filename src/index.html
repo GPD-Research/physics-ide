@@ -17,6 +17,12 @@
                   --bg-dark: #181825;       
                   --bg-darker: #11111b;     
                   --bg-panel: #2f4f3f; /* Chalkboard-inspired dark green */
+
+                  /* Glass Surfaces */
+                  --menu-glass-bg: rgba(24, 24, 37, 0.52);
+                  --menu-glass-hover: rgba(94, 136, 112, 0.34);
+                  --terminal-glass-bg: rgba(0, 0, 0, 0.42);
+                  --terminal-header-glass-bg: rgba(24, 24, 37, 0.5);
                   
                   /* Borders */
                   --border-color: #313244;  /* General dividers */
@@ -39,6 +45,12 @@
 	        --bg-main: #020617;
 	        --bg-darker: #050b1a;
 	        --bg-panel: #0a1428;       /* Deep sapphire blue panel field */
+
+          /* Glass Surfaces */
+          --menu-glass-bg: rgba(10, 20, 40, 0.58);
+          --menu-glass-hover: rgba(60, 104, 214, 0.3);
+          --terminal-glass-bg: rgba(5, 11, 26, 0.48);
+          --terminal-header-glass-bg: rgba(10, 20, 40, 0.54);
 	        
 	        /* Structural Borders */
 	        --border-color: #1e3a8a;   /* Vibrant blue framing */
@@ -61,6 +73,12 @@
                   --bg-dark: #e6e9ef;
                   --bg-darker: #eff1f5;
                   --bg-panel: #deddda;
+
+                  /* Glass Surfaces */
+                  --menu-glass-bg: rgba(230, 233, 239, 0.64);
+                  --menu-glass-hover: rgba(222, 221, 218, 0.4);
+                  --terminal-glass-bg: rgba(255, 255, 255, 0.45);
+                  --terminal-header-glass-bg: rgba(230, 233, 239, 0.56);
                   
                   /* Borders */
                   --border-color: #bcc0cc;
@@ -105,12 +123,15 @@
   
       /* TOP MENU BAR */
       .menu-bar {
-        background-color: var(--bg-dark);
+        background-color: var(--menu-glass-bg);
         border-bottom: 1px solid var(--border-color);
         display: flex;
         padding: 2px 10px;
         user-select: none;
         z-index: 100;
+        backdrop-filter: blur(16px) saturate(140%);
+        -webkit-backdrop-filter: blur(16px) saturate(140%);
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.2), 0 6px 14px rgba(0, 0, 0, 0.22);
       }
   
       /* Project Status Tooltip Styles */
@@ -146,7 +167,7 @@
       }
   
       .menu-item:hover {
-        background-color: var(--bg-panel);
+        background-color: var(--menu-glass-hover);
         color: var(--accent);
         border-radius: 4px;
       }
@@ -154,14 +175,16 @@
       .dropdown-content {
         display: none;
         position: absolute;
-        background-color: var(--bg-dark);
-        border: 1px solid var(--border-color);
+        background-color: var(--menu-glass-bg);
+        border: 1px solid color-mix(in srgb, var(--border-color) 72%, white 28%);
         min-width: 160px;
-        box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5);
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.23), 0 12px 28px rgba(0, 0, 0, 0.38);
         z-index: 200;
         top: 100%;
         left: 0;
         border-radius: 4px;
+        backdrop-filter: blur(18px) saturate(145%);
+        -webkit-backdrop-filter: blur(18px) saturate(145%);
       }
   
       .menu-item:hover .dropdown-content {
@@ -204,7 +227,7 @@
       }
   
       .dropdown-content a:hover {
-        background-color: var(--bg-panel);
+        background-color: var(--menu-glass-hover);
         color: var(--accent);
       }
   
@@ -562,18 +585,21 @@
         width: 100%;
         height: 220px;
         min-height: 220px;
-        background-color: #000000;
-        border: 1px solid var(--border-color);
+        background-color: var(--terminal-glass-bg);
+        border: 1px solid color-mix(in srgb, var(--border-color) 72%, white 28%);
         border-radius: 6px;
         display: flex;
         flex-direction: column;
         font-family: monospace;
         overflow: hidden;
         min-width: 0;
+        backdrop-filter: blur(14px) saturate(130%);
+        -webkit-backdrop-filter: blur(14px) saturate(130%);
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.2), 0 10px 22px rgba(0, 0, 0, 0.34);
       }
   
       .terminal-header {
-        background-color: var(--bg-dark);
+        background-color: var(--terminal-header-glass-bg);
         padding: 8px 10px;
         font-size: 0.75rem;
         display: flex;
@@ -583,6 +609,7 @@
         gap: 10px;
         border-bottom: 1px solid var(--border-color);
         min-width: 0;
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.14);
       }
 
       .terminal-session {
@@ -619,6 +646,7 @@
         font-size: 0.8rem;
         overflow-y: auto;
         color: #a6e3a1;
+        background: transparent;
         white-space: pre-wrap;
         word-break: break-word;
       }
@@ -729,6 +757,92 @@
 
       .theory-profile-item.active {
         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+      }
+
+      .theory-setup-summary {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        margin-bottom: 10px;
+      }
+
+      .theory-setup-stage-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 52vh;
+        overflow: auto;
+      }
+
+      .theory-setup-stage {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.14);
+      }
+
+      .theory-setup-stage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .theory-setup-stage-label {
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .theory-setup-stage-status {
+        font-size: 0.72rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border-color);
+        letter-spacing: 0.02em;
+      }
+
+      .theory-setup-stage-status.complete {
+        color: #8de6ba;
+        border-color: rgba(141, 230, 186, 0.55);
+        background: rgba(141, 230, 186, 0.14);
+      }
+
+      .theory-setup-stage-status.in-progress {
+        color: #9bc6ff;
+        border-color: rgba(155, 198, 255, 0.55);
+        background: rgba(155, 198, 255, 0.12);
+      }
+
+      .theory-setup-stage-status.not-started {
+        color: var(--text-muted);
+        border-color: var(--border-color);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .theory-setup-stage-status.needs-attention {
+        color: #ffb0b0;
+        border-color: rgba(255, 176, 176, 0.58);
+        background: rgba(255, 176, 176, 0.12);
+      }
+
+      .theory-setup-stage-evidence {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        margin-bottom: 7px;
+      }
+
+      .theory-setup-stage-missing {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 0.78rem;
+        color: var(--text);
+      }
+
+      .theory-setup-stage-actions {
+        margin-top: 8px;
+        display: flex;
+        justify-content: flex-end;
       }
 
       .theory-profile-badge {
@@ -849,6 +963,7 @@
       Tools
       <div class="dropdown-content">
         <div class="menu-section">Workflows</div>
+        <a href="#" onclick="openTheoryImportSetupModal(); return false;" title="Verify import-to-scoring setup stages and jump to each workflow">Theory Import Setup</a>
         <a href="#" onclick="openMarkdownDocumentsModal(); return false;" title="Browse, search, preview, and export markdown files">Markdown Documents</a>
         <a href="#" onclick="openManuscriptToolsModal(); return false;" title="Render single or combined markdown into MD, PDF, or DOCX">Manuscript Tools</a>
         <a href="#" onclick="openAiTestingModal(); return false;" title="Open probe and benchmark testing tools">AI Testing</a>
@@ -1267,53 +1382,25 @@
 	          <div style="display: flex; gap: 10px;">
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-gemini-key">Google Gemini API Key</label>
-	              <input type="password" id="settings-gemini-key" placeholder="AIzaSy...">
+                <input type="password" id="settings-gemini-key" placeholder="AIzaSy..." oninput="markAiRouteValidationPendingForProvider('gemini')">
 	            </div>
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-openai-key">OpenAI API Key</label>
-	              <input type="password" id="settings-openai-key" placeholder="sk-proj-...">
+                <input type="password" id="settings-openai-key" placeholder="sk-proj-..." oninput="markAiRouteValidationPendingForProvider('openai')">
 	            </div>
 	          </div>
-	
-	          <div class="pane-config-block">
-	            <h4>Left Pane (Analytical Stack)</h4>
-	            <div class="form-group">
-	              <label for="settings-left-provider">Provider</label>
-	              <select id="settings-left-provider" onchange="updateModelUI('left')">
-	                <option value="gemini">Google Gemini</option>
-	                <option value="openai">OpenAI</option>
-	              </select>
-	            </div>
-	            <div class="form-group">
-	              <label>Model Tier</label>
-	              <div id="left-model-container">
-	                <select id="settings-left-model">
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast / Balanced)</option>
-                    <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Light / Efficient)</option>
-                  </select>
-	              </div>
-	            </div>
-	          </div>
-	
-	          <div class="pane-config-block">
-	            <h4>Right Pane (Speculation Engine)</h4>
-	            <div class="form-group">
-	              <label for="settings-right-provider">Provider</label>
-	              <select id="settings-right-provider" onchange="updateModelUI('right')">
-	                <option value="gemini">Google Gemini</option>
-	                <option value="openai">OpenAI</option>
-	              </select>
-	            </div>
-	            <div class="form-group">
-	              <label>Model Tier</label>
-	              <div id="right-model-container">
-	                <select id="settings-right-model"> 
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast / Balanced)</option>
-                    <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Light / Efficient)</option>
-	                </select>
-	              </div>
-	            </div>
-	          </div>
+
+            <div class="pane-config-block">
+              <h4>AI Routing Summary</h4>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+                Core provider/model routing is available in Advanced options to keep this panel focused.
+              </div>
+              <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
+              <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
+              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
+              </div>
+            </div>
 
               <div class="pane-config-block">
                 <h4>Thread History</h4>
@@ -1363,6 +1450,110 @@
           </button>
         </div>
       </div>
+  </div>
+
+  <div id="ai-routing-modal" class="modal" style="z-index: 1110;">
+    <div class="modal-content" style="width: 600px; max-width: 95vw;">
+      <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <span>Advanced AI Routing</span>
+        <button type="button" onclick="closeAiRoutingModal()" style="padding: 4px 8px;" title="Close advanced AI routing">Close</button>
+      </div>
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">
+        Configure provider and model per pane. Custom model ID overrides preset selection.
+      </div>
+      <div style="font-size: 0.78rem; color: var(--accent-dim); margin-bottom: 10px; line-height: 1.4;">
+        Use exact model IDs copied from provider docs. Enter chat/text-capable models only. Audio/image generation model IDs are not valid for this app's analyzer workflow.
+      </div>
+
+      <div class="pane-config-block">
+        <h4>Provider Model Catalog</h4>
+        <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px;">
+          Pull current model IDs from provider APIs, then apply a selected ID to either pane.
+        </div>
+
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="ai-catalog-openai-select">OpenAI Catalog</label>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <select id="ai-catalog-openai-select" style="flex: 1 1 280px;"></select>
+            <button type="button" onclick="refreshProviderModelCatalog('openai')" title="Refresh OpenAI model list">Refresh</button>
+            <button type="button" onclick="applyCatalogModelToPane('openai', 'left')" title="Apply selected OpenAI model to left pane">Use Left</button>
+            <button type="button" onclick="applyCatalogModelToPane('openai', 'right')" title="Apply selected OpenAI model to right pane">Use Right</button>
+          </div>
+          <div id="ai-catalog-openai-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label for="ai-catalog-gemini-select">Gemini Catalog</label>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <select id="ai-catalog-gemini-select" style="flex: 1 1 280px;"></select>
+            <button type="button" onclick="refreshProviderModelCatalog('gemini')" title="Refresh Gemini model list">Refresh</button>
+            <button type="button" onclick="applyCatalogModelToPane('gemini', 'left')" title="Apply selected Gemini model to left pane">Use Left</button>
+            <button type="button" onclick="applyCatalogModelToPane('gemini', 'right')" title="Apply selected Gemini model to right pane">Use Right</button>
+          </div>
+          <div id="ai-catalog-gemini-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
+        </div>
+      </div>
+
+      <div class="pane-config-block">
+        <h4>Left Pane (Analytical Stack)</h4>
+        <div class="form-group">
+          <label for="settings-left-provider">Provider</label>
+          <select id="settings-left-provider" onchange="updateModelUI('left'); syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Preset Model Tier</label>
+          <div id="left-model-container">
+            <select id="settings-left-model">
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast / Balanced)</option>
+              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Light / Efficient)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="settings-left-model-custom">Custom Model ID (optional)</label>
+          <input type="text" id="settings-left-model-custom" placeholder="e.g., gpt-4.1-mini or gemini-2.5-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button type="button" onclick="validateAiRouteModel('left')" title="Validate this pane model against provider API">Validate Left Model</button>
+          <span id="ai-route-left-validation" style="font-size: 0.78rem; color: var(--text-muted);">Not validated yet.</span>
+        </div>
+      </div>
+
+      <div class="pane-config-block">
+        <h4>Right Pane (Speculation Engine)</h4>
+        <div class="form-group">
+          <label for="settings-right-provider">Provider</label>
+          <select id="settings-right-provider" onchange="updateModelUI('right'); syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Preset Model Tier</label>
+          <div id="right-model-container">
+            <select id="settings-right-model">
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast / Balanced)</option>
+              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Light / Efficient)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="settings-right-model-custom">Custom Model ID (optional)</label>
+          <input type="text" id="settings-right-model-custom" placeholder="e.g., gpt-4.1 or gemini-2.0-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button type="button" onclick="validateAiRouteModel('right')" title="Validate this pane model against provider API">Validate Right Model</button>
+          <span id="ai-route-right-validation" style="font-size: 0.78rem; color: var(--text-muted);">Not validated yet.</span>
+        </div>
+      </div>
+
+      <div style="font-size: 0.78rem; color: var(--accent-dim); margin-top: 8px;">
+        Current backend supports Gemini and OpenAI provider routes. Other providers need backend integration before they can be called.
+      </div>
+    </div>
   </div>
 
   <div id="theory-profiles-modal" class="modal" style="z-index: 1120;">
@@ -1566,6 +1757,33 @@
           <button id="context-probe-open-report-btn" onclick="openLatestContextProbeReport()" style="display: none;" title="Open latest generated probe report">Open Report</button>
         </div>
         <textarea id="context-probe-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="Probe results will appear here."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div id="theory-import-setup-modal" class="modal" style="z-index: 1138;">
+    <div class="modal-content" style="width: 840px; max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column;">
+      <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <span>Theory Import Setup</span>
+        <button type="button" onclick="closeTheoryImportSetupModal()" style="padding: 4px 8px;" title="Close theory import setup">Close</button>
+      </div>
+      <div id="theory-import-setup-meta" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+        Verifying setup checklist...
+      </div>
+      <div id="theory-import-setup-summary" class="theory-setup-summary">
+        Checklist status will appear here.
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+        <button type="button" onclick="runNextTheorySetupStage()" title="Run the next recommended checklist stage">Run Next Recommended</button>
+        <button type="button" onclick="runAllMissingTheorySetupStages()" title="Run all missing automatable checklist stages">Run All Missing</button>
+        <button type="button" onclick="refreshTheoryImportSetupChecklist()" title="Re-run checklist verification">Refresh Checklist</button>
+        <button type="button" onclick="openSettingsForTheorySetup()" title="Open location and import controls in Customize settings">Open Locations Controls</button>
+      </div>
+      <div id="theory-import-setup-action-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; min-height: 18px;">
+        Stage actions ready.
+      </div>
+      <div id="theory-import-setup-stages" class="theory-setup-stage-list">
+        <div class="theory-setup-stage-evidence">Loading checklist...</div>
       </div>
     </div>
   </div>
@@ -1782,6 +2000,16 @@
       selectedPath: '',
       searchResults: []
     };
+    const providerModelCatalog = {
+      openai: [],
+      gemini: []
+    };
+    const aiRouteValidationState = {
+      left: { ok: false, stamp: '' },
+      right: { ok: false, stamp: '' }
+    };
+    let isSavingSettings = false;
+    let theoryImportChecklistState = null;
     let markdownGitFeedbackTimer = null;
 
     const leftTitles = ["L1: GitHub & Scripting", "L2: Theory Development", "L3: Empirical testing & GR"];
@@ -2190,6 +2418,250 @@
       return trimmedModel;
     }
 
+    function isKnownModelOption(provider, model) {
+      const normalized = String(model || '').trim().replace(/^models\//, '');
+      if (!normalized) return false;
+      const options = window.physicsIdeAiConfig?.getModelOptions?.(provider) || [];
+      return options.some((option) => option.value === normalized);
+    }
+
+    function getEffectivePaneModelFromUi(side) {
+      const customModel = String(document.getElementById(`settings-${side}-model-custom`)?.value || '').trim();
+      if (customModel) return customModel;
+      return String(document.getElementById(`settings-${side}-model`)?.value || '').trim();
+    }
+
+    function syncAiRoutingSummaries() {
+      const leftSummary = document.getElementById('ai-route-left-summary');
+      const rightSummary = document.getElementById('ai-route-right-summary');
+      if (!leftSummary || !rightSummary) return;
+
+      const leftProvider = normalizeProviderForV7(document.getElementById('settings-left-provider')?.value || currentConfig?.left_provider || 'openai');
+      const rightProvider = normalizeProviderForV7(document.getElementById('settings-right-provider')?.value || currentConfig?.right_provider || 'openai');
+      const leftModel = normalizeModelForProvider(leftProvider, getEffectivePaneModelFromUi('left') || currentConfig?.left_model || getDefaultModelForPane('left', leftProvider));
+      const rightModel = normalizeModelForProvider(rightProvider, getEffectivePaneModelFromUi('right') || currentConfig?.right_model || getDefaultModelForPane('right', rightProvider));
+
+      leftSummary.textContent = `Left pane: ${getProviderDisplayName(leftProvider)} / ${leftModel}`;
+      rightSummary.textContent = `Right pane: ${getProviderDisplayName(rightProvider)} / ${rightModel}`;
+    }
+
+    function getPaneRouteSignature(side) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const provider = normalizeProviderForV7(document.getElementById(`settings-${safeSide}-provider`)?.value || currentConfig?.[`${safeSide}_provider`] || 'openai');
+      const model = normalizeModelForProvider(provider, getEffectivePaneModelFromUi(safeSide) || currentConfig?.[`${safeSide}_model`] || getDefaultModelForPane(safeSide, provider));
+      return `${provider}::${model}`;
+    }
+
+    function updateSaveGateForAiValidation() {
+      const saveBtn = document.getElementById('save-prefs-btn');
+      const saveBtnText = document.getElementById('save-btn-text');
+      if (!saveBtn || !saveBtnText) return;
+
+      if (isSavingSettings) return;
+
+      const leftStamp = getPaneRouteSignature('left');
+      const rightStamp = getPaneRouteSignature('right');
+      const leftValid = aiRouteValidationState.left.ok && aiRouteValidationState.left.stamp === leftStamp;
+      const rightValid = aiRouteValidationState.right.ok && aiRouteValidationState.right.stamp === rightStamp;
+      const canSave = leftValid && rightValid;
+
+      saveBtn.disabled = !canSave;
+      if (canSave) {
+        if (saveBtnText.textContent === 'Validate AI Models') {
+          saveBtnText.textContent = 'Save Settings';
+        }
+      } else {
+        saveBtn.classList.remove('success');
+        saveBtnText.textContent = 'Validate AI Models';
+      }
+    }
+
+    function markAiRouteValidationPending(side, reason = 'Not validated yet.') {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      aiRouteValidationState[safeSide] = {
+        ok: false,
+        stamp: getPaneRouteSignature(safeSide)
+      };
+      setAiRouteValidationStatus(safeSide, reason);
+      updateSaveGateForAiValidation();
+    }
+
+    function markAiRouteValidationPendingForProvider(provider) {
+      const normalizedProvider = normalizeProviderForV7(provider);
+      const leftProvider = normalizeProviderForV7(document.getElementById('settings-left-provider')?.value || currentConfig?.left_provider || 'openai');
+      const rightProvider = normalizeProviderForV7(document.getElementById('settings-right-provider')?.value || currentConfig?.right_provider || 'openai');
+
+      if (leftProvider === normalizedProvider) {
+        markAiRouteValidationPending('left', 'Key or route changed. Validate left model again.');
+      }
+      if (rightProvider === normalizedProvider) {
+        markAiRouteValidationPending('right', 'Key or route changed. Validate right model again.');
+      }
+    }
+
+    function setAiRouteValidationStatus(side, message, isError = false) {
+      const target = document.getElementById(side === 'left' ? 'ai-route-left-validation' : 'ai-route-right-validation');
+      if (!target) return;
+      target.textContent = String(message || '').trim() || 'Not validated yet.';
+      target.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    function setProviderCatalogStatus(provider, message, isError = false) {
+      const normalized = normalizeProviderForV7(provider);
+      const target = document.getElementById(`ai-catalog-${normalized}-status`);
+      if (!target) return;
+      target.textContent = String(message || '').trim() || 'Not loaded yet.';
+      target.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    function renderProviderModelCatalog(provider) {
+      const normalized = normalizeProviderForV7(provider);
+      const select = document.getElementById(`ai-catalog-${normalized}-select`);
+      if (!select) return;
+
+      const models = Array.isArray(providerModelCatalog[normalized]) ? providerModelCatalog[normalized] : [];
+      if (models.length === 0) {
+        select.innerHTML = '<option value="">No models loaded yet</option>';
+        select.disabled = true;
+        return;
+      }
+
+      select.innerHTML = models
+        .map((modelId) => {
+          const safe = escapeHelpHtml(String(modelId || ''));
+          return `<option value="${safe}">${safe}</option>`;
+        })
+        .join('');
+      select.disabled = false;
+    }
+
+    async function refreshProviderModelCatalog(provider) {
+      const normalized = normalizeProviderForV7(provider);
+      const apiKey = getApiKeyForProvider(normalized);
+      if (!apiKey) {
+        setProviderCatalogStatus(normalized, `${getProviderDisplayName(normalized)} API key is required to load catalog.`, true);
+        return;
+      }
+
+      setProviderCatalogStatus(normalized, `Loading ${getProviderDisplayName(normalized)} model catalog...`);
+
+      try {
+        const response = await invoke('fetch_provider_model_catalog', {
+          provider: normalized,
+          apiKey
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        const models = Array.isArray(payload?.models) ? payload.models : [];
+        providerModelCatalog[normalized] = models;
+        renderProviderModelCatalog(normalized);
+        setProviderCatalogStatus(normalized, `Loaded ${models.length} model ID(s).`);
+      } catch (err) {
+        setProviderCatalogStatus(normalized, `Catalog load failed: ${err}`, true);
+      }
+    }
+
+    function applyCatalogModelToPane(provider, side) {
+      const normalizedProvider = normalizeProviderForV7(provider);
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const select = document.getElementById(`ai-catalog-${normalizedProvider}-select`);
+      const selectedModel = String(select?.value || '').trim();
+
+      if (!selectedModel) {
+        setProviderCatalogStatus(normalizedProvider, 'Select a model ID from the catalog first.', true);
+        return;
+      }
+
+      const providerSelect = document.getElementById(`settings-${safeSide}-provider`);
+      if (providerSelect) {
+        providerSelect.value = normalizedProvider;
+      }
+
+      updateModelUI(safeSide, selectedModel);
+      const customInput = document.getElementById(`settings-${safeSide}-model-custom`);
+      if (customInput) {
+        customInput.value = selectedModel;
+      }
+
+      syncAiRoutingSummaries();
+      setAiRouteValidationStatus(safeSide, `${getProviderDisplayName(normalizedProvider)} model selected from catalog. Validate before save.`);
+    }
+
+    function getApiKeyForProvider(provider) {
+      const normalized = normalizeProviderForV7(provider);
+      if (normalized === 'gemini') {
+        return String(document.getElementById('settings-gemini-key')?.value || '').trim();
+      }
+      return String(document.getElementById('settings-openai-key')?.value || '').trim();
+    }
+
+    function likelyModelPrefixMismatch(provider, model) {
+      const normalizedProvider = normalizeProviderForV7(provider);
+      const normalizedModel = String(model || '').trim().toLowerCase();
+      if (!normalizedModel) return false;
+      if (normalizedProvider === 'openai' && !normalizedModel.startsWith('gpt-')) return true;
+      if (normalizedProvider === 'gemini' && !normalizedModel.startsWith('gemini-')) return true;
+      return false;
+    }
+
+    async function validateAiRouteModelSelection(side, provider, model, apiKey, options = {}) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const showStatus = options.showStatus !== false;
+
+      if (!model) {
+        const message = 'Model ID is empty. Enter a model before validating.';
+        if (showStatus) setAiRouteValidationStatus(safeSide, message, true);
+        throw new Error(message);
+      }
+
+      if (!apiKey) {
+        const message = `${getProviderDisplayName(provider)} API key is required to validate this model.`;
+        if (showStatus) setAiRouteValidationStatus(safeSide, message, true);
+        throw new Error(message);
+      }
+
+      if (showStatus) {
+        if (likelyModelPrefixMismatch(provider, model)) {
+          setAiRouteValidationStatus(safeSide, `Model prefix looks unusual for ${getProviderDisplayName(provider)}. Validating anyway...`, true);
+        } else {
+          setAiRouteValidationStatus(safeSide, 'Validating model against provider API...');
+        }
+      }
+
+      const response = await invoke('validate_model_selection', {
+        provider,
+        model,
+        apiKey
+      });
+      const payload = typeof response === 'string' ? JSON.parse(response) : response;
+      const normalizedModel = String(payload?.normalized_model || model).trim();
+      aiRouteValidationState[safeSide] = {
+        ok: true,
+        stamp: getPaneRouteSignature(safeSide)
+      };
+      if (showStatus) {
+        setAiRouteValidationStatus(safeSide, `Validated: ${getProviderDisplayName(provider)} / ${normalizedModel}`);
+      }
+      updateSaveGateForAiValidation();
+      return payload;
+    }
+
+    async function validateAiRouteModel(side) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const provider = normalizeProviderForV7(document.getElementById(`settings-${safeSide}-provider`)?.value || 'openai');
+      const rawModel = getEffectivePaneModelFromUi(safeSide);
+      const model = normalizeModelForProvider(provider, rawModel);
+      const apiKey = getApiKeyForProvider(provider);
+
+      try {
+        const payload = await validateAiRouteModelSelection(safeSide, provider, model, apiKey, { showStatus: true });
+        const normalizedModel = String(payload?.normalized_model || model).trim();
+        appendTerminalLog(`AI routing validation passed (${safeSide}): ${provider} / ${normalizedModel}`);
+      } catch (err) {
+        setAiRouteValidationStatus(safeSide, `Validation failed: ${err}`, true);
+        appendTerminalLog(`AI routing validation failed (${safeSide}): ${err}`);
+      }
+    }
+
     async function initializeApp() {
       try {
         loadProjectTitle();
@@ -2227,6 +2699,14 @@
         document.getElementById('settings-right-preserve-thread-history').checked = currentConfig.right_preserve_thread_history !== false;
         updateModelUI('left', leftModel);
         updateModelUI('right', rightModel);
+        const leftCustomInput = document.getElementById('settings-left-model-custom');
+        if (leftCustomInput) {
+          leftCustomInput.value = isKnownModelOption(leftProvider, leftModel) ? '' : leftModel;
+        }
+        const rightCustomInput = document.getElementById('settings-right-model-custom');
+        if (rightCustomInput) {
+          rightCustomInput.value = isKnownModelOption(rightProvider, rightModel) ? '' : rightModel;
+        }
         document.getElementById('settings-project-root').value = currentConfig.project_root_dir || "";
         document.getElementById('settings-theory-dir').value = currentConfig.theory_md_dir || "";
         document.getElementById('settings-master-axiom').value = currentConfig.master_axiom_file || "";
@@ -2234,6 +2714,9 @@
         document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
+        syncAiRoutingSummaries();
+        markAiRouteValidationPending('left', 'Validate left model before saving settings.');
+        markAiRouteValidationPending('right', 'Validate right model before saving settings.');
         refreshContextProbeIndicator();
 
         const configuredProjectRoot = (currentConfig.project_root_dir || '').trim();
@@ -3738,11 +4221,45 @@ async function restoreVersion() {
     function openSettingsModal() {
       document.getElementById('settings-modal').style.display = 'flex';
       showSecurityNoteIfNeeded();
+      updateSaveGateForAiValidation();
+    }
+
+    function openAiRoutingModal() {
+      const modal = document.getElementById('ai-routing-modal');
+      if (!modal) return;
+      syncAiRoutingSummaries();
+
+      const leftStamp = getPaneRouteSignature('left');
+      const rightStamp = getPaneRouteSignature('right');
+      const leftValid = aiRouteValidationState.left.ok && aiRouteValidationState.left.stamp === leftStamp;
+      const rightValid = aiRouteValidationState.right.ok && aiRouteValidationState.right.stamp === rightStamp;
+      setAiRouteValidationStatus('left', leftValid ? 'Validated route is current.' : 'Not validated yet.', !leftValid);
+      setAiRouteValidationStatus('right', rightValid ? 'Validated route is current.' : 'Not validated yet.', !rightValid);
+
+      renderProviderModelCatalog('openai');
+      renderProviderModelCatalog('gemini');
+      modal.style.display = 'flex';
+      updateSaveGateForAiValidation();
+
+      if (providerModelCatalog.openai.length === 0 && getApiKeyForProvider('openai')) {
+        refreshProviderModelCatalog('openai');
+      }
+      if (providerModelCatalog.gemini.length === 0 && getApiKeyForProvider('gemini')) {
+        refreshProviderModelCatalog('gemini');
+      }
+    }
+
+    function closeAiRoutingModal() {
+      const modal = document.getElementById('ai-routing-modal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
     }
 
     function closeSettingsModal() {
       document.getElementById('settings-modal').style.display = 'none';
       document.getElementById('security-note-modal').style.display = 'none';
+      closeAiRoutingModal();
       const saveBtn = document.getElementById("save-prefs-btn");
       const saveBtnText = document.getElementById("save-btn-text");
       saveBtn.classList.remove("success");
@@ -3817,6 +4334,320 @@ async function restoreVersion() {
       document.getElementById('ai-testing-modal').style.display = 'flex';
       refreshProbeSuiteSelector();
       refreshContextProbeIndicator();
+    }
+
+    async function openTheoryImportSetupModal() {
+      const modal = document.getElementById('theory-import-setup-modal');
+      if (!modal) return;
+      modal.style.display = 'flex';
+      setTheorySetupActionStatus('Stage actions ready.');
+      await refreshTheoryImportSetupChecklist();
+    }
+
+    function closeTheoryImportSetupModal() {
+      const modal = document.getElementById('theory-import-setup-modal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
+    }
+
+    function getChecklistStatusLabel(status) {
+      const normalized = String(status || '').trim();
+      if (normalized === 'complete') return 'Complete';
+      if (normalized === 'in_progress') return 'In progress';
+      if (normalized === 'needs_attention') return 'Needs attention';
+      return 'Not started';
+    }
+
+    function getChecklistStatusClass(status) {
+      const normalized = String(status || '').trim();
+      if (normalized === 'complete') return 'complete';
+      if (normalized === 'in_progress') return 'in-progress';
+      if (normalized === 'needs_attention') return 'needs-attention';
+      return 'not-started';
+    }
+
+    function setTheorySetupActionStatus(message, isError = false) {
+      const statusEl = document.getElementById('theory-import-setup-action-status');
+      if (!statusEl) return;
+      statusEl.textContent = String(message || '').trim() || 'Stage actions ready.';
+      statusEl.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    function getTheorySetupInputValue(inputId, fallback = '') {
+      const fromInput = String(document.getElementById(inputId)?.value || '').trim();
+      if (fromInput) return fromInput;
+      return String(fallback || '').trim();
+    }
+
+    function getTheoryStageByName(stageName) {
+      const normalized = String(stageName || '').trim().toLowerCase();
+      const stages = Array.isArray(theoryImportChecklistState?.stages) ? theoryImportChecklistState.stages : [];
+      if (!normalized || stages.length === 0) return null;
+      return stages.find((stage) => {
+        const id = String(stage?.id || '').trim().toLowerCase();
+        const label = String(stage?.label || '').trim().toLowerCase();
+        return id === normalized || label === normalized;
+      }) || null;
+    }
+
+    function getNextTheoryStageFromChecklist() {
+      const stages = Array.isArray(theoryImportChecklistState?.stages) ? theoryImportChecklistState.stages : [];
+      if (stages.length === 0) return null;
+
+      const nextLabel = String(theoryImportChecklistState?.next_recommended_step || '').trim().toLowerCase();
+      if (nextLabel) {
+        const byLabel = stages.find((stage) => String(stage?.label || '').trim().toLowerCase() === nextLabel);
+        if (byLabel) return byLabel;
+      }
+
+      return stages.find((stage) => String(stage?.status || '').trim() !== 'complete') || null;
+    }
+
+    function openSettingsForTheorySetup() {
+      openSettingsModal();
+      switchSettingsTab('locations');
+    }
+
+    async function runTheorySetupStageAction(stageId, options = {}) {
+      let stage = String(stageId || '').trim();
+      try {
+        stage = decodeURIComponent(stage);
+      } catch (_err) {
+        // Keep raw stage id when decoding is not needed.
+      }
+
+      if (!stage) {
+        setTheorySetupActionStatus('No checklist stage selected.', true);
+        return { ok: false, stage: '', message: 'No stage selected.' };
+      }
+
+      const refreshAfter = options.refreshAfter !== false;
+      const autoMode = options.autoMode === true;
+
+      try {
+        if (stage === 'import') {
+          const sourcePath = getTheorySetupInputValue('settings-import-source');
+          const outputDir = getTheorySetupInputValue('settings-theory-dir', currentConfig?.theory_md_dir || currentWorkspacePath);
+
+          if (!sourcePath) {
+            openSettingsForTheorySetup();
+            throw new Error('Theory Source File is not set. Open Locations and choose a source manuscript/theory file first.');
+          }
+          if (!outputDir) {
+            openSettingsForTheorySetup();
+            throw new Error('Theory Markdown Directory is not set. Open Locations and choose an output directory first.');
+          }
+
+          setTheorySetupActionStatus('Running Import stage...');
+          const response = await invoke('import_theory_source_command', { sourcePath, outputDir });
+          const payload = typeof response === 'string' ? JSON.parse(response) : response;
+          appendTerminalLog(`Theory Import Setup: import completed (${payload?.files_created?.length || 0} files).`);
+          setTheorySetupActionStatus(`Import completed. Files created: ${payload?.files_created?.length || 0}.`);
+          return { ok: true, stage, message: 'Import complete.' };
+        }
+
+        if (stage === 'scan') {
+          setTheorySetupActionStatus('Refreshing scan evidence...');
+          await refreshTheoryImportSetupChecklist();
+          setTheorySetupActionStatus('Scan evidence refreshed from checklist verifier.');
+          return { ok: true, stage, message: 'Scan evidence refreshed.' };
+        }
+
+        if (stage === 'master_axiom') {
+          const theoryDir = getTheorySetupInputValue('settings-theory-dir', currentConfig?.theory_md_dir || currentWorkspacePath);
+          const masterAxiomPath = getTheorySetupInputValue('settings-master-axiom', currentConfig?.master_axiom_file || '');
+
+          if (!theoryDir) {
+            openSettingsForTheorySetup();
+            throw new Error('Theory Markdown Directory is required before generating master axiom.');
+          }
+
+          setTheorySetupActionStatus('Running Master Axiom stage...');
+          const response = await invoke('generate_master_axiom_from_theory', { theoryDir, masterAxiomPath });
+          const payload = typeof response === 'string' ? JSON.parse(response) : response;
+          if (payload?.master_axiom_file) {
+            const input = document.getElementById('settings-master-axiom');
+            if (input) input.value = payload.master_axiom_file;
+          }
+          appendTerminalLog(`Theory Import Setup: master axiom generated (${payload?.files_scanned || 0} files scanned).`);
+          setTheorySetupActionStatus(payload?.status || 'Master axiom stage completed.');
+          return { ok: true, stage, message: 'Master axiom generated.' };
+        }
+
+        if (stage === 'briefing') {
+          setTheorySetupActionStatus('Running Briefing stage...');
+          const response = await invoke('compile_ai_briefing');
+          const payload = typeof response === 'string' ? JSON.parse(response) : response;
+          const briefingPath = payload?.generated_files?.ai_briefing || 'ai_briefing.md';
+          appendTerminalLog(`Theory Import Setup: briefing compiled (${payload?.status || 'unknown'}).`);
+          setTheorySetupActionStatus(`Briefing compiled (${payload?.status || 'unknown'}). File: ${briefingPath}`);
+          return { ok: true, stage, message: 'Briefing compiled.' };
+        }
+
+        if (stage === 'run_experiments') {
+          if (autoMode) {
+            const message = 'Run experiments is a manual validation stage in Phase 2. Use AI Testing to execute probe or batch runs.';
+            setTheorySetupActionStatus(message);
+            return { ok: true, stage, skipped: true, message };
+          }
+          openAiTestingModal();
+          const message = 'AI Testing opened. Run Probe or Run Batch to generate experiment artifacts.';
+          setTheorySetupActionStatus(message);
+          return { ok: true, stage, manual: true, message };
+        }
+
+        if (stage === 'score_outcomes') {
+          if (autoMode) {
+            const message = 'Score outcomes is a manual validation stage in Phase 2. Use AI Testing batch reports as score artifacts.';
+            setTheorySetupActionStatus(message);
+            return { ok: true, stage, skipped: true, message };
+          }
+          openAiTestingModal();
+          const message = 'AI Testing opened. Run Batch and save report to produce scoring artifacts.';
+          setTheorySetupActionStatus(message);
+          return { ok: true, stage, manual: true, message };
+        }
+
+        setTheorySetupActionStatus(`No action mapped for stage: ${stage}`);
+        return { ok: true, stage, skipped: true, message: 'No mapped action.' };
+      } catch (err) {
+        const message = `Stage ${stage} failed: ${err}`;
+        setTheorySetupActionStatus(message, true);
+        appendTerminalLog(`Theory Import Setup stage error (${stage}): ${err}`);
+        return { ok: false, stage, message };
+      } finally {
+        if (refreshAfter && stage !== 'scan') {
+          await refreshTheoryImportSetupChecklist();
+        }
+      }
+    }
+
+    async function runNextTheorySetupStage() {
+      if (!theoryImportChecklistState) {
+        await refreshTheoryImportSetupChecklist();
+      }
+
+      const nextStage = getNextTheoryStageFromChecklist();
+      if (!nextStage) {
+        setTheorySetupActionStatus('Checklist already complete. No remaining stage actions.');
+        return;
+      }
+
+      const stageId = String(nextStage?.id || '').trim();
+      const stageLabel = String(nextStage?.label || stageId).trim();
+      setTheorySetupActionStatus(`Running next recommended stage: ${stageLabel}...`);
+      await runTheorySetupStageAction(stageId, { refreshAfter: true, autoMode: false });
+    }
+
+    async function runAllMissingTheorySetupStages() {
+      await refreshTheoryImportSetupChecklist();
+      const stages = Array.isArray(theoryImportChecklistState?.stages) ? theoryImportChecklistState.stages : [];
+      const missingStages = stages.filter((stage) => String(stage?.status || '').trim() !== 'complete');
+
+      if (missingStages.length === 0) {
+        setTheorySetupActionStatus('All checklist stages are already complete.');
+        return;
+      }
+
+      setTheorySetupActionStatus(`Running ${missingStages.length} missing stage(s)...`);
+      let successCount = 0;
+      let skippedCount = 0;
+      let failedCount = 0;
+
+      for (const stage of missingStages) {
+        const stageId = String(stage?.id || '').trim();
+        if (!stageId) continue;
+
+        const result = await runTheorySetupStageAction(stageId, { refreshAfter: false, autoMode: true });
+        if (!result?.ok) {
+          failedCount += 1;
+        } else if (result?.skipped || result?.manual) {
+          skippedCount += 1;
+        } else {
+          successCount += 1;
+        }
+      }
+
+      await refreshTheoryImportSetupChecklist();
+      const summary = `Run all missing complete: ${successCount} executed, ${skippedCount} skipped/manual, ${failedCount} failed.`;
+      setTheorySetupActionStatus(summary, failedCount > 0);
+      appendTerminalLog(`Theory Import Setup: ${summary}`);
+    }
+
+    function renderTheoryImportSetupChecklist(payload) {
+      const metaEl = document.getElementById('theory-import-setup-meta');
+      const summaryEl = document.getElementById('theory-import-setup-summary');
+      const stagesEl = document.getElementById('theory-import-setup-stages');
+      if (!metaEl || !summaryEl || !stagesEl) return;
+
+      const checklist = payload && typeof payload === 'object' ? payload : {};
+      const stages = Array.isArray(checklist.stages) ? checklist.stages : [];
+      const completedCount = Number(checklist.completed_count || 0);
+      const totalCount = Number(checklist.total_count || stages.length || 0);
+      const nextStep = String(checklist.next_recommended_step || 'None').trim();
+
+      const projectRoot = String(checklist.project_root || '').trim();
+      const theoryDir = String(checklist.theory_directory || '').trim();
+      metaEl.textContent = `Project root: ${projectRoot || 'unset'} | Theory directory: ${theoryDir || 'unset'}`;
+      summaryEl.textContent = `${completedCount}/${totalCount} stages complete. Next recommended step: ${nextStep}.`;
+
+      if (stages.length === 0) {
+        stagesEl.innerHTML = '<div class="theory-setup-stage-evidence">No checklist stages returned.</div>';
+        return;
+      }
+
+      stagesEl.innerHTML = stages.map((stage) => {
+        const stageName = String(stage?.id || '').trim();
+        const label = escapeHelpHtml(String(stage?.label || stageName || 'Unnamed stage'));
+        const evidence = escapeHelpHtml(String(stage?.evidence || 'No evidence reported.'));
+        const statusRaw = String(stage?.status || '').trim();
+        const statusLabel = escapeHelpHtml(getChecklistStatusLabel(statusRaw));
+        const statusClass = getChecklistStatusClass(statusRaw);
+        const missingItems = Array.isArray(stage?.missing_items) ? stage.missing_items : [];
+        const missingMarkup = missingItems.length > 0
+          ? `<ul class="theory-setup-stage-missing">${missingItems.map((item) => `<li>${escapeHelpHtml(String(item || ''))}</li>`).join('')}</ul>`
+          : '';
+
+        return `
+          <div class="theory-setup-stage">
+            <div class="theory-setup-stage-header">
+              <div class="theory-setup-stage-label">${label}</div>
+              <div class="theory-setup-stage-status ${statusClass}">${statusLabel}</div>
+            </div>
+            <div class="theory-setup-stage-evidence">${evidence}</div>
+            ${missingMarkup}
+            <div class="theory-setup-stage-actions">
+              <button type="button" onclick="runTheorySetupStageAction('${encodeURIComponent(stageName)}')" title="Run or open the workflow mapped to this stage">Run Stage</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function refreshTheoryImportSetupChecklist() {
+      const summaryEl = document.getElementById('theory-import-setup-summary');
+      const stagesEl = document.getElementById('theory-import-setup-stages');
+      if (summaryEl) summaryEl.textContent = 'Verifying checklist...';
+      if (stagesEl) {
+        stagesEl.innerHTML = '<div class="theory-setup-stage-evidence">Checking stage evidence...</div>';
+      }
+
+      try {
+        const response = await invoke('verify_theory_import_checklist', {
+          workspacePath: currentWorkspacePath || ''
+        });
+        const payload = typeof response === 'string' ? JSON.parse(response) : response;
+        theoryImportChecklistState = payload;
+        renderTheoryImportSetupChecklist(payload);
+        appendTerminalLog(`Theory Import Setup checklist refreshed (${payload?.completed_count || 0}/${payload?.total_count || 0} complete).`);
+      } catch (err) {
+        if (summaryEl) summaryEl.textContent = `Checklist verification failed: ${err}`;
+        if (stagesEl) {
+          stagesEl.innerHTML = `<div class="theory-setup-stage-evidence">Unable to verify checklist: ${escapeHelpHtml(String(err || 'unknown error'))}</div>`;
+        }
+        appendTerminalLog(`Theory Import Setup checklist error: ${err}`);
+      }
     }
 
     function closeAiTestingModal() {
@@ -5089,6 +5920,7 @@ async function restoreVersion() {
       const previousRightProvider = currentConfig?.right_provider;
       const previousRightModel = currentConfig?.right_model;
       
+      isSavingSettings = true;
       saveBtn.disabled = true;
       saveBtnText.textContent = "Saving...";
 
@@ -5099,9 +5931,9 @@ async function restoreVersion() {
       const githubUsername = document.getElementById('settings-github-username').value;
       const githubApiKey = document.getElementById('settings-github-api-key').value;
       const leftProvider = document.getElementById('settings-left-provider').value;
-      const leftModelRaw = document.getElementById('settings-left-model').value;
+      const leftModelRaw = getEffectivePaneModelFromUi('left');
       const rightProvider = document.getElementById('settings-right-provider').value;
-      const rightModelRaw = document.getElementById('settings-right-model').value;
+      const rightModelRaw = getEffectivePaneModelFromUi('right');
       const leftModel = normalizeModelForProvider(leftProvider, leftModelRaw);
       const rightModel = normalizeModelForProvider(rightProvider, rightModelRaw);
       const projectRoot = document.getElementById('settings-project-root').value;
@@ -5135,6 +5967,21 @@ async function restoreVersion() {
         left_preserve_thread_history: leftPreserveThreadHistory,
         right_preserve_thread_history: rightPreserveThreadHistory
       };
+
+      const leftApiKey = leftProvider === 'gemini' ? geminiKey.trim() : openaiKey.trim();
+      const rightApiKey = rightProvider === 'gemini' ? geminiKey.trim() : openaiKey.trim();
+
+      try {
+        await validateAiRouteModelSelection('left', leftProvider, leftModel, leftApiKey, { showStatus: true });
+        await validateAiRouteModelSelection('right', rightProvider, rightModel, rightApiKey, { showStatus: true });
+      } catch (err) {
+        isSavingSettings = false;
+        saveBtnText.textContent = "Validation Failed";
+        appendTerminalLog(`AI route validation blocked save: ${err}`);
+        alert(`Save blocked: both pane routes must pass validation before settings can be saved.\n\n${err}`);
+        updateSaveGateForAiValidation();
+        return;
+      }
 
       try {
         await invoke('save_user_settings', { payload });
@@ -5195,6 +6042,7 @@ async function restoreVersion() {
         saveBtn.classList.add("success");
         saveBtnText.innerHTML = "✓ Preferences Updated";
         appendTerminalLog(`Saved configuration. Native Terminal: ${term} | Editor: ${editor}`);
+        syncAiRoutingSummaries();
         refreshContextProbeIndicator();
         refreshContextProbeModeLabels();
 
@@ -5208,6 +6056,9 @@ async function restoreVersion() {
         saveBtn.disabled = false;
         appendTerminalLog(`Save Error: ${err}`);
         alert(`Settings could not be persisted to the backend config file. They were stored locally as a fallback instead.\n\n${err}`);
+      } finally {
+        isSavingSettings = false;
+        updateSaveGateForAiValidation();
       }
     }
 
@@ -5824,12 +6675,26 @@ async function restoreVersion() {
         const container = document.getElementById(`${side}-model-container`);
         const existingValue = document.getElementById(`settings-${side}-model`)?.value;
         const targetValue = preferredModel || existingValue || getDefaultModelForPane(side, provider);
-        const options = window.physicsIdeAiConfig?.getModelOptions?.(provider) || [];
+        const presetOptions = window.physicsIdeAiConfig?.getModelOptions?.(provider) || [];
+        const normalizedProvider = normalizeProviderForV7(provider);
+        const discovered = Array.isArray(providerModelCatalog[normalizedProvider]) ? providerModelCatalog[normalizedProvider] : [];
+        const discoveredOptions = discovered.map((modelId) => ({
+          value: modelId,
+          label: `${modelId} (catalog)`
+        }));
+        const optionMap = new Map();
+        [...presetOptions, ...discoveredOptions].forEach((option) => {
+          if (!optionMap.has(option.value)) {
+            optionMap.set(option.value, option);
+          }
+        });
+        const options = Array.from(optionMap.values());
         const optionsMarkup = options.map(({ value, label }) => `<option value="${value}">${label}</option>`).join('');
-        container.innerHTML = `<select id="settings-${side}-model">${optionsMarkup}</select>`;
+      container.innerHTML = `<select id="settings-${side}-model" onchange="syncAiRoutingSummaries(); markAiRouteValidationPending('${side}', '${side === 'left' ? 'Left' : 'Right'} model changed. Validate again.');">${optionsMarkup}</select>`;
         const select = document.getElementById(`settings-${side}-model`);
         const hasTarget = options.some(option => option.value === targetValue);
         select.value = hasTarget ? targetValue : getDefaultModelForPane(side, provider);
+      syncAiRoutingSummaries();
   }
 	
   </script>
