@@ -4,6 +4,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
@@ -162,6 +163,21 @@ fn normalize_api_key(value: &str) -> String {
         .trim_matches('\'')
         .trim()
         .to_string()
+}
+
+fn percent_encode_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                let _ = write!(&mut encoded, "%{:02X}", byte);
+            }
+        }
+    }
+    encoded
 }
 
 fn derive_aes_key_from_master_secret(master_secret: &str) -> [u8; 32] {
@@ -2860,7 +2876,8 @@ fn send_gemini_post_with_auth_fallback(
         return Err("Gemini API key is required for this request.".to_string());
     }
 
-    let query_url = format!("{endpoint}?key={trimmed_key}");
+    let encoded_key = percent_encode_component(trimmed_key);
+    let query_url = format!("{endpoint}?key={encoded_key}");
     let response = client
         .post(&query_url)
         .header("Content-Type", "application/json")
@@ -2903,7 +2920,8 @@ fn send_gemini_get_with_auth_fallback(
         return Err("Gemini API key is required for this request.".to_string());
     }
 
-    let query_url = format!("{endpoint}?key={trimmed_key}");
+    let encoded_key = percent_encode_component(trimmed_key);
+    let query_url = format!("{endpoint}?key={encoded_key}");
     let response = client
         .get(&query_url)
         .send()
@@ -5251,6 +5269,11 @@ mod tests {
         let decrypted = decrypt_secret_with_key(&encrypted, master_secret).unwrap();
         assert_eq!(decrypted, secret);
         assert!(encrypted.starts_with(ENCRYPTED_SECRET_PREFIX));
+    }
+
+    #[test]
+    fn percent_encodes_gemini_api_keys_for_request_urls() {
+        assert_eq!(percent_encode_component("AIzaSyA/Plus+123=abc"), "AIzaSyA%2FPlus%2B123%3Dabc");
     }
 
     #[test]
