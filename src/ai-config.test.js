@@ -20,6 +20,17 @@ test('advanced routing UI exposes a validation-driven catalog revision button', 
   assert.ok(html.includes('Revise List with Validation'), 'expected validation-driven catalog revision button');
 });
 
+test('advanced routing UI uses a two-column layout', () => {
+  assert.ok(html.includes('class="ai-routing-layout"'), 'expected two-column routing layout container');
+  assert.ok(html.includes('class="ai-routing-pane-stack"'), 'expected pane stack in right column');
+});
+
+test('provider catalog sections include validation progress indicators', () => {
+  assert.ok(html.includes('id="ai-catalog-openai-progress-bar"'), 'expected OpenAI catalog progress bar');
+  assert.ok(html.includes('id="ai-catalog-gemini-progress-bar"'), 'expected Gemini catalog progress bar');
+  assert.ok(html.includes('Remaining ${remaining}/${total}'), 'expected iterative countdown progress text');
+});
+
 test('openai provider exposes OpenAI model options', () => {
   const models = getModelOptions('openai');
   assert.deepEqual(models, [

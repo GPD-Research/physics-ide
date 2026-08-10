@@ -856,6 +856,17 @@
       #save-prefs-btn.success { background-color: #2e7d32 !important; color: #ffffff; border-color: #2e7d32; }
       .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.1); }
       .pane-config-block h4 { margin: 0 0 8px 0; font-size: 0.85rem; color: var(--accent-dim); }
+      .ai-routing-modal-content { width: min(1120px, 96vw) !important; max-height: 90vh; overflow: auto; }
+      .ai-routing-layout { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(340px, 1fr); gap: 12px; align-items: start; }
+      .ai-routing-pane-stack { display: flex; flex-direction: column; gap: 10px; }
+      .ai-routing-pane-stack .pane-config-block,
+      .ai-routing-layout > .pane-config-block { margin-bottom: 0; }
+      .catalog-validation-progress { margin-top: 6px; }
+      .catalog-validation-progress progress { width: 100%; height: 11px; }
+      .catalog-validation-progress .progress-caption { font-size: 0.74rem; color: var(--text-muted); margin-top: 2px; min-height: 16px; }
+      @media (max-width: 980px) {
+        .ai-routing-layout { grid-template-columns: 1fr; }
+      }
       .chat-attach-btn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border-color); background: var(--bg-darker); color: var(--accent); font-size: 1.15rem; cursor: pointer; }
       .chat-attach-btn:hover { background: var(--bg-panel); }
 
@@ -1457,7 +1468,7 @@
   </div>
 
   <div id="ai-routing-modal" class="modal" style="z-index: 1110;">
-    <div class="modal-content" style="width: 600px; max-width: 95vw;">
+    <div class="modal-content ai-routing-modal-content">
       <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <span>Advanced AI Routing</span>
         <button type="button" onclick="closeAiRoutingModal()" style="padding: 4px 8px;" title="Close advanced AI routing">Close</button>
@@ -1469,92 +1480,104 @@
         Use exact model IDs copied from provider docs. Enter chat/text-capable models only. Audio/image generation model IDs are not valid for this app's analyzer workflow.
       </div>
 
-      <div class="pane-config-block">
-        <h4>Provider Model Catalog</h4>
-        <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px;">
-          Pull current model IDs from provider APIs, then apply a selected ID to either pane.
-        </div>
-
-        <div class="form-group" style="margin-bottom: 10px;">
-          <label for="ai-catalog-openai-select">OpenAI Catalog</label>
-          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-            <select id="ai-catalog-openai-select" style="flex: 1 1 280px;"></select>
-            <button type="button" onclick="refreshProviderModelCatalog('openai')" title="Refresh OpenAI model list">Refresh</button>
-            <button type="button" onclick="reviseProviderModelCatalogWithValidation('openai')" title="Validate each OpenAI catalog model and keep only the ones that pass">Revise List with Validation</button>
-            <button type="button" onclick="applyCatalogModelToPane('openai', 'left')" title="Apply selected OpenAI model to left pane">Use Left</button>
-            <button type="button" onclick="applyCatalogModelToPane('openai', 'right')" title="Apply selected OpenAI model to right pane">Use Right</button>
+      <div class="ai-routing-layout">
+        <div class="pane-config-block">
+          <h4>Provider Model Catalog</h4>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px;">
+            Pull current model IDs from provider APIs, then apply a selected ID to either pane.
           </div>
-          <div id="ai-catalog-openai-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
-        </div>
 
-        <div class="form-group" style="margin-bottom: 0;">
-          <label for="ai-catalog-gemini-select">Gemini Catalog</label>
-          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-            <select id="ai-catalog-gemini-select" style="flex: 1 1 280px;"></select>
-            <button type="button" onclick="refreshProviderModelCatalog('gemini')" title="Refresh Gemini model list">Refresh</button>
-            <button type="button" onclick="reviseProviderModelCatalogWithValidation('gemini')" title="Validate each Gemini catalog model and keep only the ones that pass">Revise List with Validation</button>
-            <button type="button" onclick="applyCatalogModelToPane('gemini', 'left')" title="Apply selected Gemini model to left pane">Use Left</button>
-            <button type="button" onclick="applyCatalogModelToPane('gemini', 'right')" title="Apply selected Gemini model to right pane">Use Right</button>
+          <div class="form-group" style="margin-bottom: 10px;">
+            <label for="ai-catalog-openai-select">OpenAI Catalog</label>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <select id="ai-catalog-openai-select" style="flex: 1 1 280px;"></select>
+              <button type="button" onclick="refreshProviderModelCatalog('openai')" title="Refresh OpenAI model list">Refresh</button>
+              <button type="button" onclick="reviseProviderModelCatalogWithValidation('openai')" title="Validate each OpenAI catalog model and keep only the ones that pass">Revise List with Validation</button>
+              <button type="button" onclick="applyCatalogModelToPane('openai', 'left')" title="Apply selected OpenAI model to left pane">Use Left</button>
+              <button type="button" onclick="applyCatalogModelToPane('openai', 'right')" title="Apply selected OpenAI model to right pane">Use Right</button>
+            </div>
+            <div id="ai-catalog-openai-progress" class="catalog-validation-progress" style="display:none;">
+              <progress id="ai-catalog-openai-progress-bar" max="1" value="0"></progress>
+              <div id="ai-catalog-openai-progress-text" class="progress-caption">Not started.</div>
+            </div>
+            <div id="ai-catalog-openai-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
           </div>
-          <div id="ai-catalog-gemini-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
-        </div>
-      </div>
 
-      <div class="pane-config-block">
-        <h4>Left Pane (Analytical Stack)</h4>
-        <div class="form-group">
-          <label for="settings-left-provider">Provider</label>
-          <select id="settings-left-provider" onchange="updateModelUI('left'); syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
-            <option value="gemini">Google Gemini</option>
-            <option value="openai">OpenAI</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Preset Model Tier</label>
-          <div id="left-model-container">
-            <select id="settings-left-model">
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
-              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Light / Efficient)</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro (High-Capability)</option>
-            </select>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label for="ai-catalog-gemini-select">Gemini Catalog</label>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <select id="ai-catalog-gemini-select" style="flex: 1 1 280px;"></select>
+              <button type="button" onclick="refreshProviderModelCatalog('gemini')" title="Refresh Gemini model list">Refresh</button>
+              <button type="button" onclick="reviseProviderModelCatalogWithValidation('gemini')" title="Validate each Gemini catalog model and keep only the ones that pass">Revise List with Validation</button>
+              <button type="button" onclick="applyCatalogModelToPane('gemini', 'left')" title="Apply selected Gemini model to left pane">Use Left</button>
+              <button type="button" onclick="applyCatalogModelToPane('gemini', 'right')" title="Apply selected Gemini model to right pane">Use Right</button>
+            </div>
+            <div id="ai-catalog-gemini-progress" class="catalog-validation-progress" style="display:none;">
+              <progress id="ai-catalog-gemini-progress-bar" max="1" value="0"></progress>
+              <div id="ai-catalog-gemini-progress-text" class="progress-caption">Not started.</div>
+            </div>
+            <div id="ai-catalog-gemini-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
           </div>
         </div>
-        <div class="form-group">
-          <label for="settings-left-model-custom">Custom Model ID (optional)</label>
-          <input type="text" id="settings-left-model-custom" placeholder="e.g., gpt-4.1-mini or gemini-2.5-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <button type="button" onclick="validateAiRouteModel('left')" title="Validate this pane model against provider API">Validate Left Model</button>
-          <span id="ai-route-left-validation" style="font-size: 0.78rem; color: var(--text-muted);">Not validated yet.</span>
-        </div>
-      </div>
 
-      <div class="pane-config-block">
-        <h4>Right Pane (Speculation Engine)</h4>
-        <div class="form-group">
-          <label for="settings-right-provider">Provider</label>
-          <select id="settings-right-provider" onchange="updateModelUI('right'); syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
-            <option value="gemini">Google Gemini</option>
-            <option value="openai">OpenAI</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Preset Model Tier</label>
-          <div id="right-model-container">
-            <select id="settings-right-model">
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
-              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Light / Efficient)</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro (High-Capability)</option>
-            </select>
+        <div class="ai-routing-pane-stack">
+          <div class="pane-config-block">
+            <h4>Left Pane (Analytical Stack)</h4>
+            <div class="form-group">
+              <label for="settings-left-provider">Provider</label>
+              <select id="settings-left-provider" onchange="updateModelUI('left'); syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
+                <option value="gemini">Google Gemini</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Preset Model Tier</label>
+              <div id="left-model-container">
+                <select id="settings-left-model">
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
+                  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Light / Efficient)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (High-Capability)</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="settings-left-model-custom">Custom Model ID (optional)</label>
+              <input type="text" id="settings-left-model-custom" placeholder="e.g., gpt-4.1-mini or gemini-2.5-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" onclick="validateAiRouteModel('left')" title="Validate this pane model against provider API">Validate Left Model</button>
+              <span id="ai-route-left-validation" style="font-size: 0.78rem; color: var(--text-muted);">Not validated yet.</span>
+            </div>
           </div>
-        </div>
-        <div class="form-group">
-          <label for="settings-right-model-custom">Custom Model ID (optional)</label>
-          <input type="text" id="settings-right-model-custom" placeholder="e.g., gpt-4.1 or gemini-2.5-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <button type="button" onclick="validateAiRouteModel('right')" title="Validate this pane model against provider API">Validate Right Model</button>
-          <span id="ai-route-right-validation" style="font-size: 0.78rem; color: var(--text-muted);">Not validated yet.</span>
+
+          <div class="pane-config-block">
+            <h4>Right Pane (Speculation Engine)</h4>
+            <div class="form-group">
+              <label for="settings-right-provider">Provider</label>
+              <select id="settings-right-provider" onchange="updateModelUI('right'); syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
+                <option value="gemini">Google Gemini</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Preset Model Tier</label>
+              <div id="right-model-container">
+                <select id="settings-right-model">
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
+                  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Light / Efficient)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (High-Capability)</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="settings-right-model-custom">Custom Model ID (optional)</label>
+              <input type="text" id="settings-right-model-custom" placeholder="e.g., gpt-4.1 or gemini-2.5-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" onclick="validateAiRouteModel('right')" title="Validate this pane model against provider API">Validate Right Model</button>
+              <span id="ai-route-right-validation" style="font-size: 0.78rem; color: var(--text-muted);">Not validated yet.</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2011,6 +2034,10 @@
     const providerModelCatalog = {
       openai: [],
       gemini: []
+    };
+    const providerCatalogValidationProgress = {
+      openai: { total: 0, tested: 0, validated: 0, running: false },
+      gemini: { total: 0, tested: 0, validated: 0, running: false }
     };
     const aiRouteValidationState = {
       left: { ok: false, stamp: '' },
@@ -2541,6 +2568,40 @@
       target.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
     }
 
+    function updateProviderCatalogValidationProgress(provider, progress) {
+      const normalized = normalizeProviderForV7(provider);
+      providerCatalogValidationProgress[normalized] = {
+        ...(providerCatalogValidationProgress[normalized] || { total: 0, tested: 0, validated: 0, running: false }),
+        ...(progress || {})
+      };
+
+      const state = providerCatalogValidationProgress[normalized];
+      const container = document.getElementById(`ai-catalog-${normalized}-progress`);
+      const bar = document.getElementById(`ai-catalog-${normalized}-progress-bar`);
+      const text = document.getElementById(`ai-catalog-${normalized}-progress-text`);
+      if (!container || !bar || !text) return;
+
+      const total = Math.max(0, Number(state.total || 0));
+      const tested = Math.max(0, Math.min(total, Number(state.tested || 0)));
+      const validated = Math.max(0, Math.min(tested, Number(state.validated || 0)));
+      const remaining = Math.max(0, total - tested);
+
+      if (!state.running && total === 0 && tested === 0 && validated === 0) {
+        container.style.display = 'none';
+        return;
+      }
+
+      container.style.display = 'block';
+      bar.max = total || 1;
+      bar.value = tested;
+
+      if (state.running) {
+        text.textContent = `Remaining ${remaining}/${total} • Tested ${tested}/${total} • Validated ${validated}`;
+      } else {
+        text.textContent = `Finished ${tested}/${total} • Validated ${validated}`;
+      }
+    }
+
     function renderProviderModelCatalog(provider) {
       const normalized = normalizeProviderForV7(provider);
       const select = document.getElementById(`ai-catalog-${normalized}-select`);
@@ -2582,6 +2643,7 @@
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         const models = Array.isArray(payload?.models) ? payload.models : [];
         providerModelCatalog[normalized] = models;
+        updateProviderCatalogValidationProgress(normalized, { total: 0, tested: 0, validated: 0, running: false });
         renderProviderModelCatalog(normalized);
         setProviderCatalogStatus(normalized, `Loaded ${models.length} model ID(s).`);
       } catch (err) {
@@ -2608,6 +2670,15 @@
         return;
       }
 
+      const totalModels = models.length;
+      let testedCount = 0;
+      let validatedCount = 0;
+      updateProviderCatalogValidationProgress(normalized, {
+        total: totalModels,
+        tested: testedCount,
+        validated: validatedCount,
+        running: true
+      });
       setProviderCatalogStatus(normalized, `Validating ${models.length} ${getProviderDisplayName(normalized)} model ID(s)...`);
 
       const validatedModels = [];
@@ -2627,10 +2698,19 @@
           const normalizedModel = String(payload?.normalized_model || trimmedModel).trim();
           if (normalizedModel) {
             validatedModels.push(normalizedModel);
+            validatedCount += 1;
           }
         } catch (err) {
           // Exclude any model that fails validation.
         }
+
+        testedCount += 1;
+        updateProviderCatalogValidationProgress(normalized, {
+          total: totalModels,
+          tested: testedCount,
+          validated: validatedCount,
+          running: true
+        });
       }
 
       const dedupedModels = [];
@@ -2642,6 +2722,12 @@
 
       providerModelCatalog[normalized] = dedupedModels;
       renderProviderModelCatalog(normalized);
+      updateProviderCatalogValidationProgress(normalized, {
+        total: totalModels,
+        tested: totalModels,
+        validated: dedupedModels.length,
+        running: false
+      });
 
       if (dedupedModels.length === 0) {
         setProviderCatalogStatus(normalized, 'No models passed validation. Try another key or model.', true);
