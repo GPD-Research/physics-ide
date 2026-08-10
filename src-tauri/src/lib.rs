@@ -2955,7 +2955,10 @@ fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
         return Err("Gemini API key is required for model validation.".to_string());
     }
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
     let endpoint = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
@@ -3075,7 +3078,10 @@ async fn fetch_provider_model_catalog(payload: serde_json::Value) -> Result<Stri
     }
 
     tauri::async_runtime::spawn_blocking(move || {
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
         let mut models = match provider_normalized.as_str() {
             "openai" => list_openai_chat_models(&client, &trimmed_key)?,
             "gemini" => list_gemini_generate_content_models(&client, &trimmed_key)?,
@@ -3173,7 +3179,10 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
         candidates
     }
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
     let mut attempted_models = Vec::new();
     let mut last_error = String::new();
 
@@ -3475,7 +3484,10 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
 
     let normalized_model = normalize_model_for_provider("gemini", model);
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
     let body = build_gemini_request_body(history).map_err(|e| format!("Gemini request body error: {e}"))?;
 
     let mut last_error = "Gemini request failed before receiving a response".to_string();
