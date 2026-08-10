@@ -2752,11 +2752,19 @@ fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
     ))
 }
 
+#[derive(Debug, Deserialize)]
+struct ValidateModelSelectionPayload {
+    provider: String,
+    model: String,
+    #[serde(alias = "apiKey")]
+    api_key: String,
+}
+
 #[tauri::command]
-async fn validate_model_selection(provider: String, model: String, api_key: String) -> Result<String, String> {
-    let provider_normalized = provider.to_ascii_lowercase();
-    let normalized_model = normalize_model_for_provider(&provider_normalized, &model);
-    let normalized_api_key = normalize_api_key(&api_key);
+async fn validate_model_selection(payload: ValidateModelSelectionPayload) -> Result<String, String> {
+    let provider_normalized = payload.provider.to_ascii_lowercase();
+    let normalized_model = normalize_model_for_provider(&provider_normalized, &payload.model);
+    let normalized_api_key = normalize_api_key(&payload.api_key);
 
     if normalized_model.trim().is_empty() {
         return Err("Model ID is empty. Enter a model ID before validating.".to_string());
@@ -2777,7 +2785,7 @@ async fn validate_model_selection(provider: String, model: String, api_key: Stri
         Ok(serde_json::json!({
             "ok": true,
             "provider": provider_normalized,
-            "requested_model": model,
+            "requested_model": payload.model,
             "normalized_model": normalized_model,
             "message": "Model validated for chat/generative requests"
         })
@@ -2787,10 +2795,17 @@ async fn validate_model_selection(provider: String, model: String, api_key: Stri
     .map_err(|e| format!("Model validation task failed: {e}"))?
 }
 
+#[derive(Debug, Deserialize)]
+struct ProviderModelCatalogPayload {
+    provider: String,
+    #[serde(alias = "apiKey")]
+    api_key: String,
+}
+
 #[tauri::command]
-async fn fetch_provider_model_catalog(provider: String, api_key: String) -> Result<String, String> {
-    let provider_normalized = provider.to_ascii_lowercase();
-    let trimmed_key = normalize_api_key(&api_key);
+async fn fetch_provider_model_catalog(payload: ProviderModelCatalogPayload) -> Result<String, String> {
+    let provider_normalized = payload.provider.to_ascii_lowercase();
+    let trimmed_key = normalize_api_key(&payload.api_key);
 
     if trimmed_key.is_empty() {
         return Err(format!("{} API key is required to load model catalog.", provider_normalized));
