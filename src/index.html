@@ -1511,8 +1511,9 @@
           <label>Preset Model Tier</label>
           <div id="left-model-container">
             <select id="settings-left-model">
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast / Balanced)</option>
-              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Light / Efficient)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Light / Efficient)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro (High-Capability)</option>
             </select>
           </div>
         </div>
@@ -1539,14 +1540,15 @@
           <label>Preset Model Tier</label>
           <div id="right-model-container">
             <select id="settings-right-model">
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast / Balanced)</option>
-              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Light / Efficient)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast / Balanced)</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Light / Efficient)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro (High-Capability)</option>
             </select>
           </div>
         </div>
         <div class="form-group">
           <label for="settings-right-model-custom">Custom Model ID (optional)</label>
-          <input type="text" id="settings-right-model-custom" placeholder="e.g., gpt-4.1 or gemini-2.0-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
+          <input type="text" id="settings-right-model-custom" placeholder="e.g., gpt-4.1 or gemini-2.5-flash" oninput="syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
         </div>
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
           <button type="button" onclick="validateAiRouteModel('right')" title="Validate this pane model against provider API">Validate Right Model</button>
@@ -2046,7 +2048,7 @@
       if (normalizedProvider === 'openai') {
         return side === 'left' ? 'gpt-4.1' : 'gpt-4.1-mini';
       }
-      return 'gemini-2.0-flash';
+      return 'gemini-2.5-flash';
     }
 
     function normalizeProviderForV7(provider) {
@@ -2426,6 +2428,20 @@
     function normalizeModelForProvider(provider, model) {
       const normalizedProvider = normalizeProviderForV7(provider);
       const trimmedModel = (model || '').trim().replace(/^models\//, '');
+
+      if (normalizedProvider === 'gemini') {
+        if (!trimmedModel) return getDefaultModelForPane('left', provider);
+        if (['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'].includes(trimmedModel)) {
+          return trimmedModel;
+        }
+        if (['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'].includes(trimmedModel)) {
+          return 'gemini-2.5-flash';
+        }
+        if (['gemini-1.5-pro', 'gemini-3-flash', 'gemini-3.6-flash'].includes(trimmedModel)) {
+          return 'gemini-2.5-pro';
+        }
+        return trimmedModel;
+      }
 
       if (normalizedProvider !== 'openai') {
         return trimmedModel || getDefaultModelForPane('left', provider);

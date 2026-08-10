@@ -2,8 +2,9 @@ export function getModelOptions(provider) {
   switch (provider) {
     case 'gemini':
       return [
-        { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fast / Balanced)' },
-        { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite (Light / Efficient)' },
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Fast / Balanced)' },
+        { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (Light / Efficient)' },
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (High-Capability)' },
       ];
     case 'openai':
       return [
