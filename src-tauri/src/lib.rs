@@ -1,8 +1,14 @@
+use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
+use pbkdf2::pbkdf2_hmac;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Deserialize, Default)]
 struct GeminiApiResponse {
@@ -145,6 +151,10 @@ fn default_true() -> bool {
     true
 }
 
+const ENCRYPTED_SECRET_PREFIX: &str = "enc:v1:";
+const LOCAL_SECRET_FILE_NAME: &str = "ai-secret-store.key";
+const LOCAL_SECRET_SALT: &[u8] = b"physics-ide-ai-secrets-v1";
+
 fn normalize_api_key(value: &str) -> String {
     value
         .trim()
@@ -152,6 +162,131 @@ fn normalize_api_key(value: &str) -> String {
         .trim_matches('\'')
         .trim()
         .to_string()
+}
+
+fn derive_aes_key_from_master_secret(master_secret: &str) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    pbkdf2_hmac::<Sha256>(master_secret.as_bytes(), LOCAL_SECRET_SALT, 200_000, &mut key);
+    key
+}
+
+fn encrypt_secret_with_key(secret: &str, master_secret: &str) -> Result<String, String> {
+    if secret.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let key = derive_aes_key_from_master_secret(master_secret);
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, secret.as_bytes().as_ref())
+        .map_err(|e| format!("Failed to encrypt secret: {e}"))?;
+
+    Ok(format!(
+        "{}{}:{}",
+        ENCRYPTED_SECRET_PREFIX,
+        base64::encode(&nonce_bytes),
+        base64::encode(&ciphertext)
+    ))
+}
+
+fn decrypt_secret_with_key(encrypted_secret: &str, master_secret: &str) -> Result<String, String> {
+    if encrypted_secret.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    if !encrypted_secret.starts_with(ENCRYPTED_SECRET_PREFIX) {
+        return Ok(encrypted_secret.to_string());
+    }
+
+    let payload = encrypted_secret
+        .strip_prefix(ENCRYPTED_SECRET_PREFIX)
+        .ok_or_else(|| "Malformed encrypted secret payload".to_string())?;
+    let (nonce_b64, ciphertext_b64) = payload
+        .split_once(':')
+        .ok_or_else(|| "Malformed encrypted secret payload".to_string())?;
+
+    let key = derive_aes_key_from_master_secret(master_secret);
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let nonce_bytes = base64::decode(nonce_b64)
+        .map_err(|e| format!("Failed to decode secret nonce: {e}"))?;
+    let ciphertext_bytes = base64::decode(ciphertext_b64)
+        .map_err(|e| format!("Failed to decode secret payload: {e}"))?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext_bytes.as_ref())
+        .map_err(|e| format!("Failed to decrypt secret: {e}"))?;
+
+    String::from_utf8(plaintext).map_err(|e| format!("Failed to decode decrypted secret text: {e}"))
+}
+
+fn get_secret_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    path.push(LOCAL_SECRET_FILE_NAME);
+    Ok(path)
+}
+
+fn load_or_create_master_secret(app: &AppHandle) -> Result<String, String> {
+    let path = get_secret_store_path(app)?;
+    if path.exists() {
+        let contents = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let trimmed = contents.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    let secret = base64::encode(&bytes);
+    fs::write(&path, &secret).map_err(|e| e.to_string())?;
+
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).map_err(|e| e.to_string())?.permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(&path, permissions).map_err(|e| e.to_string())?;
+    }
+
+    Ok(secret)
+}
+
+fn encrypt_secret_for_storage(secret: &str, app: &AppHandle) -> Result<String, String> {
+    let master_secret = load_or_create_master_secret(app)?;
+    encrypt_secret_with_key(secret, &master_secret)
+}
+
+fn decrypt_secret_from_storage(encrypted_secret: &str, app: &AppHandle) -> Result<String, String> {
+    let master_secret = load_or_create_master_secret(app)?;
+    decrypt_secret_with_key(encrypted_secret, &master_secret)
+}
+
+fn deserialize_app_config_from_storage(data: &str, app: &AppHandle) -> Result<AppConfig, String> {
+    let mut config = serde_json::from_str::<AppConfig>(data).unwrap_or_default();
+    config.gemini_api_key = decrypt_secret_from_storage(&config.gemini_api_key, app)?;
+    config.openai_api_key = decrypt_secret_from_storage(&config.openai_api_key, app)?;
+    config.github_api_key = decrypt_secret_from_storage(&config.github_api_key, app)?;
+    Ok(config)
+}
+
+fn serialize_app_config_for_storage(config: &AppConfig, app: &AppHandle) -> Result<String, String> {
+    let mut config_for_disk = config.clone();
+    config_for_disk.gemini_api_key = encrypt_secret_for_storage(&config.gemini_api_key, app)?;
+    config_for_disk.openai_api_key = encrypt_secret_for_storage(&config.openai_api_key, app)?;
+    config_for_disk.github_api_key = encrypt_secret_for_storage(&config.github_api_key, app)?;
+    serde_json::to_string_pretty(&config_for_disk).map_err(|e| e.to_string())
+}
+
+fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
+    let config_path = get_config_path(app)?;
+    if let Ok(data) = fs::read_to_string(&config_path) {
+        return deserialize_app_config_from_storage(&data, app);
+    }
+
+    Ok(AppConfig::default())
 }
 
 fn update_workspace_root_in_config(config: &mut AppConfig, workspace_path: &str) {
@@ -908,8 +1043,8 @@ fn resolve_startup_guide_path(project_root: &Path, theory_dir: &str) -> PathBuf 
 }
 
 fn save_app_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
+    let config_json = serialize_app_config_for_storage(config, app)?;
     let config_path = get_config_path(app)?;
-    let config_json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     fs::write(config_path, config_json).map_err(|e| e.to_string())
 }
 
@@ -927,12 +1062,24 @@ fn load_theory_profiles_store(app: &AppHandle) -> Result<TheoryProfilesStore, St
     }
 
     let contents = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    Ok(serde_json::from_str::<TheoryProfilesStore>(&contents).unwrap_or_default())
+    let mut store = serde_json::from_str::<TheoryProfilesStore>(&contents).unwrap_or_default();
+    for profile in store.profiles.values_mut() {
+        *profile = deserialize_app_config_from_storage(
+            &serde_json::to_string(profile).map_err(|e| e.to_string())?,
+            app,
+        )?;
+    }
+    Ok(store)
 }
 
 fn save_theory_profiles_store(app: &AppHandle, store: &TheoryProfilesStore) -> Result<(), String> {
     let path = get_theory_profiles_path(app)?;
-    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    let mut disk_store = store.clone();
+    for profile in disk_store.profiles.values_mut() {
+        let json = serialize_app_config_for_storage(profile, app)?;
+        *profile = serde_json::from_str::<AppConfig>(&json).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&disk_store).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
 }
 
@@ -1538,12 +1685,7 @@ fn generate_exit_session_draft(
         .map_err(|_| "Workspace path mutex poisoned".to_string())?
         .clone();
 
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
     apply_unset_path_defaults(&mut config);
 
     let preferred_workspace = if workspace_path.trim().is_empty() {
@@ -1898,12 +2040,7 @@ fn verify_theory_import_checklist(
         .map_err(|_| "Workspace path mutex poisoned".to_string())?
         .clone();
 
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
     apply_unset_path_defaults(&mut config);
 
     let preferred_workspace = if workspace_path.trim().is_empty() {
@@ -1949,12 +2086,7 @@ fn get_master_axiom_snapshot(
         .map_err(|_| "Workspace path mutex poisoned".to_string())?
         .clone();
 
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
     apply_unset_path_defaults(&mut config);
 
     let preferred_workspace = if workspace_path.trim().is_empty() {
@@ -2007,12 +2139,9 @@ fn get_master_axiom_snapshot(
 
 #[tauri::command]
 fn get_initial_state(app: AppHandle) -> AppConfig {
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(config_data) = fs::read_to_string(config_path) {
-            let mut config = serde_json::from_str(&config_data).unwrap_or_default();
-            apply_unset_path_defaults(&mut config);
-            return config;
-        }
+    if let Ok(mut config) = load_app_config(&app) {
+        apply_unset_path_defaults(&mut config);
+        return config;
     }
 
     let mut config = AppConfig::default();
@@ -2037,12 +2166,7 @@ fn list_theory_profiles(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn save_theory_profile(profile_name: String, state: tauri::State<AppState>, app: AppHandle) -> Result<String, String> {
     let normalized_name = normalize_profile_name(&profile_name)?;
-    let config_path = get_config_path(&app)?;
-    let mut config = if let Ok(data) = fs::read_to_string(config_path) {
-        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
-    } else {
-        AppConfig::default()
-    };
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     let workspace_path = state
         .workspace_path
@@ -2180,12 +2304,7 @@ fn delete_theory_profile(profile_name: String, app: AppHandle) -> Result<String,
 
 #[tauri::command]
 fn close_active_theory(state: tauri::State<AppState>, app: AppHandle) -> Result<String, String> {
-    let config_path = get_config_path(&app)?;
-    let mut config = if let Ok(data) = fs::read_to_string(config_path) {
-        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
-    } else {
-        AppConfig::default()
-    };
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     config.last_root_dir = String::new();
     config.project_root_dir = String::new();
@@ -2258,16 +2377,10 @@ fn save_root_directory(path: String, state: tauri::State<AppState>, app: tauri::
     let mut current_path = state.workspace_path.lock().map_err(|e| e.to_string())?;
     *current_path = path.clone();
 
-    let config_path = get_config_path(&app)?;
-    let mut config = if let Ok(data) = std::fs::read_to_string(&config_path) {
-        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
-    } else {
-        AppConfig::default()
-    };
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     update_workspace_root_in_config(&mut config, &path);
-    let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+    save_app_config(&app, &config)?;
 
     Ok(format!("Workspace root saved: {}", path))
 }
@@ -2604,11 +2717,7 @@ async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tau
 }
 
 fn get_app_config(app: &AppHandle) -> Result<AppConfig, String> {
-    let config_path = get_config_path(app)?;
-    if let Ok(data) = fs::read_to_string(&config_path) {
-        return serde_json::from_str::<AppConfig>(&data).map_err(|e| e.to_string());
-    }
-    Ok(AppConfig::default())
+    load_app_config(app)
 }
 
 fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a str, String) {
@@ -4128,12 +4237,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         .map_err(|_| "Workspace path mutex poisoned".to_string())?
         .clone();
 
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     apply_unset_path_defaults(&mut config);
 
@@ -4337,12 +4441,7 @@ fn prepare_exit_session(
         .map_err(|_| "Workspace path mutex poisoned".to_string())?
         .clone();
 
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
     apply_unset_path_defaults(&mut config);
 
     let preferred_workspace = if options.workspace_path.trim().is_empty() {
@@ -4496,12 +4595,7 @@ fn import_theory_source_command(source_path: String, output_dir: String, app: ta
     let output_dir = PathBuf::from(&output_dir);
     let result = import_theory_source(&source_path, &output_dir)?;
 
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     let mut payload = result;
     payload["master_axiom_file"] = serde_json::Value::String(config.master_axiom_file.clone());
@@ -4510,12 +4604,7 @@ fn import_theory_source_command(source_path: String, output_dir: String, app: ta
 
 #[tauri::command]
 fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
-    let mut config = AppConfig::default();
-    if let Ok(config_path) = get_config_path(&app) {
-        if let Ok(data) = fs::read_to_string(config_path) {
-            config = serde_json::from_str::<AppConfig>(&data).unwrap_or_default();
-        }
-    }
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     let effective_theory_dir = if theory_dir.trim().is_empty() {
         if !config.theory_md_dir.is_empty() {
@@ -5110,20 +5199,14 @@ fn generate_empirical_analysis_primer(
 
 #[tauri::command]
 fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -> Result<String, String> {
-    let config_path = get_config_path(&app)?;
-
-    let mut config = if let Ok(data) = std::fs::read_to_string(&config_path) {
-        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
-    } else {
-        AppConfig::default()
-    };
+    let mut config = load_app_config(&app).unwrap_or_default();
 
     config.editor = payload.editor;
     config.terminal_app = payload.terminal_app;
     config.gemini_api_key = normalize_api_key(&payload.gemini_key);
     config.openai_api_key = normalize_api_key(&payload.openai_key);
     config.github_username = payload.github_username;
-    config.github_api_key = payload.github_api_key;
+    config.github_api_key = normalize_api_key(&payload.github_api_key);
     config.left_provider = payload.left_provider;
     config.left_model = payload.left_model;
     config.right_provider = payload.right_provider;
@@ -5146,8 +5229,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
         config.theory_md_dir = config.project_root_dir.clone();
     }
 
-    let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+    save_app_config(&app, &config)?;
 
     Ok("Settings saved successfully".to_string())
 }
@@ -5159,6 +5241,16 @@ mod tests {
     fn normalize_api_key_trims_surrounding_whitespace_and_quotes() {
         assert_eq!(normalize_api_key("  \"sk-test-key\"  "), "sk-test-key");
         assert_eq!(normalize_api_key("\n'AIza-test-key'\t"), "AIza-test-key");
+    }
+
+    #[test]
+    fn encrypts_and_decrypts_secrets_with_the_local_master_secret() {
+        let master_secret = "test-master-secret";
+        let secret = "sk-test-key";
+        let encrypted = encrypt_secret_with_key(secret, master_secret).unwrap();
+        let decrypted = decrypt_secret_with_key(&encrypted, master_secret).unwrap();
+        assert_eq!(decrypted, secret);
+        assert!(encrypted.starts_with(ENCRYPTED_SECRET_PREFIX));
     }
 
     #[test]

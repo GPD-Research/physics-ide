@@ -1382,12 +1382,14 @@
 	          <div style="display: flex; gap: 10px;">
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-gemini-key">Google Gemini API Key</label>
-                <input type="password" id="settings-gemini-key" placeholder="AIzaSy..." oninput="markAiRouteValidationPendingForProvider('gemini')">
+                <input type="password" id="settings-gemini-key" placeholder="Enter the Gemini key, e.g. AIza..." oninput="markAiRouteValidationPendingForProvider('gemini')" title="Enter your Gemini key, e.g. AIza...">
+                <div id="settings-gemini-key-status" style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">No key entered.</div>
                 <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-gemini-key', this)" title="Show or hide the Gemini API key">Show</button>
 	            </div>
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-openai-key">OpenAI API Key</label>
-                <input type="password" id="settings-openai-key" placeholder="sk-proj-..." oninput="markAiRouteValidationPendingForProvider('openai')">
+                <input type="password" id="settings-openai-key" placeholder="Enter the OpenAI key, e.g. sk-proj-..." oninput="markAiRouteValidationPendingForProvider('openai')" title="Enter your OpenAI key, e.g. sk-proj-...">
+                <div id="settings-openai-key-status" style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">No key entered.</div>
                 <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-openai-key', this)" title="Show or hide the OpenAI API key">Show</button>
 	            </div>
 	          </div>
@@ -2410,6 +2412,17 @@
       return String(value || '').trim().replace(/^['\"]|['\"]$/g, '').trim();
     }
 
+    function updateApiKeyEmptyState(provider) {
+      const inputId = provider === 'openai' ? 'settings-openai-key' : 'settings-gemini-key';
+      const statusId = provider === 'openai' ? 'settings-openai-key-status' : 'settings-gemini-key-status';
+      const input = document.getElementById(inputId);
+      const status = document.getElementById(statusId);
+      if (!input || !status) return;
+      const hasValue = normalizeApiKeyValue(input.value).length > 0;
+      status.textContent = hasValue ? `${provider === 'openai' ? 'OpenAI' : 'Gemini'} key stored locally in encrypted form.` : 'No key entered.';
+      status.style.color = hasValue ? 'var(--accent-dim)' : 'var(--text-muted)';
+    }
+
     function normalizeModelForProvider(provider, model) {
       const normalizedProvider = normalizeProviderForV7(provider);
       const trimmedModel = (model || '').trim().replace(/^models\//, '');
@@ -2592,6 +2605,23 @@
       return normalizeApiKeyValue(document.getElementById('settings-openai-key')?.value || '');
     }
 
+    function wireApiKeyFieldStateHandlers() {
+      const geminiInput = document.getElementById('settings-gemini-key');
+      const openaiInput = document.getElementById('settings-openai-key');
+      if (geminiInput) {
+        geminiInput.addEventListener('input', () => {
+          updateApiKeyEmptyState('gemini');
+          markAiRouteValidationPendingForProvider('gemini');
+        });
+      }
+      if (openaiInput) {
+        openaiInput.addEventListener('input', () => {
+          updateApiKeyEmptyState('openai');
+          markAiRouteValidationPendingForProvider('openai');
+        });
+      }
+    }
+
     function toggleApiKeyVisibility(inputId, button) {
       const input = document.getElementById(inputId);
       if (!input || !button) return;
@@ -2721,7 +2751,9 @@
         document.getElementById('settings-tools-dir').value = currentConfig.tools_dir || "";
         document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
-        document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";        
+        document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";
+        updateApiKeyEmptyState('gemini');
+        updateApiKeyEmptyState('openai');
         syncAiRoutingSummaries();
         markAiRouteValidationPending('left', 'Validate left model before saving settings.');
         markAiRouteValidationPending('right', 'Validate right model before saving settings.');
