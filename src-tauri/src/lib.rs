@@ -145,6 +145,30 @@ fn default_true() -> bool {
     true
 }
 
+fn normalize_api_key(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+fn update_workspace_root_in_config(config: &mut AppConfig, workspace_path: &str) {
+    let trimmed = workspace_path.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let normalized = normalize_api_key(trimmed);
+    config.last_root_dir = normalized.clone();
+    config.project_root_dir = normalized.clone();
+
+    if config.theory_md_dir.trim().is_empty() {
+        config.theory_md_dir = normalized.clone();
+    }
+}
+
 // --- PERSISTENT DISK CONFIGURATION ---
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
@@ -2230,10 +2254,21 @@ fn export_workspace_tree(rootPath: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_root_directory(path: String, state: tauri::State<AppState>) -> Result<String, String> {
-    // Locks the mutex to update the global memory state
+fn save_root_directory(path: String, state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
     let mut current_path = state.workspace_path.lock().map_err(|e| e.to_string())?;
     *current_path = path.clone();
+
+    let config_path = get_config_path(&app)?;
+    let mut config = if let Ok(data) = std::fs::read_to_string(&config_path) {
+        serde_json::from_str::<AppConfig>(&data).unwrap_or_default()
+    } else {
+        AppConfig::default()
+    };
+
+    update_workspace_root_in_config(&mut config, &path);
+    let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
+
     Ok(format!("Workspace root saved: {}", path))
 }
 
@@ -2533,8 +2568,8 @@ async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tau
     let prompt_for_model = prompt;
 
     let provider_name = provider.to_ascii_lowercase();
-    let openai_api_key = config.openai_api_key.clone();
-    let gemini_api_key = config.gemini_api_key.clone();
+    let openai_api_key = normalize_api_key(&config.openai_api_key);
+    let gemini_api_key = normalize_api_key(&config.gemini_api_key);
     let request_history = history.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -2721,6 +2756,7 @@ fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
 async fn validate_model_selection(provider: String, model: String, api_key: String) -> Result<String, String> {
     let provider_normalized = provider.to_ascii_lowercase();
     let normalized_model = normalize_model_for_provider(&provider_normalized, &model);
+    let normalized_api_key = normalize_api_key(&api_key);
 
     if normalized_model.trim().is_empty() {
         return Err("Model ID is empty. Enter a model ID before validating.".to_string());
@@ -2728,8 +2764,8 @@ async fn validate_model_selection(provider: String, model: String, api_key: Stri
 
     tauri::async_runtime::spawn_blocking(move || {
         match provider_normalized.as_str() {
-            "openai" => validate_openai_model(&api_key, &normalized_model)?,
-            "gemini" => validate_gemini_model(&api_key, &normalized_model)?,
+            "openai" => validate_openai_model(&normalized_api_key, &normalized_model)?,
+            "gemini" => validate_gemini_model(&normalized_api_key, &normalized_model)?,
             other => {
                 return Err(format!(
                     "Unsupported provider '{}' for validation. Choose OpenAI or Gemini.",
@@ -2754,7 +2790,7 @@ async fn validate_model_selection(provider: String, model: String, api_key: Stri
 #[tauri::command]
 async fn fetch_provider_model_catalog(provider: String, api_key: String) -> Result<String, String> {
     let provider_normalized = provider.to_ascii_lowercase();
-    let trimmed_key = api_key.trim().to_string();
+    let trimmed_key = normalize_api_key(&api_key);
 
     if trimmed_key.is_empty() {
         return Err(format!("{} API key is required to load model catalog.", provider_normalized));
@@ -4948,8 +4984,8 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
 
     config.editor = payload.editor;
     config.terminal_app = payload.terminal_app;
-    config.gemini_api_key = payload.gemini_key;
-    config.openai_api_key = payload.openai_key;
+    config.gemini_api_key = normalize_api_key(&payload.gemini_key);
+    config.openai_api_key = normalize_api_key(&payload.openai_key);
     config.github_username = payload.github_username;
     config.github_api_key = payload.github_api_key;
     config.left_provider = payload.left_provider;
@@ -4970,6 +5006,10 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
         config.last_root_dir = config.project_root_dir.clone();
     }
 
+    if config.theory_md_dir.trim().is_empty() && !config.project_root_dir.trim().is_empty() {
+        config.theory_md_dir = config.project_root_dir.clone();
+    }
+
     let config_json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&config_path, config_json).map_err(|e| e.to_string())?;
 
@@ -4978,6 +5018,20 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_api_key_trims_surrounding_whitespace_and_quotes() {
+        assert_eq!(normalize_api_key("  \"sk-test-key\"  "), "sk-test-key");
+        assert_eq!(normalize_api_key("\n'AIza-test-key'\t"), "AIza-test-key");
+    }
+
+    #[test]
+    fn updates_workspace_root_fields_when_workspace_is_saved() {
+        let mut config = AppConfig::default();
+        update_workspace_root_in_config(&mut config, " /tmp/workspace ");
+        assert_eq!(config.last_root_dir, "/tmp/workspace");
+        assert_eq!(config.project_root_dir, "/tmp/workspace");
+    }
 
     #[test]
     fn computes_flat_cosmology_metrics_for_zero_redshift() {

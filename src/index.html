@@ -1383,10 +1383,12 @@
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-gemini-key">Google Gemini API Key</label>
                 <input type="password" id="settings-gemini-key" placeholder="AIzaSy..." oninput="markAiRouteValidationPendingForProvider('gemini')">
+                <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-gemini-key', this)" title="Show or hide the Gemini API key">Show</button>
 	            </div>
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-openai-key">OpenAI API Key</label>
                 <input type="password" id="settings-openai-key" placeholder="sk-proj-..." oninput="markAiRouteValidationPendingForProvider('openai')">
+                <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-openai-key', this)" title="Show or hide the OpenAI API key">Show</button>
 	            </div>
 	          </div>
 
@@ -2404,6 +2406,10 @@
       return lines;
     }
 
+    function normalizeApiKeyValue(value) {
+      return String(value || '').trim().replace(/^['\"]|['\"]$/g, '').trim();
+    }
+
     function normalizeModelForProvider(provider, model) {
       const normalizedProvider = normalizeProviderForV7(provider);
       const trimmedModel = (model || '').trim().replace(/^models\//, '');
@@ -2459,20 +2465,10 @@
 
       if (isSavingSettings) return;
 
-      const leftStamp = getPaneRouteSignature('left');
-      const rightStamp = getPaneRouteSignature('right');
-      const leftValid = aiRouteValidationState.left.ok && aiRouteValidationState.left.stamp === leftStamp;
-      const rightValid = aiRouteValidationState.right.ok && aiRouteValidationState.right.stamp === rightStamp;
-      const canSave = leftValid && rightValid;
-
-      saveBtn.disabled = !canSave;
-      if (canSave) {
-        if (saveBtnText.textContent === 'Validate AI Models') {
-          saveBtnText.textContent = 'Save Settings';
-        }
-      } else {
-        saveBtn.classList.remove('success');
-        saveBtnText.textContent = 'Validate AI Models';
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('success');
+      if (saveBtnText.textContent === 'Validate AI Models') {
+        saveBtnText.textContent = 'Save Settings';
       }
     }
 
@@ -2548,7 +2544,7 @@
       try {
         const response = await invoke('fetch_provider_model_catalog', {
           provider: normalized,
-          apiKey
+          api_key: apiKey
         });
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         const models = Array.isArray(payload?.models) ? payload.models : [];
@@ -2589,9 +2585,17 @@
     function getApiKeyForProvider(provider) {
       const normalized = normalizeProviderForV7(provider);
       if (normalized === 'gemini') {
-        return String(document.getElementById('settings-gemini-key')?.value || '').trim();
+        return normalizeApiKeyValue(document.getElementById('settings-gemini-key')?.value || '');
       }
-      return String(document.getElementById('settings-openai-key')?.value || '').trim();
+      return normalizeApiKeyValue(document.getElementById('settings-openai-key')?.value || '');
+    }
+
+    function toggleApiKeyVisibility(inputId, button) {
+      const input = document.getElementById(inputId);
+      if (!input || !button) return;
+      const isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      button.textContent = isPassword ? 'Hide' : 'Show';
     }
 
     function likelyModelPrefixMismatch(provider, model) {
@@ -2630,7 +2634,7 @@
       const response = await invoke('validate_model_selection', {
         provider,
         model,
-        apiKey
+        api_key: apiKey
       });
       const payload = typeof response === 'string' ? JSON.parse(response) : response;
       const normalizedModel = String(payload?.normalized_model || model).trim();
@@ -5926,8 +5930,8 @@ async function restoreVersion() {
 
       const editor = document.getElementById('settings-editor').value;
       const term = document.getElementById('settings-terminal').value;
-      const geminiKey = document.getElementById('settings-gemini-key').value;
-      const openaiKey = document.getElementById('settings-openai-key').value;
+      const geminiKey = normalizeApiKeyValue(document.getElementById('settings-gemini-key').value);
+      const openaiKey = normalizeApiKeyValue(document.getElementById('settings-openai-key').value);
       const githubUsername = document.getElementById('settings-github-username').value;
       const githubApiKey = document.getElementById('settings-github-api-key').value;
       const leftProvider = document.getElementById('settings-left-provider').value;
