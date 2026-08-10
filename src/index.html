@@ -19,10 +19,10 @@
                   --bg-panel: #2f4f3f; /* Chalkboard-inspired dark green */
 
                   /* Glass Surfaces */
-                  --menu-glass-bg: rgba(24, 24, 37, 0.52);
-                  --menu-glass-hover: rgba(94, 136, 112, 0.34);
-                  --terminal-glass-bg: rgba(0, 0, 0, 0.42);
-                  --terminal-header-glass-bg: rgba(24, 24, 37, 0.5);
+                  --menu-glass-bg: rgba(24, 24, 37, 0.26);
+                  --menu-glass-hover: rgba(94, 136, 112, 0.17);
+                  --terminal-glass-bg: rgba(0, 0, 0, 0.21);
+                  --terminal-header-glass-bg: rgba(24, 24, 37, 0.25);
                   
                   /* Borders */
                   --border-color: #313244;  /* General dividers */
@@ -47,10 +47,10 @@
 	        --bg-panel: #0a1428;       /* Deep sapphire blue panel field */
 
           /* Glass Surfaces */
-          --menu-glass-bg: rgba(10, 20, 40, 0.58);
-          --menu-glass-hover: rgba(60, 104, 214, 0.3);
-          --terminal-glass-bg: rgba(5, 11, 26, 0.48);
-          --terminal-header-glass-bg: rgba(10, 20, 40, 0.54);
+          --menu-glass-bg: rgba(10, 20, 40, 0.29);
+          --menu-glass-hover: rgba(60, 104, 214, 0.15);
+          --terminal-glass-bg: rgba(5, 11, 26, 0.24);
+          --terminal-header-glass-bg: rgba(10, 20, 40, 0.27);
 	        
 	        /* Structural Borders */
 	        --border-color: #1e3a8a;   /* Vibrant blue framing */
@@ -75,10 +75,10 @@
                   --bg-panel: #deddda;
 
                   /* Glass Surfaces */
-                  --menu-glass-bg: rgba(230, 233, 239, 0.64);
-                  --menu-glass-hover: rgba(222, 221, 218, 0.4);
-                  --terminal-glass-bg: rgba(255, 255, 255, 0.45);
-                  --terminal-header-glass-bg: rgba(230, 233, 239, 0.56);
+                  --menu-glass-bg: rgba(230, 233, 239, 0.32);
+                  --menu-glass-hover: rgba(222, 221, 218, 0.2);
+                  --terminal-glass-bg: rgba(255, 255, 255, 0.23);
+                  --terminal-header-glass-bg: rgba(230, 233, 239, 0.28);
                   
                   /* Borders */
                   --border-color: #bcc0cc;
@@ -509,7 +509,7 @@
   
       .file-item:hover {
         color: var(--accent);
-        background-color: rgba(255, 255, 255, 0.05);
+        background-color: rgba(255, 255, 255, 0.03);
       }
   
       .btn-group {
@@ -540,7 +540,7 @@
   
       .btn-special {
         grid-column: span 2;
-        background-color: rgba(203, 166, 247, 0.1);
+        background-color: rgba(203, 166, 247, 0.05);
         border-color: var(--accent-dim);
         color: var(--accent-dim);
       }
@@ -680,7 +680,7 @@
         top: 0;
         width: 100%;
         height: 100%;
-        background-color: rgba(0,0,0,0.7);
+        background-color: rgba(0,0,0,0.35);
         justify-content: center;
         align-items: center;
       }
@@ -725,7 +725,7 @@
         overflow-y: auto;
         border: 1px solid var(--border-color);
         border-radius: 6px;
-        background: rgba(0,0,0,0.12);
+        background: rgba(0,0,0,0.06);
         padding: 6px;
       }
 
@@ -747,12 +747,12 @@
 
       .theory-profile-item:hover {
         border-color: var(--border-color);
-        background: rgba(255,255,255,0.03);
+        background: rgba(255,255,255,0.02);
       }
 
       .theory-profile-item.selected {
         border-color: var(--accent);
-        background: rgba(255,255,255,0.06);
+        background: rgba(255,255,255,0.03);
       }
 
       .theory-profile-item.active {
@@ -777,7 +777,7 @@
         border: 1px solid var(--border-color);
         border-radius: 8px;
         padding: 10px;
-        background: rgba(0, 0, 0, 0.14);
+        background: rgba(0, 0, 0, 0.07);
       }
 
       .theory-setup-stage-header {
@@ -805,25 +805,25 @@
       .theory-setup-stage-status.complete {
         color: #8de6ba;
         border-color: rgba(141, 230, 186, 0.55);
-        background: rgba(141, 230, 186, 0.14);
+        background: rgba(141, 230, 186, 0.07);
       }
 
       .theory-setup-stage-status.in-progress {
         color: #9bc6ff;
         border-color: rgba(155, 198, 255, 0.55);
-        background: rgba(155, 198, 255, 0.12);
+        background: rgba(155, 198, 255, 0.06);
       }
 
       .theory-setup-stage-status.not-started {
         color: var(--text-muted);
         border-color: var(--border-color);
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(255, 255, 255, 0.03);
       }
 
       .theory-setup-stage-status.needs-attention {
         color: #ffb0b0;
         border-color: rgba(255, 176, 176, 0.58);
-        background: rgba(255, 176, 176, 0.12);
+        background: rgba(255, 176, 176, 0.06);
       }
 
       .theory-setup-stage-evidence {
@@ -854,7 +854,7 @@
       }
       
       #save-prefs-btn.success { background-color: #2e7d32 !important; color: #ffffff; border-color: #2e7d32; }
-      .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.1); }
+      .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.05); }
       .pane-config-block h4 { margin: 0 0 8px 0; font-size: 0.85rem; color: var(--accent-dim); }
       .ai-routing-modal-content { width: min(1120px, 96vw) !important; max-height: 90vh; overflow: auto; }
       .ai-routing-layout { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(340px, 1fr); gap: 12px; align-items: start; }
@@ -908,13 +908,13 @@
       .help-doc-rendered code {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         font-size: 0.84rem;
-        background: rgba(255,255,255,0.07);
+        background: rgba(255,255,255,0.04);
         border-radius: 4px;
         padding: 1px 5px;
       }
 
       .help-doc-rendered pre {
-        background: rgba(255,255,255,0.05);
+        background: rgba(255,255,255,0.03);
         border: 1px solid var(--border-color);
         border-radius: 6px;
         padding: 10px;
@@ -1674,7 +1674,7 @@
         <div class="form-group">
           <label>Define file order:</label>
           <div style="font-size:0.8rem; color:var(--accent-dim); margin-bottom:6px;">All files are included by default. Toggle any file off to exclude it from the combined output without deleting the source file.</div>
-          <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; min-height:280px; max-height:420px; overflow:auto; background: rgba(0,0,0,0.08);"></div>
+          <div id="manuscript-file-list" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; min-height:280px; max-height:420px; overflow:auto; background: rgba(0,0,0,0.04);"></div>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
           <button onclick="moveManuscriptSelection(-1)" title="Move selected file earlier in output order">↑ Move Up</button>
@@ -1951,12 +1951,12 @@
 
       <div id="markdown-docs-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
 
-      <div id="markdown-docs-git-feedback" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.12);">
+      <div id="markdown-docs-git-feedback" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.06);">
         Git save feedback will appear here after selecting a document.
       </div>
 
       <div style="display: flex; gap: 10px; min-height: 360px; flex: 1;">
-        <div style="width: 32%; min-width: 240px; border: 1px solid var(--border-color); border-radius: 6px; background: rgba(0,0,0,0.12); display: flex; flex-direction: column; min-height: 0;">
+        <div style="width: 32%; min-width: 240px; border: 1px solid var(--border-color); border-radius: 6px; background: rgba(0,0,0,0.06); display: flex; flex-direction: column; min-height: 0;">
           <div style="padding: 8px; border-bottom: 1px solid var(--border-color); font-size: 0.8rem; color: var(--text-muted);">Documents</div>
           <div id="markdown-docs-list" style="overflow: auto; padding: 6px; flex: 1; min-height: 0;"></div>
         </div>
@@ -4920,7 +4920,7 @@ async function restoreVersion() {
             const selected = entry.included !== false;
             const isActive = index === manuscriptSelectedIndex;
             const statusLabel = selected ? 'Included' : 'Excluded';
-            const rowStyle = isActive ? 'background: rgba(255,255,255,0.12); border-radius: 4px; padding: 4px 6px;' : 'padding: 4px 6px;';
+            const rowStyle = isActive ? 'background: rgba(255,255,255,0.06); border-radius: 4px; padding: 4px 6px;' : 'padding: 4px 6px;';
             const displayName = file.split(/[\\/]/).pop() || file;
             return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; ${rowStyle}">
               <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1;" onclick="selectManuscriptEntry(${index})">
@@ -5130,7 +5130,7 @@ async function restoreVersion() {
         const relative = String(doc?.relative_path || path || 'Untitled');
         const encodedPath = escapeForInlineSingleQuotedJs(path);
         const selected = markdownDocsState.selectedPath === path;
-        return `<button type="button" onclick="selectMarkdownDocumentFromEncoded('${encodedPath}')" title="Open preview for ${escapeHelpHtml(relative)}" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border-color)'}; border-radius:4px; padding:7px; background:${selected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)'}; color:var(--text);"><div style="font-size:0.82rem;">${escapeHelpHtml(relative)}</div></button>`;
+        return `<button type="button" onclick="selectMarkdownDocumentFromEncoded('${encodedPath}')" title="Open preview for ${escapeHelpHtml(relative)}" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border-color)'}; border-radius:4px; padding:7px; background:${selected ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)'}; color:var(--text);"><div style="font-size:0.82rem;">${escapeHelpHtml(relative)}</div></button>`;
       }).join('');
     }
 
@@ -5152,7 +5152,7 @@ async function restoreVersion() {
         const score = Number(row?.score || 0);
         const snippet = escapeHelpHtml(row?.snippet || '');
         return [
-          `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.03); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')" title="Open search result document">`,
+          `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.02); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')" title="Open search result document">`,
           `<div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:4px;"><strong>${title}</strong><span style="font-size:0.75rem; color:var(--text-muted);">score ${score}</span></div>`,
           `<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">${relative}</div>`,
           `<div style="font-size:0.8rem; color:var(--text);">${snippet}</div>`,
@@ -5700,7 +5700,7 @@ async function restoreVersion() {
         const score = Number(row?.score || 0);
         const snippet = escapeHelpHtml(row?.snippet || '');
         return [
-          `<button type="button" style="width: 100%; text-align: left; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; background: rgba(255,255,255,0.03); color: var(--text);" onclick="openHelpDoc('${id}');" title="Open help document ${title}">`,
+          `<button type="button" style="width: 100%; text-align: left; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; background: rgba(255,255,255,0.02); color: var(--text);" onclick="openHelpDoc('${id}');" title="Open help document ${title}">`,
           `<div style="display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px;"><strong>${title}</strong><span style="font-size: 0.75rem; color: var(--text-muted);">score ${score}</span></div>`,
           `<div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">${path}</div>`,
           `<div style="font-size: 0.8rem; color: var(--text);">${snippet}</div>`,

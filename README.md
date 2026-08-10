@@ -23,6 +23,16 @@ The version 7 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-08-10)
+
+- completed Gemini and OpenAI route validation hardening in Advanced AI Routing so save operations are blocked unless both pane routes validate;
+- migrated Gemini defaults and route handling away from retired 2.0 IDs toward current-generation model selection behavior;
+- added provider model catalog revision with validation so users can auto-filter to models that actually pass with their active key/project;
+- added live per-provider validation progress feedback (countdown + progress bar) so long model sweeps visibly advance instead of appearing frozen;
+- refactored Advanced AI Routing into a two-column layout (catalog left, pane controls right) for improved laptop usability;
+- reduced translucency opacity across the glass UI surfaces for a lighter, more modern Linux desktop feel;
+- completed regression coverage for routing UI/layout and catalog validation controls, with current tests green.
+
 ### Latest progress (2026-07-30)
 
 - added a built-in Markdown Documents viewer with rendered preview, fuzzy search, and editor launch workflow;
@@ -124,9 +134,9 @@ This repository is under active development. The current implementation is inten
 
 ## API Key Transparency
 
-- Provider API keys entered in settings are stored locally on the device in application config as plain text.
+- Provider API keys entered in settings are stored locally on the device in encrypted form.
+- Keys are decrypted only when needed for provider requests and are not displayed back in plain text in the UI.
 - Keys are used only to send requests to the provider selected in the UI.
-- For stronger secret handling, prefer environment variables or an OS keychain-backed workflow.
 
 ## Version 7 Milestone
 
