@@ -2543,8 +2543,10 @@
 
       try {
         const response = await invoke('fetch_provider_model_catalog', {
-          provider: normalized,
-          apiKey
+          payload: {
+            provider: normalized,
+            apiKey
+          }
         });
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         const models = Array.isArray(payload?.models) ? payload.models : [];
@@ -2632,9 +2634,11 @@
       }
 
       const response = await invoke('validate_model_selection', {
-        provider,
-        model,
-        apiKey
+        payload: {
+          provider,
+          model,
+          apiKey
+        }
       });
       const payload = typeof response === 'string' ? JSON.parse(response) : response;
       const normalizedModel = String(payload?.normalized_model || model).trim();

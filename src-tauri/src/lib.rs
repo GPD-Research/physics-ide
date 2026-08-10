@@ -2760,8 +2760,23 @@ struct ValidateModelSelectionPayload {
     api_key: String,
 }
 
+fn parse_validate_model_selection_payload(value: serde_json::Value) -> Result<ValidateModelSelectionPayload, String> {
+    if let Ok(payload) = serde_json::from_value::<ValidateModelSelectionPayload>(value.clone()) {
+        return Ok(payload);
+    }
+
+    if let Some(inner) = value.get("payload") {
+        if let Ok(payload) = serde_json::from_value::<ValidateModelSelectionPayload>(inner.clone()) {
+            return Ok(payload);
+        }
+    }
+
+    Err("Unable to parse model validation payload".to_string())
+}
+
 #[tauri::command]
-async fn validate_model_selection(payload: ValidateModelSelectionPayload) -> Result<String, String> {
+async fn validate_model_selection(payload: serde_json::Value) -> Result<String, String> {
+    let payload = parse_validate_model_selection_payload(payload)?;
     let provider_normalized = payload.provider.to_ascii_lowercase();
     let normalized_model = normalize_model_for_provider(&provider_normalized, &payload.model);
     let normalized_api_key = normalize_api_key(&payload.api_key);
@@ -2802,8 +2817,23 @@ struct ProviderModelCatalogPayload {
     api_key: String,
 }
 
+fn parse_provider_model_catalog_payload(value: serde_json::Value) -> Result<ProviderModelCatalogPayload, String> {
+    if let Ok(payload) = serde_json::from_value::<ProviderModelCatalogPayload>(value.clone()) {
+        return Ok(payload);
+    }
+
+    if let Some(inner) = value.get("payload") {
+        if let Ok(payload) = serde_json::from_value::<ProviderModelCatalogPayload>(inner.clone()) {
+            return Ok(payload);
+        }
+    }
+
+    Err("Unable to parse provider model catalog payload".to_string())
+}
+
 #[tauri::command]
-async fn fetch_provider_model_catalog(payload: ProviderModelCatalogPayload) -> Result<String, String> {
+async fn fetch_provider_model_catalog(payload: serde_json::Value) -> Result<String, String> {
+    let payload = parse_provider_model_catalog_payload(payload)?;
     let provider_normalized = payload.provider.to_ascii_lowercase();
     let trimmed_key = normalize_api_key(&payload.api_key);
 
@@ -5296,6 +5326,32 @@ mod tests {
         assert_eq!(checklist["status"].as_str().unwrap(), "incomplete");
         assert!(checklist["completed_count"].as_u64().unwrap() < checklist["total_count"].as_u64().unwrap());
         assert_eq!(checklist["next_recommended_step"].as_str().unwrap(), "Master axiom");
+    }
+
+    #[test]
+    fn parse_validate_model_selection_payload_accepts_direct_and_wrapped_objects() {
+        let direct_payload = serde_json::json!({
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "apiKey": "sk-test"
+        });
+        let wrapped_payload = serde_json::json!({
+            "payload": {
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "apiKey": "sk-test"
+            }
+        });
+
+        let direct = serde_json::from_value::<ValidateModelSelectionPayload>(direct_payload).unwrap();
+        let wrapped = parse_validate_model_selection_payload(wrapped_payload).unwrap();
+
+        assert_eq!(direct.provider, "openai");
+        assert_eq!(direct.model, "gpt-4.1");
+        assert_eq!(direct.api_key, "sk-test");
+        assert_eq!(wrapped.provider, "openai");
+        assert_eq!(wrapped.model, "gpt-4.1");
+        assert_eq!(wrapped.api_key, "sk-test");
     }
 
     #[test]
