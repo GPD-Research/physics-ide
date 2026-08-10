@@ -1480,6 +1480,7 @@
           <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
             <select id="ai-catalog-openai-select" style="flex: 1 1 280px;"></select>
             <button type="button" onclick="refreshProviderModelCatalog('openai')" title="Refresh OpenAI model list">Refresh</button>
+            <button type="button" onclick="reviseProviderModelCatalogWithValidation('openai')" title="Validate each OpenAI catalog model and keep only the ones that pass">Revise List with Validation</button>
             <button type="button" onclick="applyCatalogModelToPane('openai', 'left')" title="Apply selected OpenAI model to left pane">Use Left</button>
             <button type="button" onclick="applyCatalogModelToPane('openai', 'right')" title="Apply selected OpenAI model to right pane">Use Right</button>
           </div>
@@ -1491,6 +1492,7 @@
           <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
             <select id="ai-catalog-gemini-select" style="flex: 1 1 280px;"></select>
             <button type="button" onclick="refreshProviderModelCatalog('gemini')" title="Refresh Gemini model list">Refresh</button>
+            <button type="button" onclick="reviseProviderModelCatalogWithValidation('gemini')" title="Validate each Gemini catalog model and keep only the ones that pass">Revise List with Validation</button>
             <button type="button" onclick="applyCatalogModelToPane('gemini', 'left')" title="Apply selected Gemini model to left pane">Use Left</button>
             <button type="button" onclick="applyCatalogModelToPane('gemini', 'right')" title="Apply selected Gemini model to right pane">Use Right</button>
           </div>
@@ -2584,6 +2586,67 @@
         setProviderCatalogStatus(normalized, `Loaded ${models.length} model ID(s).`);
       } catch (err) {
         setProviderCatalogStatus(normalized, `Catalog load failed: ${err}`, true);
+      }
+    }
+
+    async function reviseProviderModelCatalogWithValidation(provider) {
+      const normalized = normalizeProviderForV7(provider);
+      const apiKey = getApiKeyForProvider(normalized);
+      if (!apiKey) {
+        setProviderCatalogStatus(normalized, `${getProviderDisplayName(normalized)} API key is required to revise the catalog.`, true);
+        return;
+      }
+
+      let models = Array.isArray(providerModelCatalog[normalized]) ? providerModelCatalog[normalized] : [];
+      if (models.length === 0) {
+        await refreshProviderModelCatalog(normalized);
+        models = Array.isArray(providerModelCatalog[normalized]) ? providerModelCatalog[normalized] : [];
+      }
+
+      if (models.length === 0) {
+        setProviderCatalogStatus(normalized, 'No models are loaded yet. Refresh the catalog first.', true);
+        return;
+      }
+
+      setProviderCatalogStatus(normalized, `Validating ${models.length} ${getProviderDisplayName(normalized)} model ID(s)...`);
+
+      const validatedModels = [];
+      for (const model of models) {
+        const trimmedModel = String(model || '').trim();
+        if (!trimmedModel) continue;
+
+        try {
+          const response = await invoke('validate_model_selection', {
+            payload: {
+              provider: normalized,
+              model: trimmedModel,
+              apiKey
+            }
+          });
+          const payload = typeof response === 'string' ? JSON.parse(response) : response;
+          const normalizedModel = String(payload?.normalized_model || trimmedModel).trim();
+          if (normalizedModel) {
+            validatedModels.push(normalizedModel);
+          }
+        } catch (err) {
+          // Exclude any model that fails validation.
+        }
+      }
+
+      const dedupedModels = [];
+      validatedModels.forEach((modelId) => {
+        if (!dedupedModels.some((existing) => existing.toLowerCase() === modelId.toLowerCase())) {
+          dedupedModels.push(modelId);
+        }
+      });
+
+      providerModelCatalog[normalized] = dedupedModels;
+      renderProviderModelCatalog(normalized);
+
+      if (dedupedModels.length === 0) {
+        setProviderCatalogStatus(normalized, 'No models passed validation. Try another key or model.', true);
+      } else {
+        setProviderCatalogStatus(normalized, `Revised catalog: ${dedupedModels.length} validated model ID(s).`);
       }
     }
 

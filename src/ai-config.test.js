@@ -16,6 +16,10 @@ test('advanced routing UI uses current Gemini 2.5 presets', () => {
   assert.ok(!html.includes('<option value="gemini-2.0-flash">'), 'did not expect retired Gemini 2.0 flash preset option');
 });
 
+test('advanced routing UI exposes a validation-driven catalog revision button', () => {
+  assert.ok(html.includes('Revise List with Validation'), 'expected validation-driven catalog revision button');
+});
+
 test('openai provider exposes OpenAI model options', () => {
   const models = getModelOptions('openai');
   assert.deepEqual(models, [
