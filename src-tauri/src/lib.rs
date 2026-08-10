@@ -2557,6 +2557,26 @@ mod llm_prompt_tests {
         assert!(prompt.contains("User:"));
         assert!(prompt.contains("Assistant:"));
     }
+
+    #[test]
+    fn retries_gemini_auth_for_access_token_type_errors() {
+        let response_text = r#"{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}"#;
+
+        assert!(gemini_auth_error_requires_bearer_fallback(
+            reqwest::StatusCode::UNAUTHORIZED,
+            response_text,
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_gemini_auth_for_model_not_found_errors() {
+        let response_text = r#"{"error":{"code":404,"message":"models/gemini-2.0-flash is not found for API version v1beta","status":"NOT_FOUND"}}"#;
+
+        assert!(!gemini_auth_error_requires_bearer_fallback(
+            reqwest::StatusCode::NOT_FOUND,
+            response_text,
+        ));
+    }
 }
 
 #[tauri::command]
@@ -2707,6 +2727,102 @@ fn validate_openai_model(api_key: &str, model: &str) -> Result<(), String> {
     ))
 }
 
+fn gemini_auth_error_requires_bearer_fallback(status: reqwest::StatusCode, response_text: &str) -> bool {
+    if status != reqwest::StatusCode::UNAUTHORIZED && status != reqwest::StatusCode::FORBIDDEN {
+        return false;
+    }
+
+    let lower = response_text.to_ascii_lowercase();
+    lower.contains("access_token_type_unsupported")
+        || lower.contains("oauth 2 access token")
+        || lower.contains("invalid authentication credentials")
+        || lower.contains("unauthenticated")
+        || lower.contains("oauth")
+}
+
+fn send_gemini_post_with_auth_fallback(
+    client: &reqwest::blocking::Client,
+    endpoint: &str,
+    body: &serde_json::Value,
+    api_key: &str,
+) -> Result<(reqwest::StatusCode, String), String> {
+    let trimmed_key = api_key.trim();
+    if trimmed_key.is_empty() {
+        return Err("Gemini API key is required for this request.".to_string());
+    }
+
+    let query_url = format!("{endpoint}?key={trimmed_key}");
+    let response = client
+        .post(&query_url)
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .map_err(|e| format!("Gemini request failed: {e}"))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+
+    if status.is_success() || !gemini_auth_error_requires_bearer_fallback(status, &response_text) {
+        return Ok((status, response_text));
+    }
+
+    let bearer_response = client
+        .post(endpoint)
+        .header("Authorization", format!("Bearer {}", trimmed_key))
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .map_err(|e| format!("Gemini bearer-token request failed: {e}"))?;
+
+    let bearer_status = bearer_response.status();
+    let bearer_text = bearer_response
+        .text()
+        .map_err(|e| format!("Gemini bearer-token response parsing failed: {e}"))?;
+
+    Ok((bearer_status, bearer_text))
+}
+
+fn send_gemini_get_with_auth_fallback(
+    client: &reqwest::blocking::Client,
+    endpoint: &str,
+    api_key: &str,
+) -> Result<(reqwest::StatusCode, String), String> {
+    let trimmed_key = api_key.trim();
+    if trimmed_key.is_empty() {
+        return Err("Gemini API key is required for this request.".to_string());
+    }
+
+    let query_url = format!("{endpoint}?key={trimmed_key}");
+    let response = client
+        .get(&query_url)
+        .send()
+        .map_err(|e| format!("Gemini request failed: {e}"))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+
+    if status.is_success() || !gemini_auth_error_requires_bearer_fallback(status, &response_text) {
+        return Ok((status, response_text));
+    }
+
+    let bearer_response = client
+        .get(endpoint)
+        .header("Authorization", format!("Bearer {}", trimmed_key))
+        .send()
+        .map_err(|e| format!("Gemini bearer-token request failed: {e}"))?;
+
+    let bearer_status = bearer_response.status();
+    let bearer_text = bearer_response
+        .text()
+        .map_err(|e| format!("Gemini bearer-token response parsing failed: {e}"))?;
+
+    Ok((bearer_status, bearer_text))
+}
+
 fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
     if api_key.trim().is_empty() {
         return Err("Gemini API key is required for model validation.".to_string());
@@ -2714,9 +2830,8 @@ fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
 
     let client = reqwest::blocking::Client::new();
     let endpoint = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model,
-        api_key.trim()
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+        model
     );
     let body = serde_json::json!({
         "contents": [{
@@ -2729,21 +2844,12 @@ fn validate_gemini_model(api_key: &str, model: &str) -> Result<(), String> {
         }
     });
 
-    let response = client
-        .post(&endpoint)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .map_err(|e| format!("Gemini validation request failed: {e}"))?;
+    let (status, response_text) = send_gemini_post_with_auth_fallback(&client, &endpoint, &body, api_key)?;
 
-    if response.status().is_success() {
+    if status.is_success() {
         return Ok(());
     }
 
-    let status = response.status();
-    let response_text = response
-        .text()
-        .map_err(|e| format!("Gemini validation response parsing failed: {e}"))?;
     Err(format!(
         "Gemini model validation failed for '{}': HTTP {} - {}",
         model,
@@ -3048,15 +3154,8 @@ fn list_gemini_generate_content_models(
     client: &reqwest::blocking::Client,
     api_key: &str,
 ) -> Result<Vec<String>, String> {
-    let response = client
-        .get(format!("https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"))
-        .send()
-        .map_err(|e| format!("Gemini model discovery failed: {e}"))?;
-
-    let status = response.status();
-    let response_text = response
-        .text()
-        .map_err(|e| format!("Gemini model discovery response parsing failed: {e}"))?;
+    let endpoint = "https://generativelanguage.googleapis.com/v1beta/models";
+    let (status, response_text) = send_gemini_get_with_auth_fallback(client, endpoint, api_key)?;
 
     if !status.is_success() {
         let parsed_error = serde_json::from_str::<serde_json::Value>(&response_text)
@@ -3257,18 +3356,10 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
 
     for candidate_model in gemini_model_candidates(&client, api_key, &normalized_model) {
         attempted_models.push(candidate_model.clone());
-        let response = client
-            .post(format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={api_key}"
-            ))
-            .json(&body)
-            .send()
-            .map_err(|e| format!("Gemini request failed: {e}"))?;
-
-        let status = response.status();
-        let response_text = response
-            .text()
-            .map_err(|e| format!("Gemini response parsing failed: {e}"))?;
+        let endpoint = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent"
+        );
+        let (status, response_text) = send_gemini_post_with_auth_fallback(&client, &endpoint, &body, api_key)?;
 
         if status.is_success() {
             let parsed: serde_json::Value = serde_json::from_str(&response_text)
