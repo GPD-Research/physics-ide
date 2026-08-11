@@ -45,6 +45,8 @@
 	        --bg-main: #020617;
 	        --bg-darker: #050b1a;
 	        --bg-panel: #0a1428;       /* Deep sapphire blue panel field */
+          --bg-dark: #0d1b2a;
+          --thread-bg: #1b2942;
 
           /* Glass Surfaces */
           --menu-glass-bg: rgba(10, 20, 40, 0.29);
@@ -57,16 +59,41 @@
 	        --border-panel: #2563eb;   
 	        --border-input: #1d4ed8;
 	        
-	        /* Searing Laser Red Typography (Everything burns red) */
-	        --text: #ff1a1a;           /* Pure, high-purity bright red text */
-	        --text-muted: #fca5a5;     /* Softer red for secondary labels */
+	        /* Softer red typography for long sessions */
+	        --text: #f87171;           /* Subdued but still red-tinted */
+	        --text-muted: #fca5a5;     /* Soft red for secondary labels */
 	        
 	        /* Active Accents */
-	        --accent: #ff0033;         /* Maximum-intensity floating red */
-	        --accent-dim: #dc2626;
+	        --accent: #dc2626;         /* Rich red that doesn't fight the eyes */
+	        --accent-dim: #b91c1c;
 	        
 	        color-scheme: dark;
 	  }
+
+      [data-theme="oceanic"] {
+          --bg-dark: #dfeff6;
+          --bg-darker: #eaf8ff;
+          --bg-panel: #f6fdff;
+          --bg-main: #e3f7fb;
+          --thread-bg: #e0f4ff;
+
+          --menu-glass-bg: rgba(224, 244, 255, 0.42);
+          --menu-glass-hover: rgba(10, 166, 176, 0.12);
+          --terminal-glass-bg: rgba(255, 255, 255, 0.28);
+          --terminal-header-glass-bg: rgba(195, 236, 247, 0.42);
+
+          --border-color: #8ad1dd;
+          --border-panel: #1aa3b8;
+          --border-input: #60b9d0;
+
+          --text: #051a20;
+          --text-muted: #234a56;
+
+          --accent: #0f9aa7;
+          --accent-dim: #1579a6;
+
+          color-scheme: light;
+      }
         
       [data-theme="light"] {
                   /* Backgrounds */
@@ -552,7 +579,7 @@
   
       /* Live LaTeX Message bubble components */
       .chat-bubble {
-        background-color: var(--bg-panel);
+        background-color: var(--thread-bg, var(--bg-panel));
         padding: 10px;
         border-radius: 6px;
         margin-bottom: 10px;
@@ -1321,6 +1348,13 @@
               <button onclick="saveScratchpad(true)" title="Save scratchpad to a new file path">💾 Save As...</button>
               <button class="btn-large" onclick="passScratchpadIntoPrimer()" title="Append scratchpad notes into primer context">➡ Pass Into Primer</button>
             </div>
+            <div class="btn-group" style="margin-top: 8px; align-items: center; justify-content: space-between; gap: 8px;">
+              <button style="flex: 1; min-width: 0;" onclick="syncIdeaPadContext()" title="Sync the current idea pad note and, optionally, the visible project tree into the AI context">🔄 Sync AI Context</button>
+              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;">
+                <input id="idea-pad-include-file-tree" type="checkbox" checked>
+                Include file tree
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -1506,6 +1540,7 @@
 			              <option value="dark">Dark Mode (Catppuccin)</option>
 			              <option value="light">Light Mode</option>
 			              <option value="chromostereopsis">Chromostereopsis (Holographic)</option>
+			              <option value="oceanic">Oceanic (Cyan / Teal)</option>
 			            </select>
 			          </div>
 			
@@ -2130,6 +2165,12 @@
 	      if (themeName === 'dark') {
 	        document.getElementById('picker-accent').value = '#33d17a';
 	        document.getElementById('picker-bg-panel').value = '#2f4f3f';
+	      } else if (themeName === 'chromostereopsis') {
+	        document.getElementById('picker-accent').value = '#dc2626';
+	        document.getElementById('picker-bg-panel').value = '#0a1428';
+	      } else if (themeName === 'oceanic') {
+	        document.getElementById('picker-accent').value = '#0f9aa7';
+	        document.getElementById('picker-bg-panel').value = '#f6fdff';
 	      } else {
 	        document.getElementById('picker-accent').value = '#26a269';
 	        document.getElementById('picker-bg-panel').value = '#deddda';

@@ -6,9 +6,9 @@ physics-IDE is a Linux-first desktop research environment for developing, compar
 
 The immediate direction for physics-IDE is to focus on a Linux-exclusive build and Debian-based deployment workflow. Windows support is currently deferred while the compilation process remains too complex to maintain effectively.
 
-The next major milestone is version 7: turning physics-IDE into a true imported-project research environment where the AI can understand the state of the theory, the available tools, and the history of analysis work without needing the original human operator to re-explain everything each session.
+The next major milestone is version 8: a release-candidate pass that turns physics-IDE into a true imported-project research environment where the AI can understand the state of the theory, the available tools, and the history of analysis work without needing the original human operator to re-explain everything each session.
 
-The version 7 vision is to provide a flexible environment for:
+The version 8 vision is to provide a flexible environment for:
 
 - organizing theory material, notes, equations, and manuscripts in one place;
 - ingesting theory sources from different paradigms without rejecting them up front;
@@ -31,7 +31,9 @@ The project has moved from a simple desktop shell toward a more practical theory
 - added a read-only / read-write toggle in the settings panel so project-aware AI operations can be safely gated by user intent;
 - upgraded chat input to support Shift+Enter line breaks and a more natural multiline workflow for structured prompting;
 - added file attachment support for prompt threads, opened by default from the active project root and including text/image payload content in the prompt sent to the AI;
-- verified the backend remains stable with the current regression suite passing after the AI access-control and prompt-attachment changes.
+- tightened the user-facing idea-pad workflow so a session note can sync directly into AI context with an optional visible project-tree scope filter;
+- added the Oceanic theme and refined Chromostereopsis for longer, more comfortable dark-theme use;
+- verified the backend remains stable with the current regression suite passing after the AI access-control, prompt-attachment, and UI polish changes.
 
 ### Latest progress (2026-08-10)
 
@@ -148,14 +150,15 @@ This repository is under active development. The current implementation is inten
 - Keys are decrypted only when needed for provider requests and are not displayed back in plain text in the UI.
 - Keys are used only to send requests to the provider selected in the UI.
 
-## Version 7 Milestone
+## Version 8 Release Candidate
 
-Version 7 marks a major milestone for physics-IDE.
+Version 8 marks the current release-candidate milestone for physics-IDE.
 
-- Project-aware AI behavior is now stable enough to materially outperform a generic side-by-side browser LLM workflow for in-project theory work.
+- Project-aware AI behavior is stable enough to materially outperform a generic side-by-side browser LLM workflow for in-project theory work.
 - The desktop workflow now supports a coherent paradigm for theoretical-physics modeling, iteration, and testing, with AI carrying repetitive context-heavy tasks while the human remains the primary director of theory evolution.
+- The app is now tuned for a clean AI-first project workflow: idea-pad driven prompting, scoped project context, safe local file access guardrails, and a more natural desktop UX.
 
-## Version 8 Prospective Goals
+## Version 8 Goals
 
 Version 8 is focused on refinement, flexibility, and polish.
 

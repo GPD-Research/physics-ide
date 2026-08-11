@@ -201,12 +201,15 @@ async function fetchAndRenderDirectory(path, containerElement = null) {
 
       const label = document.createElement('div');
       label.className = 'file-item';
+      label.dataset.path = entry.path;
+      label.dataset.isDir = String(Boolean(entry.is_dir));
       label.innerText = (entry.is_dir ? '📁 ' : '📄 ') + entry.name;
       li.appendChild(label);
 
       if (entry.is_dir) {
         const subContainer = document.createElement('div');
         subContainer.style.display = 'none';
+        subContainer.dataset.directoryPath = entry.path;
         li.appendChild(subContainer);
 
         label.onclick = async (e) => {
@@ -214,12 +217,13 @@ async function fetchAndRenderDirectory(path, containerElement = null) {
           const isCollapsed = subContainer.style.display === 'none';
           
           if (isCollapsed) {
-            // The guard at the top of this function will handle subFoldersLoaded state
             await fetchAndRenderDirectory(entry.path, subContainer);
             subContainer.style.display = 'block';
+            subContainer.dataset.expanded = 'true';
             label.innerText = '📂 ' + entry.name;
           } else {
             subContainer.style.display = 'none';
+            subContainer.dataset.expanded = 'false';
             label.innerText = '📁 ' + entry.name;
           }
         };
@@ -240,6 +244,83 @@ async function fetchAndRenderDirectory(path, containerElement = null) {
     console.error("Tree Read Error:", err);
     appendTerminalLog(`Tree Read Error: ${err}`);
   }
+}
+
+function buildVisibleProjectTreeMarkdown() {
+  const rootPath = (currentWorkspacePath || '').trim();
+  const rootContainer = document.getElementById('file-tree-container');
+
+  if (!rootPath || !rootContainer) {
+    return '';
+  }
+
+  const rootFolderName = rootPath.split(/[\\/]/).filter(Boolean).pop() || 'project';
+  const normalizedRootPath = rootPath.replace(/\\/g, '/');
+  const lines = [
+    '# Visible Project Tree',
+    '',
+    '## Root',
+    `- ${rootFolderName}`,
+    '',
+    '## Visible Entries'
+  ];
+
+  const walkTree = (container, depth) => {
+    if (!container) return;
+
+    const listItems = Array.from(container.querySelectorAll(':scope > ul > li'));
+    listItems.forEach((li) => {
+      const label = li.querySelector(':scope > .file-item');
+      if (!label) return;
+
+      const isDir = label.dataset.isDir === 'true';
+      const entryPath = (label.dataset.path || '').replace(/\\/g, '/');
+      const entryName = (label.textContent || '').replace(/^[📁📂📄]\s*/, '');
+      const relativePath = entryPath.startsWith(normalizedRootPath)
+        ? entryPath.slice(normalizedRootPath.length).replace(/^\/+/, '')
+        : entryName;
+      const prefix = '  '.repeat(depth);
+      const suffix = isDir ? '/' : '';
+
+      if (relativePath || entryName) {
+        lines.push(`${prefix}- /${relativePath || entryName}${suffix}`);
+      }
+
+      const subContainer = li.querySelector(':scope > div:not(.file-item)');
+      if (isDir && subContainer && subContainer.style.display !== 'none') {
+        walkTree(subContainer, depth + 1);
+      }
+    });
+  };
+
+  walkTree(rootContainer, 0);
+
+  if (lines.length <= 6) {
+    return `${lines.join('\n')}\n- /${rootFolderName}/`;
+  }
+
+  return lines.join('\n');
+}
+
+function syncIdeaPadContext() {
+  const scratchpadEl = document.getElementById('scratchpad-content');
+  const scratchpadText = scratchpadEl?.innerText?.trim() || '';
+  const includeTree = document.getElementById('idea-pad-include-file-tree')?.checked !== false;
+  const visibleTree = includeTree ? buildVisibleProjectTreeMarkdown() : '';
+
+  const promptParts = [
+    'Idea pad sync for the current session.',
+    scratchpadText || 'No current idea pad note content yet. The user is asking for guidance or planning without a written note.',
+    visibleTree ? 'Visible project tree context for the AI:' : '',
+    visibleTree
+  ].filter(Boolean);
+
+  const promptText = promptParts.join('\n\n');
+
+  injectSystemPrimerMessage('left', leftIndex, 'Idea Pad Sync', promptText);
+  injectSystemPrimerMessage('right', rightIndex, 'Idea Pad Sync', promptText);
+  document.getElementById('briefing-indicator').innerText = '🤖 Idea Pad Context Synced';
+  appendTerminalLog('Idea pad context synced to both AI threads.');
 }
 
 async function exportWorkspaceTree() {
