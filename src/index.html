@@ -576,6 +576,10 @@
         color: var(--text);
         padding: 8px;
         border-radius: 4px;
+        min-height: 72px;
+        max-height: 180px;
+        resize: vertical;
+        font: inherit;
       }
   
       .chat-input:focus { outline: none; border-color: var(--accent); }
@@ -1090,8 +1094,8 @@
         </div>
 
         <div class="chat-input-wrapper">
-          <button class="chat-attach-btn" onclick="attachFileToThread('left')" title="Attach file to analytical lane">+</button>
-          <input type="text" id="left-chat-input" class="chat-input" placeholder="Query analytical stack..." title="Type a prompt. Press Enter to send." onkeydown="if(event.key === 'Enter') submitPrompt('left')">
+          <button class="chat-attach-btn" onclick="attachFileToThread('left')" title="Attach a file to include its contents in the prompt">+</button>
+          <textarea id="left-chat-input" class="chat-input" placeholder="Query analytical stack... Shift+Enter for a new line." title="Type a prompt. Press Enter to send, Shift+Enter for a new line." onkeydown="handleChatInputKeydown(event, 'left')"></textarea>
           <button onclick="submitPrompt('left')" title="Send prompt to analytical lane (Enter)">Send</button>
         </div>
       </div>
@@ -1134,8 +1138,8 @@
         </div>
 
         <div class="chat-input-wrapper">
-          <button class="chat-attach-btn" onclick="attachFileToThread('right')" title="Attach file to creative lane">+</button>
-          <input type="text" id="right-chat-input" class="chat-input" placeholder="Query speculation engine..." title="Type a prompt. Press Enter to send." onkeydown="if(event.key === 'Enter') submitPrompt('right')">
+          <button class="chat-attach-btn" onclick="attachFileToThread('right')" title="Attach a file to include its contents in the prompt">+</button>
+          <textarea id="right-chat-input" class="chat-input" placeholder="Query speculation engine... Shift+Enter for a new line." title="Type a prompt. Press Enter to send, Shift+Enter for a new line." onkeydown="handleChatInputKeydown(event, 'right')"></textarea>
           <button onclick="submitPrompt('right')" title="Send prompt to creative lane (Enter)">Send</button>
         </div>
       </div>
@@ -2007,6 +2011,10 @@
     const chatHistories = {
       left: [[], [], []],
       right: [[], [], []]
+    };
+    const pendingAttachments = {
+      left: [],
+      right: []
     };
 
     let currentWorkspacePath = "";
@@ -3124,19 +3132,63 @@
       }
     }
 
+    function handleChatInputKeydown(event, pane) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        submitPrompt(pane);
+        return;
+      }
+
+      if (event.key === 'Enter' && event.shiftKey) {
+        event.preventDefault();
+        const inputEl = event.currentTarget;
+        const start = inputEl.selectionStart;
+        const end = inputEl.selectionEnd;
+        const value = inputEl.value;
+        inputEl.value = `${value.slice(0, start)}\n${value.slice(end)}`;
+        const newCursor = start + 1;
+        inputEl.selectionStart = newCursor;
+        inputEl.selectionEnd = newCursor;
+      }
+    }
+
     async function submitPrompt(pane) {
       if (!currentConfig) return;
 
       const inputEl = document.getElementById(`${pane}-chat-input`);
       const text = inputEl.value.trim();
-      if (!text) return;
+      const attachments = pendingAttachments[pane] || [];
+      if (!text && attachments.length === 0) return;
 
       inputEl.value = "";
-      await dispatchPromptToPane(pane, text, "Gregory");
+      pendingAttachments[pane] = [];
+      await dispatchPromptToPane(pane, text, "Gregory", attachments);
     }
 
-    async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory') {
-      if (!currentConfig || !text) {
+    function buildPromptText(text, attachments = []) {
+      const parts = [];
+      if (text) {
+        parts.push(text);
+      }
+      if (attachments.length > 0) {
+        const attachmentBlocks = attachments.map((attachment) => {
+          const safePath = String(attachment?.path || 'attachment');
+          const safeKind = String(attachment?.kind || 'text');
+          const safeContent = String(attachment?.content || '');
+          return `[Attached ${safeKind} file: ${safePath}]\n${safeContent}`.trim();
+        });
+        parts.push(attachmentBlocks.join('\n\n'));
+      }
+      return parts.filter(Boolean).join('\n\n');
+    }
+
+    async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory', attachments = []) {
+      if (!currentConfig) {
+        return '';
+      }
+
+      const fullPrompt = buildPromptText(text, attachments);
+      if (!fullPrompt) {
         return '';
       }
 
@@ -3145,9 +3197,13 @@
 
       let messagePayload;
       if (provider === 'gemini') {
-        messagePayload = { role: "user", parts: [{ text: text }] };
+        messagePayload = { role: "user", parts: [{ text: fullPrompt }] };
       } else {
-        messagePayload = { role: "user", content: text };
+        messagePayload = { role: "user", content: fullPrompt };
+      }
+
+      if (attachments.length > 0) {
+        messagePayload.attachments = attachments;
       }
 
       chatHistories[pane][index].push(messagePayload);
@@ -5063,18 +5119,34 @@ async function restoreVersion() {
 
     async function attachFileToThread(pane) {
       try {
+        const defaultBasePath = (currentWorkspacePath || currentConfig?.project_root_dir || currentConfig?.last_root_dir || '').trim();
         const selected = await window.__TAURI__.dialog.open({
           directory: false,
           multiple: false,
-          title: 'Select a file to attach'
+          title: 'Select a file to attach',
+          defaultPath: defaultBasePath || undefined
         });
         if (!selected) return;
+
+        const attachment = await invoke('read_attachment_file', { path: selected });
+        const payload = typeof attachment === 'string' ? JSON.parse(attachment) : attachment;
+        const normalizedPath = payload?.path || selected;
+        const normalizedKind = payload?.kind || 'text';
+        const normalizedContent = payload?.content || '';
+        pendingAttachments[pane] = [{
+          path: normalizedPath,
+          kind: normalizedKind,
+          content: normalizedContent,
+          mime: payload?.mime || ''
+        }];
+
         const inputId = pane === 'left' ? 'left-chat-input' : 'right-chat-input';
         const input = document.getElementById(inputId);
         if (input) {
-          input.value = `${input.value} [attachment:${selected}]`.trim();
           input.focus();
+          input.placeholder = `Attached ${String(normalizedPath).split(/[\\/]/).pop()}`;
         }
+        appendTerminalLog(`Attached file for ${pane}: ${normalizedPath}`);
       } catch (err) {
         appendTerminalLog(`Attachment Error: ${err}`);
       }
