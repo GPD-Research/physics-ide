@@ -2761,6 +2761,42 @@ mod llm_prompt_tests {
 }
 
 #[tauri::command]
+fn read_attachment_file(path: String) -> Result<String, String> {
+    let target_path = std::path::Path::new(&path);
+    if !target_path.exists() {
+        return Err(format!("Attachment file does not exist: {}", path));
+    }
+    if !target_path.is_file() {
+        return Err(format!("Attachment path is not a file: {}", path));
+    }
+
+    let mime = mime_guess::from_path(target_path).first_or_octet_stream().to_string();
+    let content = if mime.starts_with("text/") || mime == "application/json" || mime == "application/xml" || mime == "application/javascript" || mime == "application/x-yaml" || mime == "application/x-httpd-php" || mime == "application/x-shellscript" {
+        std::fs::read_to_string(target_path)
+            .map_err(|e| format!("Failed to read text file: {e}"))?
+    } else if mime.starts_with("image/") {
+        let bytes = std::fs::read(target_path)
+            .map_err(|e| format!("Failed to read image file: {e}"))?;
+        let encoded = base64::encode(&bytes);
+        format!("<image-data mime=\"{mime}\" encoding=\"base64\">\n{encoded}\n</image-data>")
+    } else {
+        let bytes = std::fs::read(target_path)
+            .map_err(|e| format!("Failed to read binary file: {e}"))?;
+        let encoded = base64::encode(&bytes);
+        format!("<binary-data mime=\"{mime}\" encoding=\"base64\">\n{encoded}\n</binary-data>")
+    };
+
+    let payload = serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "kind": if mime.starts_with("image/") { "image" } else if mime.starts_with("text/") || mime == "application/json" || mime == "application/xml" || mime == "application/javascript" || mime == "application/x-yaml" || mime == "application/x-httpd-php" || mime == "application/x-shellscript" { "text" } else { "binary" },
+        "mime": mime,
+        "content": content
+    });
+
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
 async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
@@ -5880,6 +5916,7 @@ pub fn run() {
             get_version_tags,
             save_equation_to_md,
             save_scratchpad_content,
+            read_attachment_file,
             compute_cosmology_metrics_command,
             generate_empirical_analysis_primer,
             export_workspace_tree,
