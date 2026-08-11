@@ -4681,7 +4681,7 @@ fn import_theory_source_command(source_path: String, output_dir: String, app: ta
     let output_dir = PathBuf::from(&output_dir);
     let result = import_theory_source(&source_path, &output_dir)?;
 
-    let mut config = load_app_config(&app).unwrap_or_default();
+    let config = load_app_config(&app).unwrap_or_default();
 
     let mut payload = result;
     payload["master_axiom_file"] = serde_json::Value::String(config.master_axiom_file.clone());
@@ -4690,7 +4690,7 @@ fn import_theory_source_command(source_path: String, output_dir: String, app: ta
 
 #[tauri::command]
 fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
-    let mut config = load_app_config(&app).unwrap_or_default();
+    let config = load_app_config(&app).unwrap_or_default();
 
     let effective_theory_dir = if theory_dir.trim().is_empty() {
         if !config.theory_md_dir.is_empty() {
