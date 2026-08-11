@@ -10,6 +10,15 @@ Status: Release-candidate ready; Linux packaging smoke confirmed.
 - Added post-run Open Report action to jump directly to generated probe reports.
 - Hardened OpenAI model handling with safer fallback behavior for access/model errors.
 
+## Session update: AI access and prompt workflow (2026-08-11)
+
+- Added a workspace-scoped AI file-access permission model so the AI can only create, modify, or delete files within the active project root unless the user deliberately changes that root in Customize.
+- Clarified the AI advisory-only behavior in briefing context so the app distinguishes pure project reasoning from direct local file-edit capability.
+- Replaced the decorative tree export with a compact AI-friendly markdown project map that is easier for the AI to parse and reason over.
+- Added multiline chat input with Shift+Enter support for structured prompting and paragraph-level work.
+- Added attached-file support for AI prompts, with native file-picker behavior rooted in the active project directory and prompt payloads including text/image content for inspection.
+- Verified the updated backend remains stable with automated tests passing in-session.
+
 ## Quality and validation
 
 - Repeated context-probe benchmarking in the v7 stream showed major reliability improvements.
