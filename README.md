@@ -76,13 +76,12 @@ The project has moved from a simple desktop shell toward a more practical theory
 
 ### Current focus
 
-- formalizing the version 7 implementation plan for project-aware AI memory;
-- adding a Tools menu for future project workflows and app functions;
-- building a manuscript composition workflow that orders markdown chapters, sections, and subsections into a master document;
-- connecting imported theory structure to reusable tools, experiments, and datasets;
-- improving support for diverse theory families and educational use cases.
+- reducing manual primer setup by letting the AI infer project context from configured roots and the user’s idea-pad note;
+- refining workflow consolidation so desktop tools feel more native and less configuration-heavy;
+- improving manuscript and theory augmentation workflows to remain optional but polished;
+- continuing to broaden project-aware AI capability without sacrificing the project-root safety model.
 
-## Version 7 Implementation Order
+## Version 8 Implementation Order
 
 1. Project knowledge index
    - Parse the master manuscript and theory markdown directory into a structured topic tree.
@@ -174,7 +173,7 @@ Tracking references:
 - docs/releases/v7-release-notes.md
 - docs/releases/v8-model-flexibility-plan.md
 
-## Ubuntu Linux Full Build Guide (v7)
+## Ubuntu Linux Full Build Guide (v8 RC)
 
 Use this sequence on a local Ubuntu laptop for a clean production build.
 
