@@ -583,7 +583,46 @@
       }
   
       .chat-input:focus { outline: none; border-color: var(--accent); }
-  
+
+      .chat-input-attached {
+        display: none;
+        margin-top: 6px;
+        max-width: 100%;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border-color);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text-muted);
+        font-size: 0.72rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .chat-input-attached.visible {
+        display: inline-block;
+      }
+
+      .chat-input-attached .attachment-kind {
+        display: inline-block;
+        margin-right: 6px;
+        padding: 1px 5px;
+        border-radius: 999px;
+        background: rgba(125, 143, 255, 0.12);
+        color: var(--accent);
+        font-weight: 700;
+        font-size: 0.66rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .chat-input-attached .remove-attachment {
+        margin-left: 8px;
+        cursor: pointer;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
       /* EMBEDDED TERMINAL STYLING */
       .terminal-panel {
         width: 100%;
@@ -1095,7 +1134,10 @@
 
         <div class="chat-input-wrapper">
           <button class="chat-attach-btn" onclick="attachFileToThread('left')" title="Attach a file to include its contents in the prompt">+</button>
-          <textarea id="left-chat-input" class="chat-input" placeholder="Query analytical stack... Shift+Enter for a new line." title="Type a prompt. Press Enter to send, Shift+Enter for a new line." onkeydown="handleChatInputKeydown(event, 'left')"></textarea>
+          <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+            <textarea id="left-chat-input" class="chat-input" placeholder="Query analytical stack... Shift+Enter for a new line." title="Type a prompt. Press Enter to send, Shift+Enter for a new line." onkeydown="handleChatInputKeydown(event, 'left')"></textarea>
+            <div id="left-chat-attachment" class="chat-input-attached" aria-live="polite"></div>
+          </div>
           <button onclick="submitPrompt('left')" title="Send prompt to analytical lane (Enter)">Send</button>
         </div>
       </div>
@@ -1139,7 +1181,10 @@
 
         <div class="chat-input-wrapper">
           <button class="chat-attach-btn" onclick="attachFileToThread('right')" title="Attach a file to include its contents in the prompt">+</button>
-          <textarea id="right-chat-input" class="chat-input" placeholder="Query speculation engine... Shift+Enter for a new line." title="Type a prompt. Press Enter to send, Shift+Enter for a new line." onkeydown="handleChatInputKeydown(event, 'right')"></textarea>
+          <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+            <textarea id="right-chat-input" class="chat-input" placeholder="Query speculation engine... Shift+Enter for a new line." title="Type a prompt. Press Enter to send, Shift+Enter for a new line." onkeydown="handleChatInputKeydown(event, 'right')"></textarea>
+            <div id="right-chat-attachment" class="chat-input-attached" aria-live="polite"></div>
+          </div>
           <button onclick="submitPrompt('right')" title="Send prompt to creative lane (Enter)">Send</button>
         </div>
       </div>
@@ -3152,6 +3197,32 @@
       }
     }
 
+    function renderPendingAttachment(pane) {
+      const container = document.getElementById(`${pane}-chat-attachment`);
+      const attachments = pendingAttachments[pane] || [];
+      if (!container) return;
+
+      if (!attachments.length) {
+        container.classList.remove('visible');
+        container.innerHTML = '';
+        return;
+      }
+
+      const attachment = attachments[0];
+      const baseName = String(attachment.path || 'attachment').split(/[\\/]/).pop() || 'attachment';
+      const kind = String(attachment.kind || 'file').toUpperCase();
+      container.innerHTML = `<span class="attachment-kind">${kind}</span>${baseName}<span class="remove-attachment" data-pane="${pane}" title="Remove attachment">×</span>`;
+      container.classList.add('visible');
+
+      const removeButton = container.querySelector('.remove-attachment');
+      if (removeButton) {
+        removeButton.addEventListener('click', () => {
+          pendingAttachments[pane] = [];
+          renderPendingAttachment(pane);
+        });
+      }
+    }
+
     async function submitPrompt(pane) {
       if (!currentConfig) return;
 
@@ -3162,6 +3233,7 @@
 
       inputEl.value = "";
       pendingAttachments[pane] = [];
+      renderPendingAttachment(pane);
       await dispatchPromptToPane(pane, text, "Gregory", attachments);
     }
 
@@ -5139,6 +5211,7 @@ async function restoreVersion() {
           content: normalizedContent,
           mime: payload?.mime || ''
         }];
+        renderPendingAttachment(pane);
 
         const inputId = pane === 'left' ? 'left-chat-input' : 'right-chat-input';
         const input = document.getElementById(inputId);

@@ -23,6 +23,16 @@ The version 7 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-08-11)
+
+- added an AI file-access permission layer that limits file creation and modification to the active project root unless the user explicitly changes that root in Customize;
+- made the AI advisory-only by default in the briefing packet language, so the app clearly distinguishes project reasoning from direct local workspace editing;
+- replaced the decorative workspace tree output with a compact AI-friendly markdown project map that is easier for the AI to parse and reason over;
+- added a read-only / read-write toggle in the settings panel so project-aware AI operations can be safely gated by user intent;
+- upgraded chat input to support Shift+Enter line breaks and a more natural multiline workflow for structured prompting;
+- added file attachment support for prompt threads, opened by default from the active project root and including text/image payload content in the prompt sent to the AI;
+- verified the backend remains stable with the current regression suite passing after the AI access-control and prompt-attachment changes.
+
 ### Latest progress (2026-08-10)
 
 - completed Gemini and OpenAI route validation hardening in Advanced AI Routing so save operations are blocked unless both pane routes validate;
