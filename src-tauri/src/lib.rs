@@ -152,6 +152,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_ai_file_access_mode() -> String {
+    "disabled".to_string()
+}
+
 const ENCRYPTED_SECRET_PREFIX: &str = "enc:v1:";
 const LOCAL_SECRET_FILE_NAME: &str = "ai-secret-store.key";
 const LOCAL_SECRET_SALT: &[u8] = b"physics-ide-ai-secrets-v1";
@@ -345,6 +349,8 @@ pub struct AppConfig {
     left_preserve_thread_history: bool,
     #[serde(default = "default_true")]
     right_preserve_thread_history: bool,
+    #[serde(default = "default_ai_file_access_mode")]
+    ai_file_access_mode: String,
     reuse_notes_next_session: bool,
     first_session_completed: bool,
 }
@@ -378,6 +384,7 @@ impl Default for AppConfig {
             custom_bg_panel: String::new(),
             left_preserve_thread_history: true,
             right_preserve_thread_history: true,
+            ai_file_access_mode: default_ai_file_access_mode(),
             reuse_notes_next_session: false,
             first_session_completed: false,
         }
@@ -433,6 +440,8 @@ pub struct SaveUserSettingsPayload {
     pub left_preserve_thread_history: bool,
     #[serde(default = "default_true", alias = "rightPreserveThreadHistory")]
     pub right_preserve_thread_history: bool,
+    #[serde(default = "default_ai_file_access_mode", alias = "aiFileAccessMode")]
+    pub ai_file_access_mode: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -511,11 +520,11 @@ fn build_workspace_tree_string(root: &Path) -> Result<String, String> {
         return Err(format!("Root path does not exist: {}", root.to_string_lossy()));
     }
 
-    fn build_tree(dir: &Path, prefix: &str, output: &mut String) -> std::io::Result<()> {
+    fn collect_tree_entries(dir: &Path, base_dir: &Path, output: &mut Vec<String>) -> std::io::Result<()> {
         let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
 
-        for (i, entry) in entries.iter().enumerate() {
+        for entry in entries {
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
 
@@ -523,26 +532,37 @@ fn build_workspace_tree_string(root: &Path) -> Result<String, String> {
                 continue;
             }
 
-            let is_last = i == entries.len() - 1;
-            let pointer = if is_last { "└── " } else { "├── " };
-
-            output.push_str(&format!("{}{}{}\n", prefix, pointer, name_str));
+            let entry_path = entry.path();
+            let relative_path = entry_path
+                .strip_prefix(base_dir)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let normalized_path = relative_path.trim_start_matches('/');
 
             if entry.file_type()?.is_dir() {
-                let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-                build_tree(&entry.path(), &new_prefix, output)?;
+                output.push(format!("/{normalized_path}/"));
+                collect_tree_entries(&entry_path, base_dir, output)?;
+            } else {
+                output.push(format!("/{normalized_path}"));
             }
         }
 
         Ok(())
     }
 
+    let mut tree_entries = Vec::new();
+    collect_tree_entries(root, root, &mut tree_entries).map_err(|e| e.to_string())?;
+
     let root_label = root
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| root.to_string_lossy().to_string());
-    let mut tree_string = format!("{}\n", root_label);
-    build_tree(root, "", &mut tree_string).map_err(|e| e.to_string())?;
+    let mut tree_string = format!("# Workspace Tree\n\n## Root\n- {}\n\n## Entries\n", root_label);
+    for entry in tree_entries {
+        tree_string.push_str(&format!("- {}\n", entry));
+    }
+
     Ok(tree_string)
 }
 
@@ -1022,7 +1042,7 @@ fn build_ai_briefing_markdown(
     };
 
     format!(
-        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n- When the user references a chapter, experiment, or tool, use the project awareness index and the thread focus to locate the most relevant files before answering.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Thread Retrieval Hints\n{}\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
+        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n- The AI is advisory-only in this app; it can reason over the project context and attached files, but it cannot directly modify your local workspace unless explicit file-edit tools are enabled.\n- When the user references a chapter, experiment, or tool, use the project awareness index and the thread focus to locate the most relevant files before answering.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Thread Retrieval Hints\n{}\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
         summary,
         primer_path.to_string_lossy(),
         recap_path.to_string_lossy(),
@@ -1037,7 +1057,7 @@ fn build_ai_briefing_markdown(
 
 fn build_first_session_briefing_markdown(project_root: &Path) -> String {
     format!(
-        "# First Session Briefing Packet\n\n## Welcome\n- Greet the user and explain that this first run will establish the project context for future sessions.\n- Ask for the theory/model title so the session language remains aligned with the user\'s framework.\n\n## What the Primer Is\n- In this app, a \"primer\" and the \"briefing packet\" are the same practical concept: a compact context document for AI lanes.\n- The entity being briefed is the AI.\n- Purpose: keep AI aware of your current project state, assumptions, goals, and recent progress without replaying full chat history every time.\n- If you maintain this packet well, continuity stays strong across long sessions and across days.\n\n## Setup Checklist\n1. Import or open the project workspace folder.\n2. Confirm the theory markdown output directory in settings.\n3. Set or generate the master axiom file path.\n4. Save starter notes describing today\'s goals in the scratchpad.\n5. Export the workspace tree so source structure is visible.\n6. Build or refresh the briefing packet and verify both AI lanes received it.\n\n## Assistant Behavior\n- Offer step-by-step guidance instead of waiting idle.\n- Keep prompts concise and practical for first-session setup.\n- Ask one clarifying question at a time when configuration details are missing.\n- Explain setup terms briefly when needed (for example: primer, master axiom, theory markdown folder).\n- Remind the user that end-of-session recap can produce the next briefing packet automatically.\n\n## Expected Outcome\n- By the end of this first session, documentation should be strong enough to replace this starter packet with a session-specific packet.\n\n## Workspace Context\n- Project root: {}\n- Note: this starter packet is intended for first-run onboarding only.\n",
+        "# First Session Briefing Packet\n\n## Welcome\n- Greet the user and explain that this first run will establish the project context for future sessions.\n- Ask for the theory/model title so the session language remains aligned with the user\'s framework.\n\n## What the Primer Is\n- In this app, a \"primer\" and the \"briefing packet\" are the same practical concept: a compact context document for AI lanes.\n- The entity being briefed is the AI.\n- Purpose: keep AI aware of your current project state, assumptions, goals, and recent progress without replaying full chat history every time.\n- If you maintain this packet well, continuity stays strong across long sessions and across days.\n\n## Setup Checklist\n1. Import or open the project workspace folder.\n2. Confirm the theory markdown output directory in settings.\n3. Set or generate the master axiom file path.\n4. Save starter notes describing today\'s goals in the scratchpad.\n5. Export the workspace tree so source structure is visible.\n6. Build or refresh the briefing packet and verify both AI lanes received it.\n\n## Assistant Behavior\n- Offer step-by-step guidance instead of waiting idle.\n- Keep prompts concise and practical for first-session setup.\n- Ask one clarifying question at a time when configuration details are missing.\n- Explain setup terms briefly when needed (for example: primer, master axiom, theory markdown folder).\n- Remind the user that end-of-session recap can produce the next briefing packet automatically.\n- Note that the AI is advisory-only in this app unless explicit file-edit tools are enabled.\n\n## Expected Outcome\n- By the end of this first session, documentation should be strong enough to replace this starter packet with a session-specific packet.\n\n## Workspace Context\n- Project root: {}\n- Note: this starter packet is intended for first-run onboarding only.\n",
         project_root.to_string_lossy()
     )
 }
@@ -1420,6 +1440,36 @@ fn is_path_within_root(path: &Path, root: &Path) -> bool {
     } else {
         false
     }
+}
+
+fn ensure_ai_file_access(config: &AppConfig, action: &str, target_path: &Path, workspace_root: &Path) -> Result<(), String> {
+    let requested_mode = config.ai_file_access_mode.trim().to_ascii_lowercase();
+    let allow_write = requested_mode == "read_write";
+    let allow_read = matches!(requested_mode.as_str(), "read" | "read_only" | "read_write");
+
+    match action {
+        "read" if !allow_read => {
+            return Err("AI file access is disabled for reads. Enable it in Settings to allow read operations.".to_string());
+        }
+        "write" if !allow_write => {
+            return Err("AI file access is disabled for writes. Enable read/write access in Settings to allow edit operations.".to_string());
+        }
+        _ => {}
+    }
+
+    let target_exists = target_path.exists();
+    let normalized_target = if target_exists {
+        target_path.canonicalize().unwrap_or_else(|_| target_path.to_path_buf())
+    } else {
+        target_path.to_path_buf()
+    };
+    let normalized_root = workspace_root.canonicalize().unwrap_or_else(|_| workspace_root.to_path_buf());
+
+    if !normalized_target.starts_with(&normalized_root) {
+        return Err(format!("AI {} operation is blocked because the target is outside the active workspace.", action));
+    }
+
+    Ok(())
 }
 
 fn compute_markdown_doc_score(title: &str, content: &str, tokens: &[String]) -> i32 {
@@ -2380,12 +2430,14 @@ fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
 fn export_workspace_tree(rootPath: String) -> Result<String, String> {
     let root = std::path::Path::new(&rootPath);
     let tree_string = build_workspace_tree_string(root)?;
-    
-    // Save to workspace root for easy discovery.
-    let output_file_path = root.join("workspace_tree.txt");
-    std::fs::write(&output_file_path, tree_string).map_err(|e| format!("Failed to write file: {}", e))?;
-    
-    Ok(format!("Workspace tree generated: {}", output_file_path.to_string_lossy()))
+
+    // Save AI-friendly markdown first, then keep a compatibility text export.
+    let markdown_output_path = root.join("workspace_tree.md");
+    let legacy_output_path = root.join("workspace_tree.txt");
+    std::fs::write(&markdown_output_path, &tree_string).map_err(|e| format!("Failed to write markdown file: {}", e))?;
+    std::fs::write(&legacy_output_path, &tree_string).map_err(|e| format!("Failed to write compatibility file: {}", e))?;
+
+    Ok(format!("Workspace map generated: {}", markdown_output_path.to_string_lossy()))
 }
 
 #[tauri::command]
@@ -4309,9 +4361,11 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         let _ = fs::write(&master_axiom_path, &template);
     }
 
-    let tree_path = project_root.join("workspace_tree.txt");
+    let tree_path = project_root.join("workspace_tree.md");
+    let legacy_tree_path = project_root.join("workspace_tree.txt");
     if let Ok(tree) = build_workspace_tree_string(&project_root) {
-        let _ = fs::write(&tree_path, tree);
+        let _ = fs::write(&tree_path, &tree);
+        let _ = fs::write(&legacy_tree_path, &tree);
     }
 
     let primer_path = project_root.join("next_session_notes.md");
@@ -4497,7 +4551,8 @@ fn prepare_exit_session(
 
     let recap_path = project_root.join("session_recap.md");
     let notes_path = project_root.join("next_session_notes.md");
-    let tree_path = project_root.join("workspace_tree.txt");
+    let tree_path = project_root.join("workspace_tree.md");
+    let legacy_tree_path = project_root.join("workspace_tree.txt");
     let awareness_path = project_root.join("project_awareness.md");
     let briefing_path = project_root.join("ai_briefing.md");
     let startup_guide_path = resolve_startup_guide_path(&project_root, &theory_dir);
@@ -4538,7 +4593,8 @@ fn prepare_exit_session(
 
         // Replace first-run packet with session-derived briefing once recap exists.
         if let Ok(tree) = build_workspace_tree_string(&project_root) {
-            let _ = fs::write(&tree_path, tree);
+            let _ = fs::write(&tree_path, &tree);
+            let _ = fs::write(&legacy_tree_path, &tree);
         }
         let exit_summary = "Post-session briefing packet generated from latest session recap and workspace context.";
         let tools_dir = if config.tools_dir.trim().is_empty() {
@@ -5130,20 +5186,44 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn save_equation_to_md(content: String, path: String) -> Result<String, String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
+fn save_equation_to_md(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let target_path = std::path::PathBuf::from(&path);
+    let config = load_app_config(&app)
+        .map_err(|e| format!("Failed to load app config: {e}"))?;
+    let workspace_root = config.project_root_dir.trim();
+    let workspace_path = if workspace_root.is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        std::path::PathBuf::from(workspace_root)
+    };
+
+    ensure_ai_file_access(&config, "write", &target_path, &workspace_path)?;
+
+    if let Some(parent) = target_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
     }
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    std::fs::write(&target_path, content).map_err(|e| e.to_string())?;
     Ok(format!("Equation saved successfully to {}", path))
 }
 
 #[tauri::command]
-fn save_scratchpad_content(content: String, path: String) -> Result<String, String> {
-    if let Some(parent) = std::path::Path::new(&path).parent() {
+fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let target_path = std::path::PathBuf::from(&path);
+    let config = load_app_config(&app)
+        .map_err(|e| format!("Failed to load app config: {e}"))?;
+    let workspace_root = config.project_root_dir.trim();
+    let workspace_path = if workspace_root.is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        std::path::PathBuf::from(workspace_root)
+    };
+
+    ensure_ai_file_access(&config, "write", &target_path, &workspace_path)?;
+
+    if let Some(parent) = target_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
     }
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    std::fs::write(&target_path, content).map_err(|e| e.to_string())?;
     Ok(format!("Scratchpad saved successfully to {}", path))
 }
 
@@ -5250,6 +5330,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.custom_bg_panel = payload.custom_bg_panel;
     config.left_preserve_thread_history = payload.left_preserve_thread_history;
     config.right_preserve_thread_history = payload.right_preserve_thread_history;
+    config.ai_file_access_mode = payload.ai_file_access_mode;
 
     if !config.project_root_dir.trim().is_empty() {
         config.last_root_dir = config.project_root_dir.clone();
@@ -5266,6 +5347,37 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allows_workspace_scoped_ai_file_operations_when_enabled() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_ai_file_access_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let workspace_root = temp_dir.join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target_path = workspace_root.join("notes.md");
+
+        let mut config = AppConfig::default();
+        config.ai_file_access_mode = "read_write".to_string();
+
+        let result = ensure_ai_file_access(&config, "write", &target_path, &workspace_root);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn blocks_ai_file_operations_when_disabled_or_outside_workspace() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_ai_file_access_block_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let workspace_root = temp_dir.join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let outside_target = temp_dir.join("outside.md");
+
+        let config = AppConfig::default();
+        let blocked_by_mode = ensure_ai_file_access(&config, "write", &workspace_root.join("notes.md"), &workspace_root);
+        let blocked_by_scope = ensure_ai_file_access(&AppConfig { ai_file_access_mode: "read_write".to_string(), ..AppConfig::default() }, "write", &outside_target, &workspace_root);
+
+        assert!(blocked_by_mode.is_err());
+        assert!(blocked_by_scope.is_err());
+    }
 
     #[test]
     fn normalize_api_key_trims_surrounding_whitespace_and_quotes() {
@@ -5449,6 +5561,27 @@ mod tests {
         let snippet = extract_evidence_snippet(content, &["analysis".to_string()], 120);
         assert!(snippet.contains("analysis"));
         assert!(!snippet.is_empty());
+    }
+
+    #[test]
+    fn builds_ai_friendly_workspace_tree_markdown() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_tree_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("docs").join("guides")).unwrap();
+        fs::create_dir_all(temp_dir.join("src")).unwrap();
+        fs::write(temp_dir.join("README.md"), "# Demo\n").unwrap();
+        fs::write(temp_dir.join("src").join("main.js"), "console.log('hi');\n").unwrap();
+        fs::write(temp_dir.join("docs").join("guides").join("setup.md"), "# Setup\n").unwrap();
+
+        let tree = build_workspace_tree_string(&temp_dir).unwrap();
+
+        assert!(tree.contains("# Workspace Tree"));
+        assert!(tree.contains("README.md"));
+        assert!(tree.contains("src/"));
+        assert!(tree.contains("main.js"));
+        assert!(tree.contains("docs/"));
+        assert!(tree.contains("guides/"));
+        assert!(tree.contains("setup.md"));
     }
 
     #[test]

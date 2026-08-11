@@ -1022,7 +1022,7 @@
         <div class="panel-section" style="flex: 0 0 auto; margin-top: 15px;">
             <div class="panel-section-title">Compile & Deploy</div>
             <div class="btn-group">
-                <button class="btn-special" onclick="exportWorkspaceTree()" title="Generate workspace_tree.txt in the workspace root">🌳 Export ASCII Tree</button>
+                <button class="btn-special" onclick="exportWorkspaceTree()" title="Generate an AI-friendly workspace_tree.md in the workspace root">🌳 Export AI Project Map</button>
                 <button onclick="executeGitPull()" title="Pull latest commits from the repository remote">Pull</button>
                 <button onclick="executeGitPush()" title="Push commits to the repository remote (main/master only)">Push</button>
             </div>
@@ -1416,6 +1416,21 @@
                 <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
               </div>
             </div>
+
+              <div class="pane-config-block">
+                <h4>Workspace File Access</h4>
+                <div class="form-group">
+                  <label for="settings-ai-file-access">AI file editing permission</label>
+                  <select id="settings-ai-file-access">
+                    <option value="disabled">Disabled</option>
+                    <option value="read_only">Read-only</option>
+                    <option value="read_write">Read/write</option>
+                  </select>
+                  <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
+                    When enabled, the AI can only operate within the active workspace root and only for the selected access level.
+                  </div>
+                </div>
+              </div>
 
               <div class="pane-config-block">
                 <h4>Thread History</h4>
@@ -2896,6 +2911,7 @@
         currentConfig.right_model = rightModel;
 
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
+        document.getElementById('settings-ai-file-access').value = currentConfig.ai_file_access_mode || 'disabled';
         document.getElementById('settings-left-provider').value = leftProvider;
         document.getElementById('settings-right-provider').value = rightProvider;
         document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
@@ -6150,6 +6166,7 @@ async function restoreVersion() {
       const customBgPanel = document.getElementById('picker-bg-panel').value;
       const leftPreserveThreadHistory = document.getElementById('settings-left-preserve-thread-history').checked;
       const rightPreserveThreadHistory = document.getElementById('settings-right-preserve-thread-history').checked;
+      const aiFileAccessMode = document.getElementById('settings-ai-file-access').value || 'disabled';
 
       const payload = {
         editor,
@@ -6170,7 +6187,8 @@ async function restoreVersion() {
         custom_accent: customAccent,
         custom_bg_panel: customBgPanel,
         left_preserve_thread_history: leftPreserveThreadHistory,
-        right_preserve_thread_history: rightPreserveThreadHistory
+        right_preserve_thread_history: rightPreserveThreadHistory,
+        ai_file_access_mode: aiFileAccessMode
       };
 
       const leftApiKey = leftProvider === 'gemini' ? geminiKey.trim() : openaiKey.trim();
@@ -6211,6 +6229,7 @@ async function restoreVersion() {
         currentConfig.custom_bg_panel = customBgPanel;
         currentConfig.left_preserve_thread_history = leftPreserveThreadHistory;
         currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
+        currentConfig.ai_file_access_mode = aiFileAccessMode;
 
         const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
         const rightModelChanged = previousRightProvider !== rightProvider || previousRightModel !== rightModel;

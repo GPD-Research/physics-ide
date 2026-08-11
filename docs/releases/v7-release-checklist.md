@@ -34,13 +34,13 @@ Evidence:
 
 ### 3) Packaging smoke checks
 
-- [x] Linux package smoke test (user-confirmed pass on deployed latest release build, excluding post-smoke changes from 2026-07-31).
+- [x] Linux package smoke test (user-confirmed pass on current .deb build, 2026-08-10).
 - [ ] Windows package smoke test (blocked in this environment).
 - [ ] macOS package smoke test (blocked in this environment).
 
 Evidence:
 - Active Linux build log path: `/tmp/v7_tauri_build.log`.
-- User sign-off recorded: deployed package passes smoke test as of 2026-07-31.
+- User sign-off recorded: latest local .deb install and smoke test passed on 2026-08-10.
 - Windows/macOS checks require platform-native validation or CI runners.
 
 ### 4) Release documentation
