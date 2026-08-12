@@ -411,6 +411,7 @@
         padding: 15px;
         box-sizing: border-box;
         overflow-y: auto;
+        overflow-x: hidden;
         display: flex;
         flex-direction: column;
       }
@@ -586,16 +587,30 @@
         font-size: 0.9rem;
         border-left: 3px solid var(--accent-dim);
         white-space: pre-wrap;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        max-width: 100%;
+        box-sizing: border-box;
       }
 
       .chat-bubble.ai {
         background-color: color-mix(in srgb, var(--thread-bg, var(--bg-panel)) 75%, transparent);
       }
 
+      .chat-bubble > * {
+        max-width: 100%;
+      }
+
+      .chat-bubble p {
+        margin: 0.35em 0;
+        overflow-wrap: anywhere;
+      }
+
       .chat-bubble .katex-display,
       .chat-bubble .katex {
         overflow-x: auto;
         overflow-y: hidden;
+        max-width: 100%;
       }
 
       .chat-bubble .katex-display {
