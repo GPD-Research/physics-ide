@@ -587,6 +587,20 @@
         border-left: 3px solid var(--accent-dim);
         white-space: pre-wrap;
       }
+
+      .chat-bubble.ai {
+        background-color: color-mix(in srgb, var(--thread-bg, var(--bg-panel)) 75%, transparent);
+      }
+
+      .chat-bubble .katex-display,
+      .chat-bubble .katex {
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+
+      .chat-bubble .katex-display {
+        margin: 0.5em 0;
+      }
   
       .chat-input-wrapper {
         padding: 10px;
@@ -1035,6 +1049,8 @@
         <a href="#" class="menu-item-toggle" id="view-menu-inspectors" onclick="toggleViewTool('inspectors'); return false;" title="Show or hide the inspectors panel"><span>Inspectors</span><span class="menu-item-state">●</span></a>
         <a href="#" class="menu-item-toggle" id="view-menu-equation" onclick="toggleViewTool('equation'); return false;" title="Show or hide equation tools panel"><span>Equation Tools</span><span class="menu-item-state">●</span></a>
         <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;" title="Show or hide the scratchpad panel"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
+        <div class="menu-section">Documents</div>
+        <a href="#" onclick="openBriefingPacketEditor(); return false;" title="Open the active primer document and edit the AI briefing context">View/Edit Primer</a>
         <div class="menu-section">Navigation</div>
         <a href="#" onclick="rotateLeft(1); return false;" title="Switch to next analytical lane thread">Next Analytical Slot</a>
         <a href="#" onclick="rotateRight(1); return false;" title="Switch to next creative lane thread">Next Creative Slot</a>
@@ -1047,7 +1063,7 @@
         <a href="#" onclick="openTheoryImportSetupModal(); return false;" title="Verify import-to-scoring setup stages and jump to each workflow">Theory Import Setup</a>
         <a href="#" onclick="openMarkdownDocumentsModal(); return false;" title="Browse, search, preview, and export markdown files">Markdown Documents</a>
         <a href="#" onclick="openManuscriptToolsModal(); return false;" title="Render single or combined markdown into MD, PDF, or DOCX">Manuscript Tools</a>
-        <a href="#" onclick="openAiTestingModal(); return false;" title="Open probe and benchmark testing tools">AI Testing</a>
+        <a href="#" onclick="openAiTestingModal(); return false;" title="Open probe and benchmark testing tools">AI Testing Suite</a>
         <div class="menu-section">Help</div>
         <a href="#" onclick="openHelpDoc('app-layers'); return false;" title="Open conceptual overview of app layers">App Layers</a>
         <a href="#" onclick="openHelpDoc('gui-button-glossary'); return false;" title="Open glossary of GUI controls">GUI Button Glossary</a>
@@ -1224,19 +1240,17 @@
     <!-- Right Wing -->
     <div id="right-wing" class="panel">
       <div class="right-wing-tabs">
-        <button class="right-wing-tab-btn active" data-tab="context" onclick="switchRightWingTab('context')" title="Open context tools tab">Context</button>
+        <button class="right-wing-tab-btn active" data-tab="workflow" onclick="switchRightWingTab('workflow')" title="Open workflow tools tab">Workflow</button>
         <button class="right-wing-tab-btn" data-tab="inspectors" onclick="switchRightWingTab('inspectors')" title="Open inspectors tab">Inspectors</button>
         <button class="right-wing-tab-btn" data-tab="equation" onclick="switchRightWingTab('equation')" title="Open equation tools tab">Equation</button>
         <button class="right-wing-tab-btn" data-tab="notes" onclick="switchRightWingTab('notes')" title="Open notes and scratchpad tab">Notes</button>
       </div>
 
       <div class="right-wing-panels">
-        <div id="right-tab-context" class="right-wing-tab-panel active">
+        <div id="right-tab-workflow" class="right-wing-tab-panel active">
           <div class="panel-section">
             <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
-            <button style="width: 100%; background: var(--bg-dark); color: var(--accent);" onclick="openBriefingPacketEditor()" title="Open the primer editor">View/Edit Primer</button>
-            <button style="width: 100%; margin-top: 6px;" onclick="injectPrimerIntoThreads(false)" title="Inject primer context into both AI lanes">Sync AI Context Now</button>
-            <div style="font-size:0.75rem; color:#a6adc8; margin-top:5px; text-align:center;">Review and edit the primer before syncing context to AI threads.</div>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-bottom:8px; text-align:left;">Review and edit the primer before syncing context to AI threads.</div>
           </div>
 
           <div class="panel-section">
@@ -1282,6 +1296,10 @@
               Ready to create or edit analysis plan.
             </div>
             <textarea id="analysis-primer-output" rows="10" style="margin-top: 8px; width: 100%; box-sizing: border-box;" readonly placeholder="The generated analysis plan will appear here."></textarea>
+          </div>
+
+          <div class="panel-section" style="margin-top: auto;">
+            <button style="width: 100%;" onclick="injectPrimerIntoThreads(false)" title="Inject primer context into both AI lanes">Sync AI Context Now</button>
           </div>
         </div>
 
@@ -4014,16 +4032,15 @@
     function appendChatBubble(pane, index, sender, text) {
       const targetStrip = pane === 'left' ? 'left-strip' : 'right-strip';
       const activeSlot = document.getElementById(targetStrip).children[index];
+      const safeSender = escapeHelpHtml(String(sender || 'Assistant'));
+      const safeText = renderMathContentToHtml(text);
 
       const bubble = document.createElement('div');
       bubble.className = 'chat-bubble';
-      
-      const strongTag = document.createElement('strong');
-      strongTag.innerText = `${sender}: `;
-      bubble.appendChild(strongTag);
-      
-      const textNode = document.createTextNode(text);
-      bubble.appendChild(textNode);
+      if (String(sender || '').toLowerCase() !== 'gregory' && !(String(sender || '').includes('Error') || String(sender || '').includes('System')) && !(String(sender || '').includes('Assistant'))) {
+        bubble.classList.add('ai');
+      }
+      bubble.innerHTML = `<strong>${safeSender}:</strong> ${safeText || escapeHelpHtml(String(text || ''))}`;
       
       activeSlot.appendChild(bubble);
       activeSlot.scrollTop = activeSlot.scrollHeight;
@@ -5722,6 +5739,26 @@ async function restoreVersion() {
       return escapeHelpHtml(trimmed);
     }
 
+    function normalizeAiMathOutput(text) {
+      let value = String(text || '').replace(/\r\n/g, '\n');
+      if (!value.trim()) return '';
+
+      value = value
+        .replace(/\\\[(.*?)\\\]/gs, (_, expr) => `$$${expr.trim()}$$`)
+        .replace(/\\\((.*?)\\\)/gs, (_, expr) => `$${expr.trim()}$`)
+        .replace(/```(?:latex|tex|math)?\s*([\s\S]*?)```/gi, (_, expr) => `$$${expr.trim()}$$`)
+        .replace(/\\begin\{(equation|align|align\*|eqnarray|cases)\}([\s\S]*?)\\end\{\1\}/g, (_match, _env, expr) => `$$${expr.trim()}$$`);
+
+      const hasMathMarkers = /(\\(?:frac|sqrt|sum|int|alpha|beta|gamma|delta|omega|theta|lambda|mu|nu|sigma|partial|nabla|cdot|times|rightarrow|leftarrow|approx|neq|geq|leq|mathcal|mathbf)|\$\$|\$[^\n$]+\$|\\\(|\\\[)/.test(value);
+      return hasMathMarkers ? value : value;
+    }
+
+    function renderMathContentToHtml(text) {
+      const normalized = normalizeAiMathOutput(text);
+      if (!normalized) return '';
+      return renderMarkdownToHtml(normalized);
+    }
+
     function renderInlineMathLatex(text) {
       if (!window.katex || !text) return text;
 
@@ -6178,13 +6215,14 @@ async function restoreVersion() {
 	    }
 
     function switchRightWingTab(tabId) {
+      const normalizedTabId = tabId === 'context' ? 'workflow' : tabId;
       const panels = document.querySelectorAll('.right-wing-tab-panel');
       const buttons = document.querySelectorAll('.right-wing-tab-btn');
-      const availableTabs = ['context', 'inspectors', 'equation', 'notes'].filter((name) => {
-        if (name === 'context') return true;
+      const availableTabs = ['workflow', 'inspectors', 'equation', 'notes'].filter((name) => {
+        if (name === 'workflow') return true;
         return viewToolState[name];
       });
-      const safeTab = availableTabs.includes(tabId) ? tabId : availableTabs[0] || 'context';
+      const safeTab = availableTabs.includes(normalizedTabId) ? normalizedTabId : availableTabs[0] || 'workflow';
 
       panels.forEach(panel => {
         panel.classList.remove('active');
@@ -6266,7 +6304,7 @@ async function restoreVersion() {
       });
 
       syncViewMenuState();
-      switchRightWingTab('context');
+      switchRightWingTab('workflow');
     }
 	
 	    function getInputElement(targetInputId) {

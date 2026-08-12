@@ -45,3 +45,20 @@ test('provider labels are human-readable', () => {
   assert.equal(getProviderLabel('gemini'), 'Gemini');
   assert.equal(getProviderLabel('unknown'), 'Provider');
 });
+
+test('ai thread bubbles use a transparent thread background without theme-specific overrides', () => {
+  assert.ok(html.includes('color-mix(in srgb, var(--thread-bg, var(--bg-panel)) 75%, transparent)'), 'expected AI chat bubble background to use theme-agnostic 75% opacity thread tint');
+  assert.ok(html.includes('.chat-bubble.ai'), 'expected AI chat bubbles to get a dedicated class for transparent thread styling');
+});
+
+test('workflow and menu structure matches the simplified AI workflow UX', () => {
+  assert.ok(html.includes('AI Testing Suite'), 'expected Tools menu to expose the AI Testing Suite menu item');
+  assert.ok(html.includes('data-tab="workflow"') && html.includes('>Workflow<'), 'expected the right-wing tab to be renamed to Workflow');
+  assert.ok(html.includes('View/Edit Primer') && html.includes('openBriefingPacketEditor'), 'expected primer editor to live in the View menu');
+  assert.ok(html.includes('Sync AI Context Now'), 'expected sync context control to remain in the workflow panel');
+});
+
+test('chat output renderer includes a math normalization path for pseudo-latex content', () => {
+  assert.ok(html.includes('normalizeAiMathOutput'), 'expected a math normalization helper for raw model output');
+  assert.ok(html.includes('renderMathContentToHtml'), 'expected a chat renderer that converts math to KaTeX-friendly HTML');
+});
