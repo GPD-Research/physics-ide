@@ -62,3 +62,9 @@ test('chat output renderer includes a math normalization path for pseudo-latex c
   assert.ok(html.includes('normalizeAiMathOutput'), 'expected a math normalization helper for raw model output');
   assert.ok(html.includes('renderMathContentToHtml'), 'expected a chat renderer that converts math to KaTeX-friendly HTML');
 });
+
+test('ai thread snapshots wrap long code blocks and inline content within the bubble', () => {
+  assert.ok(html.includes('.chat-bubble pre'), 'expected the bubble to constrain fenced code blocks');
+  assert.ok(html.includes('.chat-bubble code'), 'expected the bubble to constrain inline code and snapshot content');
+  assert.ok(html.includes('overflow-wrap: anywhere'), 'expected long snapshot content to wrap before reaching the bubble edge');
+});

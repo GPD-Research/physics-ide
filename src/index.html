@@ -606,6 +606,26 @@
         overflow-wrap: anywhere;
       }
 
+      .chat-bubble pre,
+      .chat-bubble code {
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .chat-bubble pre {
+        margin: 0.5em 0;
+        padding: 0.5em 0.75em;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.04);
+        white-space: pre-wrap;
+        overflow-x: auto;
+      }
+
+      .chat-bubble code {
+        white-space: pre-wrap;
+      }
+
       .chat-bubble .katex-display,
       .chat-bubble .katex {
         overflow-x: auto;
