@@ -978,6 +978,15 @@ fn build_project_awareness_markdown(
     )
 }
 
+fn describe_ai_file_access_mode(mode: &str) -> String {
+    let normalized = mode.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "read_write" => "AI file access status: enabled for read/write access within the active workspace root only.".to_string(),
+        "read" | "read_only" => "AI file access status: enabled for read-only access within the active workspace root only.".to_string(),
+        _ => "AI file access status: disabled. The AI may reason over project context but cannot read or edit workspace files unless access is enabled in Settings.".to_string(),
+    }
+}
+
 fn build_session_recap_markdown(
     project_root: &Path,
     theory_dir: &str,
@@ -1016,6 +1025,7 @@ fn build_ai_briefing_markdown(
     master_axiom_path: &Path,
     awareness_markdown: &str,
     thread_context: Option<&str>,
+    ai_file_access_mode: &str,
 ) -> String {
     let axiom_excerpt = fs::read_to_string(master_axiom_path)
         .map(|content| {
@@ -1040,24 +1050,27 @@ fn build_ai_briefing_markdown(
     } else {
         format!("- Thread focus: {}", thread_context_block)
     };
+    let file_access_status = describe_ai_file_access_mode(ai_file_access_mode);
 
     format!(
-        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n- The AI is advisory-only in this app; it can reason over the project context and attached files, but it cannot directly modify your local workspace unless explicit file-edit tools are enabled.\n- When the user references a chapter, experiment, or tool, use the project awareness index and the thread focus to locate the most relevant files before answering.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Thread Retrieval Hints\n{}\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
+        "# AI Briefing Packet\n\n## Session Summary\n{}\n\n## Sources\n- Primer: {}\n- Session recap: {}\n- Workspace tree: {}\n- Master axiom: {}\n\n## Master Axiom Snapshot\n```md\n{}\n```\n\n## Startup Guidance\n- Use this packet to resume collaboration without replaying full history.\n- Anchor reasoning in the active axioms and assumptions before proposing new branches.\n- Keep responses concise, physically grounded, and explicit about uncertainty.\n- {}\n- When the user references a chapter, experiment, or tool, use the project awareness index and the thread focus to locate the most relevant files before answering.\n\n## Project Awareness Index\n```md\n{}\n```\n\n## Thread Retrieval Hints\n{}\n\n## Context Notes\n- Workspace root: {}\n- Equation continuity key: $\\mathcal{{L}}$, boundary constraints, and observational consequences should remain traceable across branch updates.\n",
         summary,
         primer_path.to_string_lossy(),
         recap_path.to_string_lossy(),
         tree_path.to_string_lossy(),
         master_axiom_path.to_string_lossy(),
         axiom_excerpt,
+        file_access_status,
         awareness_markdown,
         thread_context_section,
         project_root.to_string_lossy()
     )
 }
 
-fn build_first_session_briefing_markdown(project_root: &Path) -> String {
+fn build_first_session_briefing_markdown(project_root: &Path, ai_file_access_mode: &str) -> String {
     format!(
-        "# First Session Briefing Packet\n\n## Welcome\n- Greet the user and explain that this first run will establish the project context for future sessions.\n- Ask for the theory/model title so the session language remains aligned with the user\'s framework.\n\n## What the Primer Is\n- In this app, a \"primer\" and the \"briefing packet\" are the same practical concept: a compact context document for AI lanes.\n- The entity being briefed is the AI.\n- Purpose: keep AI aware of your current project state, assumptions, goals, and recent progress without replaying full chat history every time.\n- If you maintain this packet well, continuity stays strong across long sessions and across days.\n\n## Setup Checklist\n1. Import or open the project workspace folder.\n2. Confirm the theory markdown output directory in settings.\n3. Set or generate the master axiom file path.\n4. Save starter notes describing today\'s goals in the scratchpad.\n5. Export the workspace tree so source structure is visible.\n6. Build or refresh the briefing packet and verify both AI lanes received it.\n\n## Assistant Behavior\n- Offer step-by-step guidance instead of waiting idle.\n- Keep prompts concise and practical for first-session setup.\n- Ask one clarifying question at a time when configuration details are missing.\n- Explain setup terms briefly when needed (for example: primer, master axiom, theory markdown folder).\n- Remind the user that end-of-session recap can produce the next briefing packet automatically.\n- Note that the AI is advisory-only in this app unless explicit file-edit tools are enabled.\n\n## Expected Outcome\n- By the end of this first session, documentation should be strong enough to replace this starter packet with a session-specific packet.\n\n## Workspace Context\n- Project root: {}\n- Note: this starter packet is intended for first-run onboarding only.\n",
+        "# First Session Briefing Packet\n\n## Welcome\n- Greet the user and explain that this first run will establish the project context for future sessions.\n- Ask for the theory/model title so the session language remains aligned with the user\'s framework.\n\n## What the Primer Is\n- In this app, a \"primer\" and the \"briefing packet\" are the same practical concept: a compact context document for AI lanes.\n- The entity being briefed is the AI.\n- Purpose: keep AI aware of your current project state, assumptions, goals, and recent progress without replaying full chat history every time.\n- If you maintain this packet well, continuity stays strong across long sessions and across days.\n\n## Setup Checklist\n1. Import or open the project workspace folder.\n2. Confirm the theory markdown output directory in settings.\n3. Set or generate the master axiom file path.\n4. Save starter notes describing today\'s goals in the scratchpad.\n5. Export the workspace tree so source structure is visible.\n6. Build or refresh the briefing packet and verify both AI lanes received it.\n\n## Assistant Behavior\n- Offer step-by-step guidance instead of waiting idle.\n- Keep prompts concise and practical for first-session setup.\n- Ask one clarifying question at a time when configuration details are missing.\n- Explain setup terms briefly when needed (for example: primer, master axiom, theory markdown folder).\n- Remind the user that end-of-session recap can produce the next briefing packet automatically.\n- {}\n\n## Expected Outcome\n- By the end of this first session, documentation should be strong enough to replace this starter packet with a session-specific packet.\n\n## Workspace Context\n- Project root: {}\n- Note: this starter packet is intended for first-run onboarding only.\n",
+        describe_ai_file_access_mode(ai_file_access_mode),
         project_root.to_string_lossy()
     )
 }
@@ -4483,7 +4496,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
     );
 
     let ai_briefing_markdown = if first_session_bootstrap {
-        build_first_session_briefing_markdown(&project_root)
+        build_first_session_briefing_markdown(&project_root, &config.ai_file_access_mode)
     } else {
         build_ai_briefing_markdown(
             &project_root,
@@ -4494,6 +4507,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
             &master_axiom_path,
             &awareness_markdown,
             None,
+            &config.ai_file_access_mode,
         )
     };
     if !awareness_path.exists() {
@@ -4521,6 +4535,8 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "template": template,
         "summary": summary,
         "diagnostics": diagnostics,
+        "ai_file_access_mode": config.ai_file_access_mode,
+        "ai_file_access_status": describe_ai_file_access_mode(&config.ai_file_access_mode),
         "primer": primer_payload,
         "session_recap": recap_payload,
         "workspace_tree": tree_payload,
@@ -4655,6 +4671,7 @@ fn prepare_exit_session(
             &master_axiom_path,
             &awareness_markdown,
             None,
+            &config.ai_file_access_mode,
         );
         let _ = fs::write(&awareness_path, &awareness_markdown);
         fs::write(&briefing_path, packet).map_err(|e| format!("Failed to write briefing packet: {e}"))?;
@@ -4687,7 +4704,7 @@ fn prepare_exit_session(
     // instruction prompts do not reappear in AI lanes on subsequent launches.
     config.first_session_completed = true;
 
-    let startup_guide = build_first_session_briefing_markdown(&project_root);
+    let startup_guide = build_first_session_briefing_markdown(&project_root, &config.ai_file_access_mode);
     fs::write(&startup_guide_path, startup_guide)
         .map_err(|e| format!("Failed to write startup guide: {e}"))?;
     actions.push(format!(
@@ -5413,6 +5430,33 @@ mod tests {
 
         assert!(blocked_by_mode.is_err());
         assert!(blocked_by_scope.is_err());
+    }
+
+    #[test]
+    fn briefing_reflects_current_ai_file_access_mode() {
+        let project_root = std::env::temp_dir().join("physics_ide_ai_briefing_access_test");
+        let _ = fs::remove_dir_all(&project_root);
+        let _ = fs::create_dir_all(&project_root);
+        let master_axiom = project_root.join("master_axiom.md");
+        let primer = project_root.join("next_session_notes.md");
+        let recap = project_root.join("session_recap.md");
+        let tree = project_root.join("workspace_tree.md");
+        let awareness = "## Awareness\n- demo";
+        let packet = build_ai_briefing_markdown(
+            &project_root,
+            "Summary text",
+            &primer,
+            &recap,
+            &tree,
+            &master_axiom,
+            awareness,
+            None,
+            "read_write",
+        );
+
+        assert!(packet.contains("AI file access status"), "briefing should describe current file access status");
+        assert!(packet.contains("read/write access"), "briefing should describe the enabled read/write mode");
+        assert!(!packet.contains("advisory-only"), "briefing should not describe AI as advisory-only when access is enabled");
     }
 
     #[test]
