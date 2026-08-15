@@ -21,7 +21,7 @@ Every OpenAI payload should be ordered from least volatile to most volatile:
    - response-format requirements.
 2. Stable project context
    - project identity and configured relative paths;
-   - master axiom or canonical theory context;
+   - compact canonical axioms and structural model graph;
    - project awareness index and tool registry.
 3. Slowly changing project context
    - workspace tree or project digest;
@@ -87,6 +87,113 @@ The v8 request path currently needs these changes:
 - Reusing stale session notes or hypotheses merely to increase the cached-token count.
 - Hiding required context from the model to optimize cost.
 
+## Goal 2: Replace descriptive primers with dense structural context
+
+Primer documents should optimize semantic content per token rather than read like conversational onboarding material. The canonical AI context should favor explicit mathematical definitions, typed relationships, constraints, provenance, and compact identifiers over repeated prose.
+
+### Structural context contract
+
+The primer compiler should emit deterministic sections in a machine-oriented format:
+
+1. Model identity and scope
+2. Symbol table with units, domains, and types
+3. Axioms and assumptions
+4. Mathematical definitions and governing equations
+5. Typed relation graph
+6. Initial and boundary conditions
+7. Observables, datasets, and mappings
+8. Experiments, predictions, and falsification criteria
+9. Unresolved contradictions and open questions
+10. Source references using project-relative paths and stable section IDs
+
+The relation graph should represent nodes and typed edges such as `defines`, `depends_on`, `constrains`, `predicts`, `measured_by`, `contradicts`, and `derived_from`. Equations should remain in canonical LaTeX with every symbol defined once and referenced by a stable ID.
+
+### Implementation deliverables
+
+- [ ] Define a versioned structural-context schema that is theory-agnostic and serializes deterministically.
+- [ ] Compile the existing master axiom, project awareness, tools, experiments, and manuscript headings into that schema.
+- [ ] Replace greetings, workflow narration, repeated caveats, and conversational transitions with concise directives or typed fields.
+- [ ] Deduplicate definitions and assign stable IDs to symbols, axioms, equations, graph nodes, and sources.
+- [ ] Preserve mathematical notation, units, domains, assumptions, boundary conditions, and derivation links during compression.
+- [ ] Encode model relationships as typed nodes and edges rather than paragraphs that restate the same links.
+- [ ] Keep a human-readable inspector in the UI even when the canonical context artifact is machine-oriented.
+- [ ] Emit a compact stable core for every request and allow retrieved extensions to attach by stable ID.
+- [ ] Measure tokens before and after compilation using the tokenizer appropriate to the selected provider/model when available.
+- [ ] Reject lossy compression when required definitions, provenance, or falsification criteria disappear.
+
+### Verification
+
+- [ ] Schema validation catches missing IDs, undefined symbols, dangling graph edges, duplicate definitions, and invalid source references.
+- [ ] Golden-file tests prove identical project input produces byte-identical structural context.
+- [ ] Coverage tests prove each source axiom, equation, and declared assumption maps to at least one structural record.
+- [ ] Retrieval probes answer the same benchmark questions with fewer input tokens than the v8 prose primer.
+- [ ] Human review confirms equations and qualified claims retain their original meaning after compilation.
+- [ ] Token reduction is reported alongside semantic coverage; token count alone is never treated as success.
+
+### Non-goals
+
+- Replacing precise explanations with opaque abbreviations that the model cannot resolve.
+- Removing source provenance, uncertainty, units, assumptions, or boundary conditions.
+- Forcing every theory into one physics ontology beyond the shared typed primitives needed for retrieval.
+- Making the machine-oriented artifact the only way a user can inspect project context.
+
+## Goal 3: Move corpus complexity into local vector retrieval
+
+The full manuscript should be indexed locally instead of copied into every primer. A project-scoped vector database inside the Tauri application should retrieve only the sections relevant to the current question, hypothesis, equation, or experiment.
+
+Embeddings are numeric search representations, not a substitute prompt language. Float arrays should remain local and should not be rendered into an OpenAI or Gemini prompt. The model should receive the compact equations, graph records, and source-grounded text selected by local similarity search.
+
+### Retrieval architecture
+
+1. Parse manuscript and axiom sources by semantic boundaries such as headings, definitions, equations, proofs, experiments, and citations.
+2. Normalize each chunk into the Goal 2 structural schema while preserving its exact source location.
+3. Generate embeddings with a bundled or explicitly configured local embedding model.
+4. Store embeddings and metadata in a project-scoped SQLite index using a maintained vector-search extension such as `sqlite-vec` or a validated `sqlite-vss` integration.
+5. Embed the current query locally and run hybrid retrieval using vector similarity plus SQLite full-text search for exact symbols, equation IDs, and terminology.
+6. Rerank, deduplicate, and expand selected graph neighbors within a strict token budget.
+7. Append only the selected semantic records and source references to the dynamic portion of the provider prompt.
+
+### Implementation deliverables
+
+- [ ] Select and document the SQLite vector extension, Rust integration, license, supported Linux targets, and packaging strategy.
+- [ ] Select a local embedding model with documented dimensions, model version, license, hardware requirements, and offline behavior.
+- [ ] Store source path, stable section ID, heading ancestry, content hash, embedding model/version, vector dimensions, and modification time with every record.
+- [ ] Add incremental indexing so unchanged chunks retain their vectors and changed or deleted chunks update transactionally.
+- [ ] Combine vector similarity with FTS5 or equivalent lexical search so exact mathematical symbols and rare terms are not lost.
+- [ ] Add graph-neighborhood expansion for directly related axioms, definitions, equations, experiments, and contradictions.
+- [ ] Enforce configurable retrieval and token budgets before provider dispatch.
+- [ ] Show retrieved sources, relevance scores, index freshness, and embedding model in diagnostics.
+- [ ] Provide `Build index`, `Refresh changed`, `Rebuild`, `Inspect`, and `Delete local index` controls.
+- [ ] Keep index files local by default and exclude them from Git, manuscript export, and provider payloads.
+- [ ] Fall back safely to lexical retrieval or a compact core primer when the vector extension/model is unavailable.
+- [ ] Stop sending the full master manuscript or axiom file by default once retrieval quality passes the release benchmark.
+
+### Verification
+
+- [ ] Indexing and retrieval work without network access after required local assets are installed.
+- [ ] Reopening a project reuses a valid index without recomputing unchanged embeddings.
+- [ ] Editing, renaming, or deleting a source invalidates only affected records.
+- [ ] Retrieval benchmarks cover equations, aliases, cross-chapter relations, experiments, contradictions, and uncommon symbols.
+- [ ] Hybrid retrieval outperforms vector-only and lexical-only baselines on the v9 benchmark set.
+- [ ] Every retrieved record resolves to an existing project-relative source and stable section ID.
+- [ ] No embedding vectors, index files, or unrelated manuscript chunks appear in provider request captures.
+- [ ] Corrupt, incompatible, or stale indexes are detected and rebuilt without damaging source files.
+- [ ] Packaged Linux builds load the selected vector extension on every supported architecture.
+
+### Success measures
+
+- Provider prompts no longer scale linearly with manuscript length.
+- Benchmark answers retain source coverage while using a bounded retrieval context.
+- Index refresh time scales with changed content rather than the full corpus.
+- Retrieval diagnostics make missing or weak evidence visible instead of silently inventing context.
+
+### Non-goals
+
+- Sending raw embedding arrays to an LLM as compressed manuscript content.
+- Treating vector similarity as proof that a retrieved claim is correct.
+- Replacing canonical source files with an opaque database.
+- Requiring cloud embedding or vector-database services for normal operation.
+
 ## Official-release gates
 
 These gates apply to every v9 feature track:
@@ -98,4 +205,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goal 1 is defined and ready for implementation planning. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract or the official-release gates above.
+Goals 1-3 are defined and ready for implementation planning. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, or official-release gates above.
