@@ -49,6 +49,7 @@ Highly dynamic text must never be inserted into or above the reusable prefix. If
 - [ ] Avoid cache-hostile values in the prefix, including generated timestamps, absolute paths that vary by machine, random identifiers, and non-deterministic file ordering.
 - [ ] Parse OpenAI usage metadata, including cached input token counts when supplied by the selected model and endpoint.
 - [ ] Surface input tokens, cached input tokens, output tokens, cache-hit ratio, provider, and model in AI diagnostics and probe reports.
+- [ ] Track cumulative estimated and provider-reported token use per thread without treating estimates as exact billing data.
 - [ ] Treat absent cached-token metadata as `unavailable`, not as a zero-token cache hit.
 - [ ] Keep Gemini request behavior provider-specific; do not force OpenAI caching assumptions onto Gemini.
 
@@ -194,6 +195,129 @@ Embeddings are numeric search representations, not a substitute prompt language.
 - Replacing canonical source files with an opaque database.
 - Requiring cloud embedding or vector-database services for normal operation.
 
+## Goal 4: Audit and streamline project-awareness calibration
+
+Review the complete path by which an AI lane becomes aware of a project after the user grants read-only or read/write access. Establish a lower-token context standard before adding more awareness material, then make every included source and transformation visible enough to audit.
+
+The review must cover:
+
+`project root + access mode -> visible file scope -> awareness/index sources -> primer compilation -> retrieval -> thread history -> provider payload -> usage telemetry`
+
+Granting project access should establish permission and retrieval scope; it should not automatically dump the project corpus into a prompt. Read/write mode should add mutation capability, not broader prompt context than read-only mode.
+
+### Token-budget standard
+
+- [ ] Establish separate configurable budgets for stable primer, retrieved project context, conversation history, attachments, current request, and reserved output.
+- [ ] Define a v8 benchmark corpus and record the current startup-primer and common-workflow token baselines before changing behavior.
+- [ ] Set v9 acceptance ceilings from benchmark evidence rather than an arbitrary compression percentage.
+- [ ] Block or require explicit confirmation when a request exceeds its context budget.
+- [ ] Prefer omission, local retrieval, structural references, and user-selected scope over silent truncation.
+- [ ] Report what was included, excluded, summarized, retrieved, or truncated for each request.
+- [ ] Apply the same budgeting rules to read-only and read/write modes; permissions must not alter token accounting.
+
+### Thread context-load meter
+
+The app should provide useful token information even when exact preflight counts are unavailable:
+
+- [ ] Show a model-aware preflight token estimate for each lane using a compatible local tokenizer when available.
+- [ ] Fall back to a labeled byte/character approximation with a documented error range when no compatible tokenizer exists.
+- [ ] Parse exact input, cached input, reasoning, and output usage from provider responses when those fields are supplied.
+- [ ] Show per-request and cumulative thread totals, remaining configured budget, and the contribution of primer, retrieval, history, attachments, and current input.
+- [ ] Clearly distinguish `estimated`, `provider reported`, and `unavailable` values.
+- [ ] Replace the undefined entropy-meter concept with a context-load meter for release scope; evaluate semantic diversity or Shannon-entropy diagnostics separately only if they produce an actionable user decision.
+
+### Compact visible-tree context
+
+The AI-facing workspace tree should reflect user-selected visible scope and use a deterministic, token-light representation. Expanding a directory in the viewer may make its loaded descendants eligible for the next tree export, but it must not automatically send them to an AI lane.
+
+Preferred representation:
+
+```text
+@tree-v1
+src/
+   main.js
+   ai-config.js
+src-tauri/
+   src/
+      lib.rs
+```
+
+- [ ] Replace repeated full relative paths and Markdown list markers with one hierarchical path representation.
+- [ ] Export only the root and currently expanded/loaded descendants unless the user explicitly requests a full-project map.
+- [ ] Exclude ignored, hidden, generated, binary, vector-index, and build-output paths by default using documented rules.
+- [ ] Preview estimated tree tokens and included node count before syncing or exporting context.
+- [ ] Preserve deterministic sorting so an unchanged visible tree produces an unchanged prompt prefix.
+- [ ] Keep full recursive export as an explicit separate action with a cost warning, not the default briefing behavior.
+- [ ] Ensure collapsing a branch removes its descendants from the next visible-tree export without deleting files or local index records.
+
+### Lazy directory cost heatmap
+
+Visible directory rows should help the user judge the likely cost of exposing their contents. Estimates should be computed only for directory rows currently visible in the file-tree viewport, in a cancellable background task, and cached until relevant filesystem metadata changes.
+
+Cost estimates should use eligible text-file byte totals and file counts without reading file contents. Convert bytes to approximate tokens using a configurable, documented bytes-per-token factor. Binary files and excluded paths should not inflate the text-token estimate, but their excluded size/count should remain inspectable.
+
+Color states:
+
+- `white`: scanned and empty;
+- `green`: low estimated token cost and low file count;
+- `yellow`: moderate estimated cost or high count of individually small files;
+- `red`: high estimated token cost or a configured high-risk threshold;
+- `neutral/gray`: not measured, measuring, stale, inaccessible, cancelled, or failed.
+
+- [ ] Define thresholds in estimated tokens and file count, with defaults derived from the v9 token-budget standard.
+- [ ] Add a legend and tooltip showing state, estimated tokens, eligible bytes, file count, exclusions, scan time, and approximation method.
+- [ ] Never use green for unknown, failed, partial, permission-denied, or timed-out scans.
+- [ ] Do not estimate individual file tokens during normal project import or initial tree rendering.
+- [ ] Start one bounded aggregate metadata walk only when a directory row enters the viewport; that walk may traverse its subtree to compute the directory total.
+- [ ] Do not enqueue independent estimates for collapsed or off-screen descendant rows; cancel queued work when a visible row leaves the viewport and limit scan concurrency.
+- [ ] Respect `.gitignore`, app exclusions, symlink boundaries, project-root access controls, and a configurable maximum scan depth/work limit.
+- [ ] Cache aggregate metadata by path and filesystem fingerprint so revisiting a row is fast.
+- [ ] Keep heatmap color separate from selection, Git status, errors, and file type so meaning remains accessible without color alone.
+
+### End-to-end review deliverables
+
+- [ ] Document every awareness source, owner, refresh trigger, size limit, volatility class, prompt position, and access-mode dependency.
+- [ ] Remove duplicate paths where the same manuscript, axiom, tree, recap, or summary reaches a request more than once.
+- [ ] Replace automatic recursive workspace-tree generation during briefing compilation with visible-tree scope or local retrieval.
+- [ ] Separate permission state, index state, visible-tree state, primer state, and thread state in diagnostics.
+- [ ] Add a request inspector that shows ordered sections, estimated tokens, provenance, and exclusions without exposing API keys.
+- [ ] Verify that changing read-only to read/write does not rebuild awareness context unless project content or selected scope changed.
+- [ ] Define freshness and invalidation rules for the primer, visible tree, structural context, and vector index.
+
+### Verification
+
+- [ ] End-to-end tests trace project load through the exact provider request for both read-only and read/write modes.
+- [ ] Request snapshots prove each awareness source appears at most once and in the Goal 1 volatility order.
+- [ ] Opening a project performs no recursive token-cost scan and sends no project content to a provider.
+- [ ] Only visible directory rows schedule heatmap work; scrolling or collapsing cancels irrelevant queued scans.
+- [ ] Visible-tree exports contain only expanded/loaded scope and remain byte-identical when that scope is unchanged.
+- [ ] Heatmap tests cover empty, low-cost, many-small-file, high-cost, ignored, inaccessible, symlinked, stale, cancelled, and partial directories.
+- [ ] Performance tests verify initial project rendering remains responsive on the v9 large-project fixture.
+- [ ] Estimated token totals are compared with provider-reported counts across supported models and display their observed error bounds.
+- [ ] Token-budget regression tests fail when a benchmark workflow exceeds its approved ceiling without an intentional baseline update.
+
+### Success measures
+
+- Startup and routine prompts meet the v9 token ceilings while preserving benchmark awareness accuracy.
+- The user can identify expensive visible branches before adding them to AI context.
+- Project opening remains immediate because cost scans and indexing are deferred, bounded, and observable.
+- Every provider request can explain which project material it used and why.
+
+### Current migration targets
+
+- `compile_ai_briefing` currently regenerates a recursive full-project tree and transports overlapping tree, axiom, awareness, recap, and briefing payloads.
+- `export_workspace_tree` currently performs a recursive project walk, while the frontend visible-tree helper already has the narrower user-selected scope needed for the default path.
+- `read_directory` and the file-tree viewer already load child directories lazily, providing the correct trigger boundary for visible-row estimates.
+- OpenAI response usage is currently discarded, so exact post-request thread accounting is not yet available.
+
+### Non-goals
+
+- Reading and tokenizing every project file during import merely to color the tree.
+- Treating directory color as a relevance score or automatically granting AI access to a branch.
+- Claiming byte-derived estimates are exact model token counts or billing totals.
+- Sending project content because a directory was expanded, measured, or colored.
+- Using an unexplained entropy number as a proxy for awareness quality.
+
 ## Official-release gates
 
 These gates apply to every v9 feature track:
@@ -205,4 +329,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-3 are defined and ready for implementation planning. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, or official-release gates above.
+Goals 1-4 are defined and ready for implementation planning. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
