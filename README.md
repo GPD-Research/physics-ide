@@ -6,7 +6,7 @@ physics-IDE is a Linux-first desktop research environment for developing, compar
 
 The immediate direction for physics-IDE is to focus on a Linux-exclusive build and Debian-based deployment workflow. Windows support is currently deferred while the compilation process remains too complex to maintain effectively.
 
-The next major milestone is version 8: a release-candidate pass that turns physics-IDE into a true imported-project research environment where the AI can understand the state of the theory, the available tools, and the history of analysis work without needing the original human operator to re-explain everything each session.
+Version 8 is the release-candidate baseline. The next major milestone is version 9, the first official physics-IDE release, focused on production readiness and efficient project-aware AI operation.
 
 The version 8 vision is to provide a flexible environment for:
 
@@ -172,6 +172,7 @@ Tracking references:
 - docs/releases/v7-release-checklist.md
 - docs/releases/v7-release-notes.md
 - docs/releases/v8-model-flexibility-plan.md
+- docs/releases/v9-official-release-goals.md
 
 ## Ubuntu Linux Full Build Guide (v8 RC)
 
