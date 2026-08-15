@@ -318,6 +318,60 @@ Color states:
 - Sending project content because a directory was expanded, measured, or colored.
 - Using an unexplained entropy number as a proxy for awareness quality.
 
+## Recommended execution roadmap
+
+### Sprint 1: Establish the baseline and remove obvious waste
+
+- [ ] Capture prompt-section byte and estimated-token baselines for representative v8 workflows.
+- [x] Serialize the visible workspace tree in compact deterministic form.
+- [x] Stop recursive full-project tree generation during normal briefing compilation.
+- [ ] Add prompt-source provenance and identify duplicate awareness content.
+- [ ] Add regression fixtures and approved token ceilings for benchmark workflows.
+
+### Sprint 2: Make prompt assembly deterministic and measurable
+
+- [ ] Introduce one canonical prompt assembler shared by both AI lanes.
+- [ ] Separate stable, slowly changing, thread, and current-request sections.
+- [ ] Add the request inspector and preflight context-load estimate.
+- [ ] Parse provider-reported usage and maintain per-thread totals.
+- [ ] Add stable-prefix and request-order snapshot tests.
+
+### Sprint 3: Activate native prompt-caching benefits
+
+- [ ] Preserve provider message roles instead of flattening OpenAI history.
+- [ ] Keep dynamic values below the reusable prefix boundary.
+- [ ] Record cached input tokens and cache-hit ratio where OpenAI supplies them.
+- [ ] Run repeated-request cache integration probes across supported OpenAI models.
+
+### Sprint 4: Compile structural project context
+
+- [ ] Define the versioned symbol, axiom, equation, relation, and provenance schema.
+- [ ] Compile existing awareness sources into deterministic structural records.
+- [ ] Add semantic coverage, schema, and golden-file tests.
+- [ ] Replace duplicated prose primer sections after benchmark equivalence is established.
+
+### Sprint 5: Add local retrieval
+
+- [ ] Select and package the local embedding model and SQLite vector extension.
+- [ ] Implement incremental structural chunk indexing.
+- [ ] Add hybrid vector, lexical, and graph-neighbor retrieval.
+- [ ] Enforce retrieval budgets and expose source diagnostics.
+- [ ] Stop transporting full manuscripts after retrieval benchmarks pass.
+
+### Sprint 6: Add directory cost guidance
+
+- [ ] Derive heatmap thresholds from measured token budgets.
+- [ ] Implement bounded visible-row metadata scans, cancellation, and caching.
+- [ ] Add accessible white, green, yellow, red, and neutral states.
+- [ ] Validate responsiveness and estimate accuracy on the large-project fixture.
+
+### Sprint 7: Complete the release audit
+
+- [ ] Run the complete awareness pipeline review in read-only and read/write modes.
+- [ ] Verify permissions do not silently change prompt scope or token use.
+- [ ] Complete Linux packaging, upgrade, provider, privacy, and regression gates.
+- [ ] Publish supported-model measurements and known limitations.
+
 ## Official-release gates
 
 These gates apply to every v9 feature track:
@@ -329,4 +383,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and ready for implementation planning. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and implementation has started with Sprint 1. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.

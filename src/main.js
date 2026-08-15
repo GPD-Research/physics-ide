@@ -87,11 +87,20 @@ async function handleChatSend(side) {
   // 2. Dispatch payload down the Tauri bridge to Rust
   try {
     appendTerminalLog(`Invoking 'send_llm_prompt' [Side: ${side}, Slot: ${index}]`);
-    
+    const history = [{ role: "user", content: text }];
+    try {
+      const usage = JSON.parse(await invoke('estimate_prompt_usage', { history }));
+      appendTerminalLog(
+        `Context estimate [${side}]: ~${usage.total.estimated_tokens} tokens, ${usage.total.bytes} bytes across ${usage.message_count} messages.`
+      );
+    } catch (estimateError) {
+      appendTerminalLog(`Context estimate unavailable [${side}]: ${estimateError}`);
+    }
+
     // Updated to match Rust function send_llm_prompt requirements
     const response = await invoke('send_llm_prompt', { 
       pane: side, 
-      history: [{ role: "user", content: text }] 
+      history
     });
     
     // 3. Render LLM Response
@@ -255,15 +264,7 @@ function buildVisibleProjectTreeMarkdown() {
   }
 
   const rootFolderName = rootPath.split(/[\\/]/).filter(Boolean).pop() || 'project';
-  const normalizedRootPath = rootPath.replace(/\\/g, '/');
-  const lines = [
-    '# Visible Project Tree',
-    '',
-    '## Root',
-    `- ${rootFolderName}`,
-    '',
-    '## Visible Entries'
-  ];
+  const lines = ['@tree-v1', `${rootFolderName}/`];
 
   const walkTree = (container, depth) => {
     if (!container) return;
@@ -274,16 +275,12 @@ function buildVisibleProjectTreeMarkdown() {
       if (!label) return;
 
       const isDir = label.dataset.isDir === 'true';
-      const entryPath = (label.dataset.path || '').replace(/\\/g, '/');
       const entryName = (label.textContent || '').replace(/^[📁📂📄]\s*/, '');
-      const relativePath = entryPath.startsWith(normalizedRootPath)
-        ? entryPath.slice(normalizedRootPath.length).replace(/^\/+/, '')
-        : entryName;
       const prefix = '  '.repeat(depth);
       const suffix = isDir ? '/' : '';
 
-      if (relativePath || entryName) {
-        lines.push(`${prefix}- /${relativePath || entryName}${suffix}`);
+      if (entryName) {
+        lines.push(`${prefix}${entryName}${suffix}`);
       }
 
       const subContainer = li.querySelector(':scope > div:not(.file-item)');
@@ -293,11 +290,7 @@ function buildVisibleProjectTreeMarkdown() {
     });
   };
 
-  walkTree(rootContainer, 0);
-
-  if (lines.length <= 6) {
-    return `${lines.join('\n')}\n- /${rootFolderName}/`;
-  }
+  walkTree(rootContainer, 1);
 
   return lines.join('\n');
 }
@@ -329,7 +322,11 @@ async function exportWorkspaceTree() {
     return;
   }
   try {
-    const msg = await invoke('export_workspace_tree', { rootPath: currentWorkspacePath });
+    const visibleTree = buildVisibleProjectTreeMarkdown();
+    const msg = await invoke('export_workspace_tree', {
+      rootPath: currentWorkspacePath,
+      visibleTree
+    });
     appendTerminalLog(msg);
     alert(msg);
   } catch (err) {

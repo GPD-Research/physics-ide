@@ -515,6 +515,7 @@ fn apply_unset_path_defaults(config: &mut AppConfig) {
     }
 }
 
+#[cfg(test)]
 fn build_workspace_tree_string(root: &Path) -> Result<String, String> {
     if !root.exists() {
         return Err(format!("Root path does not exist: {}", root.to_string_lossy()));
@@ -564,6 +565,38 @@ fn build_workspace_tree_string(root: &Path) -> Result<String, String> {
     }
 
     Ok(tree_string)
+}
+
+fn build_compact_workspace_root(root: &Path) -> Result<String, String> {
+    if !root.exists() {
+        return Err(format!("Root path does not exist: {}", root.to_string_lossy()));
+    }
+
+    let root_label = root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.to_string_lossy().to_string());
+
+    Ok(format!("@tree-v1\n{root_label}/\n"))
+}
+
+fn workspace_tree_for_export(root: &Path, visible_tree: Option<&str>) -> Result<String, String> {
+    if !root.exists() {
+        return Err(format!("Root path does not exist: {}", root.to_string_lossy()));
+    }
+
+    let Some(candidate) = visible_tree.map(str::trim).filter(|tree| !tree.is_empty()) else {
+        return build_compact_workspace_root(root);
+    };
+
+    if !candidate.starts_with("@tree-v1\n") {
+        return Err("Visible workspace tree must use the @tree-v1 format.".to_string());
+    }
+    if candidate.len() > 200_000 {
+        return Err("Visible workspace tree exceeds the 200 KB export limit.".to_string());
+    }
+
+    Ok(format!("{candidate}\n"))
 }
 
 fn resolve_workspace_root(current_path: &str, config: &AppConfig) -> Option<PathBuf> {
@@ -2435,14 +2468,21 @@ fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
         });
     }
     
+    files.sort_by(|left, right| {
+        right
+            .is_dir
+            .cmp(&left.is_dir)
+            .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+    });
+
     Ok(files)
 }
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn export_workspace_tree(rootPath: String) -> Result<String, String> {
+fn export_workspace_tree(rootPath: String, visibleTree: Option<String>) -> Result<String, String> {
     let root = std::path::Path::new(&rootPath);
-    let tree_string = build_workspace_tree_string(root)?;
+    let tree_string = workspace_tree_for_export(root, visibleTree.as_deref())?;
 
     // Save AI-friendly markdown first, then keep a compatibility text export.
     let markdown_output_path = root.join("workspace_tree.md");
@@ -2450,7 +2490,7 @@ fn export_workspace_tree(rootPath: String) -> Result<String, String> {
     std::fs::write(&markdown_output_path, &tree_string).map_err(|e| format!("Failed to write markdown file: {}", e))?;
     std::fs::write(&legacy_output_path, &tree_string).map_err(|e| format!("Failed to write compatibility file: {}", e))?;
 
-    Ok(format!("Workspace map generated: {}", markdown_output_path.to_string_lossy()))
+    Ok(format!("Visible workspace map generated: {}", markdown_output_path.to_string_lossy()))
 }
 
 #[tauri::command]
@@ -2750,6 +2790,22 @@ mod llm_prompt_tests {
         assert!(prompt.contains("System:"));
         assert!(prompt.contains("User:"));
         assert!(prompt.contains("Assistant:"));
+    }
+
+    #[test]
+    fn estimates_serialized_prompt_usage_with_role_breakdown() {
+        let history = vec![
+            serde_json::json!({"role": "system", "content": "Stable instructions"}),
+            serde_json::json!({"role": "user", "content": "Current question"}),
+        ];
+
+        let usage = estimate_prompt_usage_value(&history);
+        let serialized = build_prompt_from_history(&history);
+
+        assert_eq!(usage["total"]["bytes"].as_u64().unwrap(), serialized.len() as u64);
+        assert_eq!(usage["method"].as_str().unwrap(), "character_heuristic_4_chars_per_token");
+        assert_eq!(usage["by_role"]["system"]["messages"].as_u64().unwrap(), 1);
+        assert_eq!(usage["by_role"]["user"]["messages"].as_u64().unwrap(), 1);
     }
 
     #[test]
@@ -3225,6 +3281,75 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
         }
     }
     prompt.trim().to_string()
+}
+
+fn estimate_token_count(character_count: usize) -> usize {
+    character_count.saturating_add(3) / 4
+}
+
+fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Value {
+    let serialized_prompt = build_prompt_from_history(history);
+    let total_characters = serialized_prompt.chars().count();
+    let mut role_totals: std::collections::BTreeMap<String, (usize, usize, usize)> = std::collections::BTreeMap::new();
+
+    for entry in history {
+        let role = entry
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_ascii_lowercase();
+        let text = if let Some(content) = entry.get("content").and_then(|value| value.as_str()) {
+            content.to_string()
+        } else {
+            entry
+                .get("parts")
+                .and_then(|value| value.as_array())
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default()
+        };
+        let totals = role_totals.entry(role).or_insert((0, 0, 0));
+        totals.0 += 1;
+        totals.1 += text.len();
+        totals.2 += text.chars().count();
+    }
+
+    let by_role = role_totals
+        .into_iter()
+        .map(|(role, (messages, bytes, characters))| {
+            (
+                role,
+                serde_json::json!({
+                    "messages": messages,
+                    "content_bytes": bytes,
+                    "content_characters": characters,
+                    "estimated_tokens": estimate_token_count(characters)
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+
+    serde_json::json!({
+        "method": "character_heuristic_4_chars_per_token",
+        "estimate_only": true,
+        "message_count": history.len(),
+        "total": {
+            "bytes": serialized_prompt.len(),
+            "characters": total_characters,
+            "estimated_tokens": estimate_token_count(total_characters)
+        },
+        "by_role": by_role
+    })
+}
+
+#[tauri::command]
+fn estimate_prompt_usage(history: Vec<serde_json::Value>) -> String {
+    estimate_prompt_usage_value(&history).to_string()
 }
 
 fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
@@ -4412,9 +4537,11 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
 
     let tree_path = project_root.join("workspace_tree.md");
     let legacy_tree_path = project_root.join("workspace_tree.txt");
-    if let Ok(tree) = build_workspace_tree_string(&project_root) {
-        let _ = fs::write(&tree_path, &tree);
-        let _ = fs::write(&legacy_tree_path, &tree);
+    if !tree_path.exists() {
+        if let Ok(tree) = build_compact_workspace_root(&project_root) {
+            let _ = fs::write(&tree_path, &tree);
+            let _ = fs::write(&legacy_tree_path, &tree);
+        }
     }
 
     let primer_path = project_root.join("next_session_notes.md");
@@ -4517,7 +4644,11 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         let _ = fs::write(&briefing_path, ai_briefing_markdown);
     }
 
+    let (awareness_payload, awareness_diag) = read_source_payload("project_awareness", &awareness_path, 12_000);
     let (briefing_payload, briefing_diag) = read_source_payload("ai_briefing", &briefing_path, 12_000);
+    if let Some(diag) = awareness_diag {
+        diagnostics.push(diag);
+    }
     if let Some(diag) = briefing_diag {
         diagnostics.push(diag);
     }
@@ -4541,6 +4672,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "session_recap": recap_payload,
         "workspace_tree": tree_payload,
         "master_axiom": axiom_payload,
+        "project_awareness": awareness_payload,
         "ai_briefing": briefing_payload,
         "generated_files": {
             "session_recap": recap_path.to_string_lossy().to_string(),
@@ -4643,10 +4775,12 @@ fn prepare_exit_session(
         fs::write(&recap_path, recap).map_err(|e| format!("Failed to write session recap: {e}"))?;
         actions.push(format!("Session recap saved: {}", recap_path.to_string_lossy()));
 
-        // Replace first-run packet with session-derived briefing once recap exists.
-        if let Ok(tree) = build_workspace_tree_string(&project_root) {
-            let _ = fs::write(&tree_path, &tree);
-            let _ = fs::write(&legacy_tree_path, &tree);
+        // Keep the user-selected tree, or create a compact root-only fallback.
+        if !tree_path.exists() {
+            if let Ok(tree) = build_compact_workspace_root(&project_root) {
+                let _ = fs::write(&tree_path, &tree);
+                let _ = fs::write(&legacy_tree_path, &tree);
+            }
         }
         let exit_summary = "Post-session briefing packet generated from latest session recap and workspace context.";
         let tools_dir = if config.tools_dir.trim().is_empty() {
@@ -5665,6 +5799,32 @@ mod tests {
     }
 
     #[test]
+    fn compact_workspace_root_does_not_walk_project_files() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_compact_tree_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("nested")).unwrap();
+        fs::write(temp_dir.join("nested").join("large_context.md"), "not selected").unwrap();
+
+        let tree = build_compact_workspace_root(&temp_dir).unwrap();
+
+        assert!(tree.starts_with("@tree-v1\n"));
+        assert!(!tree.contains("nested"));
+        assert!(!tree.contains("large_context.md"));
+    }
+
+    #[test]
+    fn visible_workspace_tree_is_exported_without_expanding_scope() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_visible_tree_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let visible_tree = "@tree-v1\nproject/\n  src/\n    main.js";
+
+        let tree = workspace_tree_for_export(&temp_dir, Some(visible_tree)).unwrap();
+
+        assert_eq!(tree, format!("{visible_tree}\n"));
+    }
+
+    #[test]
     fn builds_project_awareness_markdown_from_theory_and_tools() {
         let temp_dir = std::env::temp_dir().join(format!("physics_ide_awareness_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
@@ -5964,6 +6124,7 @@ pub fn run() {
             compute_cosmology_metrics_command,
             generate_empirical_analysis_primer,
             export_workspace_tree,
+            estimate_prompt_usage,
             send_llm_prompt,
             compile_ai_briefing,
             validate_model_selection,

@@ -3117,12 +3117,12 @@
           ? `${masterAxiomContent.slice(0, 1500)}\n\n[...truncated master axiom excerpt...]`
           : masterAxiomContent)
         : 'Master axiom snapshot unavailable.';
-      const briefingPacketContent = (briefing?.ai_briefing?.content || '').trim();
-      const briefingExcerpt = briefingPacketContent
-        ? (briefingPacketContent.length > 2200
-          ? `${briefingPacketContent.slice(0, 2200)}\n\n[...truncated briefing excerpt...]`
-          : briefingPacketContent)
-        : 'AI briefing packet unavailable.';
+      const awarenessContent = (briefing?.project_awareness?.content || '').trim();
+      const awarenessExcerpt = awarenessContent
+        ? (awarenessContent.length > 2200
+          ? `${awarenessContent.slice(0, 2200)}\n\n[...truncated project awareness excerpt...]`
+          : awarenessContent)
+        : 'Project awareness index unavailable.';
       const retrievalContract = [
         'Retrieval contract:',
         '1. For file-location questions, return exact relative file path(s) present in project context.',
@@ -3178,8 +3178,8 @@
           retrievalContract,
           'Master axiom excerpt:',
           axiomExcerpt,
-          'Briefing excerpt:',
-          briefingExcerpt,
+          'Project awareness excerpt:',
+          awarenessExcerpt,
           'Begin by clarifying today\'s goal and keeping assumptions explicit before opening new branches.'
         ].join('\n');
       }
@@ -3196,8 +3196,8 @@
         retrievalContract,
         'Master axiom excerpt:',
         axiomExcerpt,
-        'Briefing excerpt:',
-        briefingExcerpt,
+        'Project awareness excerpt:',
+        awarenessExcerpt,
         'Begin by clarifying what evidence would constrain or falsify the active hypothesis in this session.'
       ].join('\n');
     }
@@ -3369,6 +3369,16 @@
       chatHistories[pane][index].push(messagePayload);
       appendChatBubble(pane, index, senderLabel, text);
       appendTerminalLog(`Dispatching payload via active connection string to [${provider}]...`);
+      try {
+        const usage = JSON.parse(await invoke('estimate_prompt_usage', {
+          history: chatHistories[pane][index]
+        }));
+        appendTerminalLog(
+          `Context estimate [${pane}]: ~${usage.total.estimated_tokens} tokens, ${usage.total.bytes} bytes across ${usage.message_count} messages.`
+        );
+      } catch (estimateError) {
+        appendTerminalLog(`Context estimate unavailable [${pane}]: ${estimateError}`);
+      }
       setPaneBusy(pane, true);
 
       try {
@@ -4451,6 +4461,8 @@
 
           const label = document.createElement('div');
           label.className = 'file-item';
+          label.dataset.path = entry.path;
+          label.dataset.isDir = String(Boolean(entry.is_dir));
           label.innerText = (entry.is_dir ? '📁 ' : '📄 ') + entry.name;
           li.appendChild(label);
 
@@ -4494,13 +4506,48 @@
       }
     }
 
+    function buildVisibleProjectTreeMarkdown() {
+      const rootPath = (currentWorkspacePath || '').trim();
+      const rootContainer = document.getElementById('file-tree-container');
+      if (!rootPath || !rootContainer) return '';
+
+      const rootFolderName = rootPath.split(/[\\/]/).filter(Boolean).pop() || 'project';
+      const lines = ['@tree-v1', `${rootFolderName}/`];
+
+      const walkTree = (container, depth) => {
+        const listItems = Array.from(container.querySelectorAll(':scope > ul > li'));
+        listItems.forEach((listItem) => {
+          const label = listItem.querySelector(':scope > .file-item');
+          if (!label) return;
+
+          const isDirectory = label.dataset.isDir === 'true';
+          const entryName = (label.textContent || '').replace(/^[📁📂📄]\s*/, '');
+          if (entryName) {
+            lines.push(`${'  '.repeat(depth)}${entryName}${isDirectory ? '/' : ''}`);
+          }
+
+          const childContainer = listItem.querySelector(':scope > div:not(.file-item)');
+          if (isDirectory && childContainer?.style.display !== 'none') {
+            walkTree(childContainer, depth + 1);
+          }
+        });
+      };
+
+      walkTree(rootContainer, 1);
+      return lines.join('\n');
+    }
+
     async function exportWorkspaceTree() {
       if (!currentWorkspacePath) {
         alert("Please load a workspace directory first!");
         return;
       }
       try {
-        const msg = await invoke('export_workspace_tree', { rootPath: currentWorkspacePath });
+        const visibleTree = buildVisibleProjectTreeMarkdown();
+        const msg = await invoke('export_workspace_tree', {
+          rootPath: currentWorkspacePath,
+          visibleTree
+        });
         appendTerminalLog(msg);
         alert(msg);
       } catch (err) {
