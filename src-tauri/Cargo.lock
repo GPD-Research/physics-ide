@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "physics-ide"
-version = "7.5.0"
+version = "8.0.0"
 dependencies = [
  "aes-gcm",
  "base64 0.5.2",
