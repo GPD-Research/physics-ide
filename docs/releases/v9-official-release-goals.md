@@ -375,19 +375,14 @@ Decision rules:
 
 #### Live validation results
 
-`gpt-4.1` validated on 2026-08-15:
+Validated on 2026-08-15 with stable-prefix fingerprint `090c35db223bc481205f6b8f539373ebcc07ee3aa3ab89a422705ffe5c678ccb`, local estimate 1,446 tokens, and provider-reported input of 1,264 tokens:
 
-- status: `CACHE_HIT`;
-- stable-prefix fingerprint: `090c35db223bc481205f6b8f539373ebcc07ee3aa3ab89a422705ffe5c678ccb`;
-- local stable-prefix estimate: 1,446 tokens;
-- provider-reported input: 1,264 tokens on both requests;
-- warm request: 1,606 ms, 0 cached tokens;
-- probe request: 999 ms, 1,024 cached tokens;
-- provider cache-hit ratio: 81.0%;
-- observed latency reduction: 37.8%;
-- local estimator error against provider input: +14.4%.
+| Model | Status | Warm latency | Probe latency | Cached tokens | Cache ratio | Observed latency reduction |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `gpt-4.1` | `CACHE_HIT` | 1,606 ms | 999 ms | 1,024 | 81.0% | 37.8% |
+| `gpt-4o-2024-08-06` | `CACHE_HIT` | 708 ms | 628 ms | 1,024 | 81.0% | 11.3% |
 
-This validates the canonical prefix ordering and native OpenAI cache path for `gpt-4.1`. Latency is observational and must not be used alone to claim a cache hit; the provider-reported 1,024 cached tokens are the authoritative evidence. The supported-model matrix remains open until the other configured OpenAI models are probed.
+Both models validate the canonical prefix ordering and native OpenAI cache path. The local estimator was +14.4% above provider-reported input for this shared payload. Latency is observational and must not be used alone to claim a cache hit; the provider-reported 1,024 cached tokens are the authoritative evidence. The supported-model matrix remains open until the other configured OpenAI models are probed.
 
 ### Sprint 4: Compile structural project context
 
