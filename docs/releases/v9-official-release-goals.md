@@ -279,6 +279,7 @@ Color states:
 - [ ] Document every awareness source, owner, refresh trigger, size limit, volatility class, prompt position, and access-mode dependency.
 - [ ] Remove duplicate paths where the same manuscript, axiom, tree, recap, or summary reaches a request more than once.
 - [ ] Replace automatic recursive workspace-tree generation during briefing compilation with visible-tree scope or local retrieval.
+- [ ] Inventory every manual primer/context control and classify it as `retain`, `automate`, `merge`, `deprecate`, or `remove`.
 - [ ] Separate permission state, index state, visible-tree state, primer state, and thread state in diagnostics.
 - [ ] Add a request inspector that shows ordered sections, estimated tokens, provenance, and exclusions without exposing API keys.
 - [ ] Verify that changing read-only to read/write does not rebuild awareness context unless project content or selected scope changed.
@@ -305,10 +306,38 @@ Color states:
 
 ### Current migration targets
 
-- `compile_ai_briefing` currently regenerates a recursive full-project tree and transports overlapping tree, axiom, awareness, recap, and briefing payloads.
-- `export_workspace_tree` currently performs a recursive project walk, while the frontend visible-tree helper already has the narrower user-selected scope needed for the default path.
+- Sprint 1 stopped recursive tree regeneration during briefing compilation and added compact visible-tree export; existing verbose tree files remain until refreshed.
+- Primer assembly still has several manual entry points and needs one authoritative automated awareness path.
 - `read_directory` and the file-tree viewer already load child directories lazily, providing the correct trigger boundary for visible-row estimates.
-- OpenAI response usage is currently discarded, so exact post-request thread accounting is not yet available.
+- Preflight prompt estimates are available, but OpenAI response usage is still discarded, so exact post-request thread accounting is not yet available.
+
+### Manual context-tool consolidation gate
+
+Automated awareness should become the authoritative path when it can produce fresher, smaller, source-grounded context than manual primer generation. Manual controls must not remain merely for compatibility if they resend stale data, duplicate automatic context, bypass token budgets, or contradict retrieval and cache ordering.
+
+Current controls requiring review include:
+
+- `View/Edit Primer`, `Save Packet`, and `Sync To AI Threads`;
+- `Sync AI Context Now` and pane reset-to-primer behavior;
+- `Pass Into Primer` and idea-pad `Sync AI Context`;
+- `Export AI Project Map`;
+- carry-over notes, exit primer preview, and briefing regeneration actions.
+
+Decision rules:
+
+- `retain`: the control provides explicit scope selection, audit, recovery, or a meaningful human override that automation cannot safely infer;
+- `automate`: the action should occur from project/index freshness rules without user intervention;
+- `merge`: multiple controls express one intent and should become one action or inspector;
+- `deprecate`: automation supersedes the control, but users need a transition period and migration notice;
+- `remove`: the control is redundant, contradictory, unsafe, or permanently bypasses the canonical awareness pipeline.
+
+- [ ] Compare each manual action with the canonical assembler and local retrieval pipeline after Sprints 2, 4, and 5.
+- [ ] Measure whether each action improves benchmark awareness enough to justify its token and UX cost.
+- [ ] Require all retained manual overrides to pass through the same provenance, ordering, deduplication, and token-budget checks as automation.
+- [ ] Never let editing a generated primer silently mutate canonical source files, structural records, or vector-index content.
+- [ ] Present a migration proposal for discussion before removing user-facing controls or project artifacts.
+- [ ] Provide a recovery/export path for user-authored notes before deprecating any tool that stores unique human content.
+- [ ] Remove obsolete primer terminology when the remaining surface is more accurately an awareness inspector, scope selector, or context override.
 
 ### Non-goals
 
@@ -349,6 +378,7 @@ Color states:
 - [ ] Compile existing awareness sources into deterministic structural records.
 - [ ] Add semantic coverage, schema, and golden-file tests.
 - [ ] Replace duplicated prose primer sections after benchmark equivalence is established.
+- [ ] Run the first manual context-tool consolidation review against the canonical assembler.
 
 ### Sprint 5: Add local retrieval
 
@@ -357,6 +387,7 @@ Color states:
 - [ ] Add hybrid vector, lexical, and graph-neighbor retrieval.
 - [ ] Enforce retrieval budgets and expose source diagnostics.
 - [ ] Stop transporting full manuscripts after retrieval benchmarks pass.
+- [ ] Reclassify manual primer controls after automated retrieval benchmarks pass.
 
 ### Sprint 6: Add directory cost guidance
 
@@ -368,6 +399,7 @@ Color states:
 ### Sprint 7: Complete the release audit
 
 - [ ] Run the complete awareness pipeline review in read-only and read/write modes.
+- [ ] Complete the agreed manual-tool migrations, deprecations, and removals.
 - [ ] Verify permissions do not silently change prompt scope or token use.
 - [ ] Complete Linux packaging, upgrade, provider, privacy, and regression gates.
 - [ ] Publish supported-model measurements and known limitations.
@@ -380,6 +412,7 @@ These gates apply to every v9 feature track:
 - [ ] Production Linux package installs, launches, upgrades, and uninstalls cleanly on the supported Ubuntu baseline.
 - [ ] User-facing diagnostics explain provider failures without exposing API keys or sensitive prompt content.
 - [ ] Release documentation identifies supported providers, tested models, known limitations, and upgrade steps from v8.
+- [ ] No manual context tool can bypass the canonical prompt assembler, provenance report, or token budget.
 
 ## Scope status
 
