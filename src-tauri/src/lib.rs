@@ -2795,17 +2795,83 @@ mod llm_prompt_tests {
     #[test]
     fn estimates_serialized_prompt_usage_with_role_breakdown() {
         let history = vec![
-            serde_json::json!({"role": "system", "content": "Stable instructions"}),
-            serde_json::json!({"role": "user", "content": "Current question"}),
+            serde_json::json!({
+                "role": "system",
+                "content": "Stable instructions",
+                "context_source": "startup_primer",
+                "context_trigger": "application_start"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Current question\nAttachment text",
+                "context_source": "current_request",
+                "context_parts": [
+                    {"source": "current_request", "content": "Current question"},
+                    {"source": "attachment", "content": "Attachment text"}
+                ]
+            }),
         ];
 
         let usage = estimate_prompt_usage_value(&history);
         let serialized = build_prompt_from_history(&history);
 
         assert_eq!(usage["total"]["bytes"].as_u64().unwrap(), serialized.len() as u64);
+        assert!(!serialized.contains("context_source"));
+        assert!(!serialized.contains("application_start"));
         assert_eq!(usage["method"].as_str().unwrap(), "character_heuristic_4_chars_per_token");
         assert_eq!(usage["by_role"]["system"]["messages"].as_u64().unwrap(), 1);
         assert_eq!(usage["by_role"]["user"]["messages"].as_u64().unwrap(), 1);
+        assert_eq!(usage["by_source"]["startup_primer"]["segments"].as_u64().unwrap(), 1);
+        assert_eq!(usage["by_source"]["current_request"]["content_characters"].as_u64().unwrap(), 16);
+        assert_eq!(usage["by_source"]["attachment"]["content_characters"].as_u64().unwrap(), 15);
+        assert_eq!(usage["provenance"][0]["trigger"].as_str().unwrap(), "application_start");
+    }
+
+    #[test]
+    fn benchmark_prompt_estimate_stays_within_approved_ceiling() {
+        let history = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "Role: theory analysis.\nAxiom: E = mc^2.\nTree: @tree-v1\nproject/\n  theory.md",
+                "context_source": "startup_primer"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Compare the axiom with the active project structure.",
+                "context_source": "current_request"
+            }),
+        ];
+
+        let usage = estimate_prompt_usage_value(&history);
+        let estimated_tokens = usage["total"]["estimated_tokens"].as_u64().unwrap();
+
+        assert!(estimated_tokens <= 40, "Benchmark prompt estimate increased to {estimated_tokens} tokens");
+    }
+
+    #[test]
+    fn attachment_workflow_estimate_stays_within_approved_ceiling() {
+        let history = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "Role: inspect project evidence.\nAxiom: p = mv.",
+                "context_source": "startup_primer"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Check this result.\n[Attached text file: results.txt]\nvelocity=3; mass=2",
+                "context_source": "current_request",
+                "context_parts": [
+                    {"source": "current_request", "content": "Check this result."},
+                    {"source": "attachment", "content": "[Attached text file: results.txt]\nvelocity=3; mass=2"}
+                ]
+            }),
+        ];
+
+        let usage = estimate_prompt_usage_value(&history);
+        let estimated_tokens = usage["total"]["estimated_tokens"].as_u64().unwrap();
+
+        assert!(estimated_tokens <= 40, "Attachment workflow estimate increased to {estimated_tokens} tokens");
+        assert!(usage["by_source"]["attachment"]["estimated_tokens"].as_u64().unwrap() > 0);
     }
 
     #[test]
@@ -3291,8 +3357,10 @@ fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Val
     let serialized_prompt = build_prompt_from_history(history);
     let total_characters = serialized_prompt.chars().count();
     let mut role_totals: std::collections::BTreeMap<String, (usize, usize, usize)> = std::collections::BTreeMap::new();
+    let mut source_totals: std::collections::BTreeMap<String, (usize, usize, usize)> = std::collections::BTreeMap::new();
+    let mut provenance = Vec::new();
 
-    for entry in history {
+    for (index, entry) in history.iter().enumerate() {
         let role = entry
             .get("role")
             .and_then(|value| value.as_str())
@@ -3313,10 +3381,48 @@ fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Val
                 })
                 .unwrap_or_default()
         };
-        let totals = role_totals.entry(role).or_insert((0, 0, 0));
+        let totals = role_totals.entry(role.clone()).or_insert((0, 0, 0));
         totals.0 += 1;
         totals.1 += text.len();
         totals.2 += text.chars().count();
+
+        let default_source = entry
+            .get("context_source")
+            .and_then(|value| value.as_str())
+            .filter(|source| !source.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}_history", role));
+        let context_parts = entry.get("context_parts").and_then(|value| value.as_array());
+        if let Some(parts) = context_parts.filter(|parts| !parts.is_empty()) {
+            for part in parts {
+                let source = part
+                    .get("source")
+                    .and_then(|value| value.as_str())
+                    .filter(|source| !source.trim().is_empty())
+                    .unwrap_or(&default_source)
+                    .to_string();
+                let content = part.get("content").and_then(|value| value.as_str()).unwrap_or_default();
+                let source_total = source_totals.entry(source).or_insert((0, 0, 0));
+                source_total.0 += 1;
+                source_total.1 += content.len();
+                source_total.2 += content.chars().count();
+            }
+        } else {
+            let source_total = source_totals.entry(default_source.clone()).or_insert((0, 0, 0));
+            source_total.0 += 1;
+            source_total.1 += text.len();
+            source_total.2 += text.chars().count();
+        }
+
+        provenance.push(serde_json::json!({
+            "message_index": index,
+            "role": role,
+            "source": default_source,
+            "trigger": entry.get("context_trigger").and_then(|value| value.as_str()).unwrap_or("legacy_or_unspecified"),
+            "volatility": entry.get("context_volatility").and_then(|value| value.as_str()).unwrap_or("unspecified"),
+            "path": entry.get("context_path").and_then(|value| value.as_str()),
+            "content_characters": text.chars().count()
+        }));
     }
 
     let by_role = role_totals
@@ -3326,6 +3432,20 @@ fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Val
                 role,
                 serde_json::json!({
                     "messages": messages,
+                    "content_bytes": bytes,
+                    "content_characters": characters,
+                    "estimated_tokens": estimate_token_count(characters)
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let by_source = source_totals
+        .into_iter()
+        .map(|(source, (segments, bytes, characters))| {
+            (
+                source,
+                serde_json::json!({
+                    "segments": segments,
                     "content_bytes": bytes,
                     "content_characters": characters,
                     "estimated_tokens": estimate_token_count(characters)
@@ -3343,7 +3463,9 @@ fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Val
             "characters": total_characters,
             "estimated_tokens": estimate_token_count(total_characters)
         },
-        "by_role": by_role
+        "by_role": by_role,
+        "by_source": by_source,
+        "provenance": provenance
     })
 }
 

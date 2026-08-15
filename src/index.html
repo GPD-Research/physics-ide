@@ -3202,11 +3202,43 @@
       ].join('\n');
     }
 
-    function injectSystemPrimerMessage(pane, index, heading, promptText) {
+    function buildPrimerContextParts(briefing, promptText) {
+      const candidates = [
+        ['master_axiom', (briefing?.master_axiom?.content || '').trim().slice(0, 1500)],
+        ['project_awareness', (briefing?.project_awareness?.content || '').trim().slice(0, 2200)],
+        ['session_summary', String(briefing?.summary || '').trim()],
+        ['current_hypothesis', String(briefing?.hypothesis_candidates?.[0] || '').trim()],
+      ];
+      let scaffolding = promptText;
+      const contextParts = [];
+
+      candidates.forEach(([source, content]) => {
+        if (!content || !scaffolding.includes(content)) return;
+        contextParts.push({ source, content });
+        scaffolding = scaffolding.replace(content, '');
+      });
+
+      if (scaffolding) {
+        contextParts.push({ source: 'primer_scaffolding', content: scaffolding });
+      }
+      return contextParts;
+    }
+
+    function injectSystemPrimerMessage(pane, index, heading, promptText, provenance = {}) {
       const provider = getPaneProvider(pane);
       const systemMessage = provider === 'gemini'
         ? { role: 'system', parts: [{ text: promptText }] }
         : { role: 'system', content: promptText };
+
+      systemMessage.context_source = provenance.source || 'system_context';
+      systemMessage.context_trigger = provenance.trigger || 'manual_or_unspecified';
+      systemMessage.context_volatility = provenance.volatility || 'slowly_changing';
+      if (provenance.path) {
+        systemMessage.context_path = provenance.path;
+      }
+      if (Array.isArray(provenance.parts) && provenance.parts.length > 0) {
+        systemMessage.context_parts = provenance.parts;
+      }
 
       getPaneHistory(pane, index).push(systemMessage);
       appendChatBubble(pane, index, heading, promptText);
@@ -3243,8 +3275,15 @@
         const leftPrompt = buildPanePrimerText(briefing, 'theory');
         const rightPrompt = buildPanePrimerText(briefing, 'critique');
 
-        injectSystemPrimerMessage('left', leftIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', leftPrompt);
-        injectSystemPrimerMessage('right', rightIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', rightPrompt);
+        const primerProvenance = (promptText) => ({
+          source: isStartup ? 'startup_primer' : 'briefing_refresh',
+          trigger: isStartup ? 'application_start' : 'manual_sync',
+          volatility: isStartup ? 'slowly_changing' : 'dynamic',
+          path: briefing?.generated_files?.ai_briefing || '',
+          parts: buildPrimerContextParts(briefing, promptText)
+        });
+        injectSystemPrimerMessage('left', leftIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', leftPrompt, primerProvenance(leftPrompt));
+        injectSystemPrimerMessage('right', rightIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', rightPrompt, primerProvenance(rightPrompt));
 
         document.getElementById('briefing-indicator').innerText = briefing.status === 'Partial'
           ? '🤖 AI Synced (Partial Sources)'
@@ -3322,7 +3361,10 @@
       inputEl.value = "";
       pendingAttachments[pane] = [];
       renderPendingAttachment(pane);
-      await dispatchPromptToPane(pane, text, "Gregory", attachments);
+      await dispatchPromptToPane(pane, text, "Gregory", attachments, {
+        source: 'current_request',
+        trigger: 'chat_submit'
+      });
     }
 
     function buildPromptText(text, attachments = []) {
@@ -3342,7 +3384,7 @@
       return parts.filter(Boolean).join('\n\n');
     }
 
-    async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory', attachments = []) {
+    async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory', attachments = [], provenance = {}) {
       if (!currentConfig) {
         return '';
       }
@@ -3365,6 +3407,25 @@
       if (attachments.length > 0) {
         messagePayload.attachments = attachments;
       }
+      messagePayload.context_source = provenance.source || 'current_request';
+      messagePayload.context_trigger = provenance.trigger || 'chat_submit';
+      messagePayload.context_volatility = 'dynamic';
+      messagePayload.context_parts = [];
+      if (text) {
+        messagePayload.context_parts.push({
+          source: provenance.source || 'current_request',
+          content: text
+        });
+      }
+      attachments.forEach((attachment) => {
+        const safePath = String(attachment?.path || 'attachment');
+        const safeKind = String(attachment?.kind || 'text');
+        const safeContent = String(attachment?.content || '');
+        messagePayload.context_parts.push({
+          source: 'attachment',
+          content: `[Attached ${safeKind} file: ${safePath}]\n${safeContent}`.trim()
+        });
+      });
 
       chatHistories[pane][index].push(messagePayload);
       appendChatBubble(pane, index, senderLabel, text);
@@ -3373,8 +3434,12 @@
         const usage = JSON.parse(await invoke('estimate_prompt_usage', {
           history: chatHistories[pane][index]
         }));
+        const sourceSummary = Object.entries(usage.by_source || {})
+          .sort((left, right) => right[1].estimated_tokens - left[1].estimated_tokens)
+          .map(([source, totals]) => `${source}=~${totals.estimated_tokens}`)
+          .join(', ');
         appendTerminalLog(
-          `Context estimate [${pane}]: ~${usage.total.estimated_tokens} tokens, ${usage.total.bytes} bytes across ${usage.message_count} messages.`
+          `Context estimate [${pane}]: ~${usage.total.estimated_tokens} tokens, ${usage.total.bytes} bytes across ${usage.message_count} messages${sourceSummary ? ` | ${sourceSummary}` : ''}.`
         );
       } catch (estimateError) {
         appendTerminalLog(`Context estimate unavailable [${pane}]: ${estimateError}`);
@@ -3393,6 +3458,9 @@
         } else {
           responsePayload = { role: "assistant", content: reply };
         }
+        responsePayload.context_source = 'assistant_history';
+        responsePayload.context_trigger = 'provider_response';
+        responsePayload.context_volatility = 'dynamic';
 
         chatHistories[pane][index].push(responsePayload);
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
@@ -3619,7 +3687,13 @@
       try {
         const briefing = JSON.parse(await invoke('compile_ai_briefing'));
         const prompt = buildPanePrimerText(briefing, pane === 'left' ? 'theory' : 'critique');
-        injectSystemPrimerMessage(pane, 0, 'Pane Reset Primer', prompt);
+        injectSystemPrimerMessage(pane, 0, 'Pane Reset Primer', prompt, {
+          source: 'pane_reset_primer',
+          trigger: 'pane_reset',
+          volatility: 'slowly_changing',
+          path: briefing?.generated_files?.ai_briefing || '',
+          parts: buildPrimerContextParts(briefing, prompt)
+        });
         appendTerminalLog(`${pane === 'left' ? 'Left' : 'Right'} pane reset to baseline primer.`);
         refreshContextProbeModeLabels();
       } catch (err) {
@@ -3688,8 +3762,14 @@
       const rightProvider = getProviderDisplayName(getPaneProvider('right'));
 
       const [leftResult, rightResult] = await Promise.allSettled([
-        dispatchPromptToPane('left', prompt, 'Context Probe'),
-        dispatchPromptToPane('right', prompt, 'Context Probe'),
+        dispatchPromptToPane('left', prompt, 'Context Probe', [], {
+          source: 'context_probe',
+          trigger: 'probe_run'
+        }),
+        dispatchPromptToPane('right', prompt, 'Context Probe', [], {
+          source: 'context_probe',
+          trigger: 'probe_run'
+        }),
       ]);
 
       const normalizeResult = (result, pane, side, providerName) => {
@@ -4127,6 +4207,9 @@
       const systemMessage = provider === 'gemini'
         ? { role: 'system', parts: [{ text: promptText }] }
         : { role: 'system', content: promptText };
+      systemMessage.context_source = 'analysis_handoff';
+      systemMessage.context_trigger = 'thread_advance';
+      systemMessage.context_volatility = 'dynamic';
 
       getPaneHistory(pane, targetIndex).push(systemMessage);
       appendChatBubble(pane, targetIndex, heading, promptText);
@@ -6173,8 +6256,14 @@ async function restoreVersion() {
         'Focus: identify empirical checkpoints, uncertainty risks, and falsification paths.'
       ].join('\n\n');
 
-      injectSystemPrimerMessage('left', leftIndex, 'Primer', leftPrompt);
-      injectSystemPrimerMessage('right', rightIndex, 'Primer', rightPrompt);
+      const manualPrimerProvenance = {
+        source: 'manual_primer_override',
+        trigger: 'primer_editor_sync',
+        volatility: 'dynamic',
+        path: activeBriefingPacketPath
+      };
+      injectSystemPrimerMessage('left', leftIndex, 'Primer', leftPrompt, manualPrimerProvenance);
+      injectSystemPrimerMessage('right', rightIndex, 'Primer', rightPrompt, manualPrimerProvenance);
       document.getElementById('briefing-indicator').innerText = '🤖 AI Synced (Packet Edited)';
       appendTerminalLog('Edited primer synced to both AI threads.');
     }

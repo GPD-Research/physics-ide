@@ -351,11 +351,11 @@ Decision rules:
 
 ### Sprint 1: Establish the baseline and remove obvious waste
 
-- [ ] Capture prompt-section byte and estimated-token baselines for representative v8 workflows.
+- [x] Capture prompt-section byte and estimated-token baselines for representative v8 workflows.
 - [x] Serialize the visible workspace tree in compact deterministic form.
 - [x] Stop recursive full-project tree generation during normal briefing compilation.
-- [ ] Add prompt-source provenance and identify duplicate awareness content.
-- [ ] Add regression fixtures and approved token ceilings for benchmark workflows.
+- [x] Add prompt-source provenance and identify duplicate awareness content.
+- [x] Add regression fixtures and approved token ceilings for benchmark workflows.
 
 ### Sprint 2: Make prompt assembly deterministic and measurable
 
@@ -416,4 +416,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and implementation has started with Sprint 1. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprint 1 is complete. Sprint 2 should introduce the canonical prompt assembler and request inspector on top of the new provenance and benchmark baseline. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
