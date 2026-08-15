@@ -3091,6 +3091,51 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn cache_probe_payloads_share_prefix_and_change_only_suffix() {
+        let history = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "Reusable application and project context",
+                "context_source": "startup_primer",
+                "context_volatility": "slowly_changing"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Existing question",
+                "context_source": "current_request",
+                "context_volatility": "dynamic"
+            }),
+        ];
+        let assembly = assemble_canonical_messages(&history);
+        let first = build_cache_probe_messages(&assembly, "CACHE_PROBE_A");
+        let second = build_cache_probe_messages(&assembly, "CACHE_PROBE_B");
+
+        assert_eq!(&first[..first.len() - 1], &second[..second.len() - 1]);
+        assert_ne!(first.last(), second.last());
+        assert_eq!(first.len(), assembly.stable_prefix["message_count"].as_u64().unwrap() as usize + 1);
+    }
+
+    #[test]
+    fn classifies_cache_probe_results_without_inventing_hits() {
+        assert_eq!(cache_probe_status(None), "metadata_unavailable");
+        assert_eq!(cache_probe_status(Some(0)), "no_cache_hit");
+        assert_eq!(cache_probe_status(Some(1024)), "cache_hit");
+    }
+
+    #[test]
+    fn cache_probe_rejects_short_prefix_before_network() {
+        let history = vec![serde_json::json!({
+            "role": "system",
+            "content": "Short context",
+            "context_source": "startup_primer",
+            "context_volatility": "slowly_changing"
+        })];
+        let assembly = assemble_canonical_messages(&history);
+
+        assert!(!cache_probe_is_eligible(&assembly));
+    }
+
+    #[test]
     fn retries_gemini_auth_for_access_token_type_errors() {
         let response_text = r#"{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}"#;
 
@@ -3189,6 +3234,95 @@ fn get_llm_usage(pane: String, thread_id: Option<String>, state: tauri::State<Ap
     let usage_key = format!("{}:{}", pane.to_ascii_lowercase(), thread_id.unwrap_or_else(|| "default".to_string()));
     let store = state.llm_usage.lock().map_err(|_| "LLM usage mutex poisoned".to_string())?;
     Ok(serde_json::to_string(&store.get(&usage_key).cloned().unwrap_or_default()).map_err(|e| e.to_string())?)
+}
+
+const OPENAI_CACHE_MINIMUM_ESTIMATED_TOKENS: u64 = 1024;
+
+fn build_cache_probe_messages(assembly: &CanonicalAssembly, suffix: &str) -> Vec<serde_json::Value> {
+    let stable_message_count = assembly.stable_prefix["message_count"].as_u64().unwrap_or(0) as usize;
+    let mut messages = assembly.messages[..stable_message_count.min(assembly.messages.len())].to_vec();
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": format!("Return only this marker: {suffix}")
+    }));
+    messages
+}
+
+fn cache_probe_status(cached_input_tokens: Option<u64>) -> &'static str {
+    match cached_input_tokens {
+        Some(value) if value > 0 => "cache_hit",
+        Some(_) => "no_cache_hit",
+        None => "metadata_unavailable",
+    }
+}
+
+fn cache_probe_is_eligible(assembly: &CanonicalAssembly) -> bool {
+    assembly.stable_prefix["estimated_tokens"].as_u64().unwrap_or(0) >= OPENAI_CACHE_MINIMUM_ESTIMATED_TOKENS
+}
+
+#[tauri::command]
+async fn run_openai_cache_probe(
+    pane: String,
+    history: Vec<serde_json::Value>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let config = get_app_config(&app)?;
+    let (provider, model) = provider_settings_for_pane(&config, &pane);
+    if !provider.eq_ignore_ascii_case("openai") {
+        return Err("OpenAI cache probe requires the selected lane to use OpenAI.".to_string());
+    }
+
+    let assembly = assemble_canonical_messages(&history);
+    let prefix_estimated_tokens = assembly.stable_prefix["estimated_tokens"].as_u64().unwrap_or(0);
+    if !cache_probe_is_eligible(&assembly) {
+        return Ok(serde_json::json!({
+            "status": "ineligible_prefix",
+            "network_requests": 0,
+            "minimum_estimated_tokens": OPENAI_CACHE_MINIMUM_ESTIMATED_TOKENS,
+            "prefix_estimated_tokens": prefix_estimated_tokens,
+            "stable_prefix": assembly.stable_prefix,
+            "message": "Stable prefix is below the cache-probe threshold; no paid requests were sent."
+        }).to_string());
+    }
+
+    let first_messages = build_cache_probe_messages(&assembly, "CACHE_PROBE_A");
+    let second_messages = build_cache_probe_messages(&assembly, "CACHE_PROBE_B");
+    let api_key = normalize_api_key(&config.openai_api_key);
+    let requested_model = model.clone();
+    let stable_prefix = assembly.stable_prefix.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let first_started = std::time::Instant::now();
+        let first = call_openai_with_options(&api_key, &model, &first_messages, Some(8), false)?;
+        let first_latency_ms = first_started.elapsed().as_millis() as u64;
+
+        let second_started = std::time::Instant::now();
+        let second = call_openai_with_options(&api_key, &model, &second_messages, Some(8), false)?;
+        let second_latency_ms = second_started.elapsed().as_millis() as u64;
+        let status = cache_probe_status(second.usage.cached_input_tokens);
+
+        Ok(serde_json::json!({
+            "status": status,
+            "network_requests": 2,
+            "requested_model": requested_model,
+            "actual_models": [first.usage.model, second.usage.model],
+            "stable_prefix": stable_prefix,
+            "first": {
+                "latency_ms": first_latency_ms,
+                "input_tokens": first.usage.input_tokens,
+                "cached_input_tokens": first.usage.cached_input_tokens,
+                "output_tokens": first.usage.output_tokens
+            },
+            "second": {
+                "latency_ms": second_latency_ms,
+                "input_tokens": second.usage.input_tokens,
+                "cached_input_tokens": second.usage.cached_input_tokens,
+                "output_tokens": second.usage.output_tokens
+            }
+        }).to_string())
+    })
+    .await
+    .map_err(|e| format!("OpenAI cache probe worker failed: {e}"))?
 }
 
 fn get_app_config(app: &AppHandle) -> Result<AppConfig, String> {
@@ -3862,6 +3996,16 @@ fn parse_openai_usage(response: &serde_json::Value, model: &str) -> ProviderUsag
 }
 
 fn call_openai(api_key: &str, model: &str, messages: &[serde_json::Value]) -> Result<ProviderReply, String> {
+    call_openai_with_options(api_key, model, messages, None, true)
+}
+
+fn call_openai_with_options(
+    api_key: &str,
+    model: &str,
+    messages: &[serde_json::Value],
+    max_tokens: Option<u64>,
+    allow_model_fallback: bool,
+) -> Result<ProviderReply, String> {
     if api_key.trim().is_empty() {
         return Err("OpenAI API key is not configured. Please add one in Settings.".to_string());
     }
@@ -3920,14 +4064,24 @@ fn call_openai(api_key: &str, model: &str, messages: &[serde_json::Value]) -> Re
     let mut attempted_models = Vec::new();
     let mut last_error = String::new();
 
-    for candidate_model in openai_model_candidates(model) {
+    let candidate_models = if allow_model_fallback {
+        openai_model_candidates(model)
+    } else {
+        vec![normalize_model_for_provider("openai", model)]
+    };
+
+    for candidate_model in candidate_models {
         attempted_models.push(candidate_model.clone());
 
+        let mut body = build_openai_request_body(&candidate_model, messages);
+        if let Some(max_tokens) = max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
         let response = client
             .post("https://api.openai.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&build_openai_request_body(&candidate_model, messages))
+            .json(&body)
             .send()
             .map_err(|e| format!("OpenAI request failed: {e}"))?;
 
@@ -6653,6 +6807,7 @@ pub fn run() {
             export_workspace_tree,
             estimate_prompt_usage,
             get_llm_usage,
+            run_openai_cache_probe,
             send_llm_prompt,
             compile_ai_briefing,
             validate_model_selection,

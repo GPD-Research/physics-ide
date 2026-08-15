@@ -2062,9 +2062,12 @@
           <option value="right">Right</option>
         </select>
         <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
+        <button id="request-inspector-cache-probe" onclick="runOpenAiCacheProbe()" title="Run up to two small OpenAI requests to test native prompt caching">Run Cache Probe</button>
       </div>
       <div id="request-inspector-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">No request inspected yet.</div>
-      <textarea id="request-inspector-output" rows="24" readonly style="width: 100%; box-sizing: border-box; flex: 1; min-height: 300px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Ordered request context report"></textarea>
+      <textarea id="request-inspector-output" rows="18" readonly style="width: 100%; box-sizing: border-box; flex: 1; min-height: 240px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Ordered request context report"></textarea>
+      <label for="request-cache-probe-output" style="font-size: 0.78rem; margin-top: 8px;">OpenAI cache probe</label>
+      <textarea id="request-cache-probe-output" rows="7" readonly style="width: 100%; box-sizing: border-box; min-height: 110px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="OpenAI cache probe report" placeholder="No cache probe has been run. Ineligible prefixes make no network requests."></textarea>
       <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">Prompt contents and API credentials are not displayed.</div>
       <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
         <button onclick="closeRequestInspector()" title="Close request inspector">Close</button>
@@ -6279,6 +6282,56 @@ async function restoreVersion() {
         ].join('\n');
       } catch (err) {
         summary.textContent = `Request inspection failed: ${err}`;
+      }
+    }
+
+    async function runOpenAiCacheProbe() {
+      const pane = document.getElementById('request-inspector-pane')?.value === 'right' ? 'right' : 'left';
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      const history = chatHistories[pane][index] || [];
+      const output = document.getElementById('request-cache-probe-output');
+      const button = document.getElementById('request-inspector-cache-probe');
+      if (!output || !button) return;
+
+      const confirmed = window.confirm(
+        'Run the OpenAI native prompt-cache probe? Eligible prefixes send up to two small API requests and may incur usage charges. Ineligible prefixes send no requests.'
+      );
+      if (!confirmed) return;
+
+      button.disabled = true;
+      output.value = 'Checking prefix eligibility...';
+      try {
+        const result = JSON.parse(await invoke('run_openai_cache_probe', { pane, history }));
+        if (result.status === 'ineligible_prefix') {
+          output.value = [
+            'Status: INELIGIBLE PREFIX',
+            result.message,
+            `Estimated stable prefix: ~${result.prefix_estimated_tokens} tokens`,
+            `Required threshold: ~${result.minimum_estimated_tokens} tokens`,
+            `Network requests: ${result.network_requests}`,
+            `Stable sha256: ${result.stable_prefix?.sha256 || 'unavailable'}`
+          ].join('\n');
+          return;
+        }
+
+        const first = result.first || {};
+        const second = result.second || {};
+        const secondCacheRatio = second.cached_input_tokens == null || !second.input_tokens
+          ? 'unavailable'
+          : `${((second.cached_input_tokens / second.input_tokens) * 100).toFixed(1)}%`;
+        output.value = [
+          `Status: ${String(result.status || 'unknown').toUpperCase()}`,
+          `Requested model: ${result.requested_model || 'unavailable'}`,
+          `Actual models: ${(result.actual_models || []).join(', ') || 'unavailable'}`,
+          `Stable prefix: ~${result.stable_prefix?.estimated_tokens ?? 'unavailable'} tokens | sha256=${result.stable_prefix?.sha256 || 'unavailable'}`,
+          `Warm request: ${first.latency_ms ?? 'unavailable'} ms | input=${first.input_tokens ?? 'unavailable'} | cached=${first.cached_input_tokens ?? 'unavailable'}`,
+          `Probe request: ${second.latency_ms ?? 'unavailable'} ms | input=${second.input_tokens ?? 'unavailable'} | cached=${second.cached_input_tokens ?? 'unavailable'} | cache ratio=${secondCacheRatio}`,
+          `Network requests: ${result.network_requests}`
+        ].join('\n');
+      } catch (err) {
+        output.value = `Cache probe failed: ${err}`;
+      } finally {
+        button.disabled = false;
       }
     }
 

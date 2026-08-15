@@ -370,6 +370,7 @@ Decision rules:
 - [x] Preserve provider message roles instead of flattening OpenAI history.
 - [x] Keep dynamic values below the reusable prefix boundary.
 - [x] Record cached input tokens and cache-hit ratio where OpenAI supplies them.
+- [x] Add an explicit two-request cache probe with prefix eligibility, fingerprint, latency, model, and usage reporting.
 - [ ] Run repeated-request cache integration probes across supported OpenAI models.
 
 ### Sprint 4: Compile structural project context
@@ -416,4 +417,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and Sprints 1-2 are complete. Sprint 3 should validate native OpenAI cache behavior through repeated live requests across supported models, using the canonical assembler, stable-prefix fingerprint, provider usage telemetry, and request inspector now in place. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprints 1-2 are complete. Sprint 3 cache-probe tooling is implemented; its live supported-model matrix remains user-triggered because each eligible probe sends two billable OpenAI requests. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
