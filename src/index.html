@@ -2173,6 +2173,7 @@
     let rightIndex = 0;
     let startupPrimerInjected = false;
     let activeBriefingPacketPath = "";
+    let latestStructuralContext = null;
     const paneBusyCounter = { left: 0, right: 0 };
     let terminalDetached = false;
     let terminalDockHost = null;
@@ -3318,6 +3319,8 @@
           appendTerminalLog(`Primer diagnostics: ${briefing.diagnostics.join(' | ')}`);
         }
         appendTerminalLog(`Primer file: ${briefing?.generated_files?.ai_briefing || 'not generated'}`);
+        latestStructuralContext = briefing?.structural_context || null;
+        appendTerminalLog(`Structural context: ${briefing?.generated_files?.structural_context || 'not generated'}`);
 
         if (isStartup) {
           startupPrimerInjected = true;
@@ -4505,6 +4508,7 @@
         currentWorkspacePath = '';
         startupPrimerInjected = false;
         activeBriefingPacketPath = '';
+        latestStructuralContext = null;
         probeAppendixCandidateCache.rootPath = '';
         probeAppendixCandidateCache.candidates = [];
         probeAppendixCandidateCache.loadedAt = 0;
@@ -6243,6 +6247,19 @@ async function restoreVersion() {
         }));
         const provider = getPaneProvider(pane);
         const model = getPaneModelName(pane);
+        let structuralLines = ['Structural context artifact unavailable.'];
+        if (latestStructuralContext?.exists) {
+          const counts = latestStructuralContext.counts || {};
+          structuralLines = [
+            `Schema: ${latestStructuralContext.schema_version || 'unavailable'} | model=${latestStructuralContext.model_id || 'unavailable'}`,
+            `Path: ${latestStructuralContext.path || 'unavailable'}`,
+            `Bytes=${latestStructuralContext.bytes || 0} | sha256=${latestStructuralContext.sha256 || 'unavailable'}`,
+            `Sources=${counts.sources || 0} | Sections=${counts.sections || 0} | Axioms=${counts.axioms || 0} | Assumptions=${counts.assumptions || 0} | Definitions=${counts.definitions || 0}`,
+            `Equations=${counts.equations || 0} | Symbols=${counts.symbols || 0} | Conditions=${(counts.initial_conditions || 0) + (counts.boundary_conditions || 0)} | Observables=${counts.observables || 0}`,
+            `Tools=${counts.tools || 0} | Experiments=${counts.experiments || 0} | Predictions=${counts.predictions || 0} | Falsification=${counts.falsification_criteria || 0} | Open questions=${counts.open_questions || 0} | Relations=${counts.relations || 0}`,
+            'Prompt status: not injected; benchmark equivalence pending.'
+          ];
+        }
         const sourceLines = Object.entries(usage.by_source || {})
           .sort((left, right) => right[1].estimated_tokens - left[1].estimated_tokens)
           .map(([source, totals]) => `- ${source}: ~${totals.estimated_tokens} tokens | ${totals.content_bytes} bytes | ${totals.segments} segment(s)`);
@@ -6273,6 +6290,9 @@ async function restoreVersion() {
           '',
           'PROVIDER REPORTED',
           ...reportedLines,
+          '',
+          'STRUCTURAL CONTEXT',
+          ...structuralLines,
           '',
           'SOURCE CONTRIBUTIONS',
           ...(sourceLines.length > 0 ? sourceLines : ['- none']),

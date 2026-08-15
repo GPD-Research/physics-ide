@@ -4917,6 +4917,7 @@ fn scan_markdown_theory(theory_dir: &str) -> serde_json::Value {
     if theory_path.exists() {
         let _ = recursive_markdown_scan(theory_path, &mut files);
     }
+    files.sort();
 
     let mut headings = Vec::new();
     let mut lagrangian_candidates = Vec::new();
@@ -4976,6 +4977,449 @@ fn scan_markdown_theory(theory_dir: &str) -> serde_json::Value {
         "equation_candidates": equation_candidates,
         "file_summaries": file_summaries
     })
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct StructuralSource {
+    id: String,
+    path: String,
+    kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct StructuralRecord {
+    id: String,
+    text: String,
+    source_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct StructuralSymbol {
+    id: String,
+    notation: String,
+    symbol_type: Option<String>,
+    units: Option<String>,
+    domain: Option<String>,
+    source_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct StructuralRelation {
+    id: String,
+    relation_type: String,
+    from_id: String,
+    to_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct StructuralContextV1 {
+    schema_version: String,
+    model_id: String,
+    model_name: String,
+    scope: Vec<String>,
+    sources: Vec<StructuralSource>,
+    sections: Vec<StructuralRecord>,
+    axioms: Vec<StructuralRecord>,
+    assumptions: Vec<StructuralRecord>,
+    definitions: Vec<StructuralRecord>,
+    equations: Vec<StructuralRecord>,
+    symbols: Vec<StructuralSymbol>,
+    initial_conditions: Vec<StructuralRecord>,
+    boundary_conditions: Vec<StructuralRecord>,
+    observables: Vec<StructuralRecord>,
+    tools: Vec<StructuralRecord>,
+    experiments: Vec<StructuralRecord>,
+    predictions: Vec<StructuralRecord>,
+    falsification_criteria: Vec<StructuralRecord>,
+    open_questions: Vec<StructuralRecord>,
+    relations: Vec<StructuralRelation>,
+}
+
+fn stable_structural_id(kind: &str, source: &str, text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(kind.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(source.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(text.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    format!("{}-{}", kind, &digest[..16])
+}
+
+fn split_scanned_candidate(value: &str) -> (&str, &str) {
+    value.split_once(": ").unwrap_or(("unknown.md", value))
+}
+
+fn project_relative_source_path(project_root: &Path, theory_dir: &Path, relative: &str) -> String {
+    let path = theory_dir.join(relative);
+    match path.strip_prefix(project_root) {
+        Ok(project_relative) => project_relative.to_string_lossy().replace('\\', "/"),
+        Err(_) => format!("external-theory/{}", relative.replace('\\', "/").trim_start_matches('/')),
+    }
+}
+
+fn extract_latex_symbols(text: &str) -> Vec<String> {
+    let excluded = ["begin", "end", "frac", "left", "right", "text", "mathrm", "mathbf", "partial"];
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut symbols = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if chars[index] != '\\' {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        let command_start = index;
+        while index < chars.len() && chars[index].is_ascii_alphabetic() {
+            index += 1;
+        }
+        if command_start == index {
+            continue;
+        }
+        let command = chars[command_start..index].iter().collect::<String>();
+        if command == "mathcal" && index + 2 < chars.len() && chars[index] == '{' {
+            if let Some(close_offset) = chars[index + 1..].iter().position(|value| *value == '}') {
+                let close = index + 1 + close_offset;
+                symbols.push(chars[start..=close].iter().collect());
+                index = close + 1;
+                continue;
+            }
+        }
+        if !excluded.contains(&command.as_str()) {
+            symbols.push(format!("\\{command}"));
+        }
+    }
+    symbols.sort();
+    symbols.dedup();
+    symbols
+}
+
+fn push_structural_record(
+    target: &mut Vec<StructuralRecord>,
+    kind: &str,
+    path: &str,
+    source_id: &str,
+    text: &str,
+) {
+    target.push(StructuralRecord {
+        id: stable_structural_id(kind, path, text),
+        text: text.to_string(),
+        source_id: source_id.to_string(),
+    });
+}
+
+fn compile_structural_context(
+    project_root: &Path,
+    theory_dir: &Path,
+    master_axiom_path: &Path,
+    tools_dir: &Path,
+    scan: &serde_json::Value,
+) -> StructuralContextV1 {
+    let mut source_by_path = std::collections::BTreeMap::<String, String>::new();
+    let mut sections = Vec::new();
+    let mut axioms = Vec::new();
+    let mut assumptions = Vec::new();
+    let mut definitions = Vec::new();
+    let mut equations = Vec::new();
+    let mut initial_conditions = Vec::new();
+    let mut boundary_conditions = Vec::new();
+    let mut observables = Vec::new();
+    let mut tools = Vec::new();
+    let mut experiments = Vec::new();
+    let mut predictions = Vec::new();
+    let mut falsification_criteria = Vec::new();
+    let mut open_questions = Vec::new();
+
+    let mut add_records = |field: &str, kind: &str, target: &mut Vec<StructuralRecord>| {
+        if let Some(values) = scan[field].as_array() {
+            for value in values.iter().filter_map(|item| item.as_str()) {
+                let (relative, text) = split_scanned_candidate(value);
+                let path = project_relative_source_path(project_root, theory_dir, relative);
+                let source_id = source_by_path
+                    .entry(path.clone())
+                    .or_insert_with(|| stable_structural_id("src", &path, ""))
+                    .clone();
+                target.push(StructuralRecord {
+                    id: stable_structural_id(kind, &path, text),
+                    text: text.to_string(),
+                    source_id,
+                });
+            }
+        }
+    };
+
+    add_records("headings", "sec", &mut sections);
+    add_records("hypothesis_candidates", "ax", &mut axioms);
+    add_records("equation_candidates", "eq", &mut equations);
+
+    let master_path = master_axiom_path
+        .strip_prefix(project_root)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| {
+            let file_name = master_axiom_path.file_name().and_then(|value| value.to_str()).unwrap_or("master_axiom.md");
+            format!("external-master/{file_name}")
+        });
+    if let Ok(content) = fs::read_to_string(master_axiom_path) {
+        let source_id = source_by_path
+            .entry(master_path.clone())
+            .or_insert_with(|| stable_structural_id("src", &master_path, ""))
+            .clone();
+        let mut section_type = "";
+        for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let lower = line.to_ascii_lowercase();
+            if line.starts_with('#') {
+                section_type = if lower.contains("assumption") {
+                    "assumption"
+                } else if lower.contains("definition") {
+                    "definition"
+                } else if lower.contains("initial condition") {
+                    "initial_condition"
+                } else if lower.contains("boundary") || lower.contains("constraint") {
+                    "boundary_condition"
+                } else if lower.contains("observable") || lower.contains("dataset") || lower.contains("mapping") {
+                    "observable"
+                } else if lower.contains("experiment") || lower.contains("test") {
+                    "experiment"
+                } else if lower.contains("prediction") {
+                    "prediction"
+                } else if lower.contains("falsif") {
+                    "falsification"
+                } else if lower.contains("open question") || lower.contains("unresolved") || lower.contains("contradiction") {
+                    "open_question"
+                } else {
+                    ""
+                };
+            }
+            if lower.contains("axiom") || lower.contains("hypoth") || lower.contains("postulat") {
+                push_structural_record(&mut axioms, "ax", &master_path, &source_id, line);
+            }
+            if line.contains("$$") || line.contains("\\begin") || line.contains("\\frac") || line.contains("\\partial") || line.contains("\\mathcal") {
+                push_structural_record(&mut equations, "eq", &master_path, &source_id, line);
+            }
+            if !line.starts_with('#') {
+                match section_type {
+                    "assumption" => push_structural_record(&mut assumptions, "asm", &master_path, &source_id, line),
+                    "definition" => push_structural_record(&mut definitions, "def", &master_path, &source_id, line),
+                    "initial_condition" => push_structural_record(&mut initial_conditions, "ic", &master_path, &source_id, line),
+                    "boundary_condition" => push_structural_record(&mut boundary_conditions, "bc", &master_path, &source_id, line),
+                    "observable" => push_structural_record(&mut observables, "obs", &master_path, &source_id, line),
+                    "experiment" => push_structural_record(&mut experiments, "exp", &master_path, &source_id, line),
+                    "prediction" => push_structural_record(&mut predictions, "pred", &master_path, &source_id, line),
+                    "falsification" => push_structural_record(&mut falsification_criteria, "fals", &master_path, &source_id, line),
+                    "open_question" => push_structural_record(&mut open_questions, "open", &master_path, &source_id, line),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if tools_dir.exists() {
+        for item in collect_tool_inventory(project_root, tools_dir.to_string_lossy().as_ref()) {
+            let item = item.trim_start_matches("- ");
+            let (raw_path, summary) = item.split_once(": ").unwrap_or((item, "No summary available."));
+            let path = if Path::new(raw_path).is_absolute() {
+                let file_name = Path::new(raw_path).file_name().and_then(|value| value.to_str()).unwrap_or("tool");
+                format!("external-tools/{file_name}")
+            } else {
+                raw_path.replace('\\', "/")
+            };
+            let source_id = source_by_path
+                .entry(path.clone())
+                .or_insert_with(|| stable_structural_id("src", &path, ""))
+                .clone();
+            push_structural_record(&mut tools, "tool", &path, &source_id, summary);
+        }
+    }
+
+    sections.sort_by(|left, right| left.id.cmp(&right.id));
+    sections.dedup_by(|left, right| left.id == right.id);
+    axioms.sort_by(|left, right| left.id.cmp(&right.id));
+    axioms.dedup_by(|left, right| left.id == right.id);
+    equations.sort_by(|left, right| left.id.cmp(&right.id));
+    equations.dedup_by(|left, right| left.id == right.id);
+    for records in [
+        &mut assumptions,
+        &mut definitions,
+        &mut initial_conditions,
+        &mut boundary_conditions,
+        &mut observables,
+        &mut tools,
+        &mut experiments,
+        &mut predictions,
+        &mut falsification_criteria,
+        &mut open_questions,
+    ] {
+        records.sort_by(|left, right| left.id.cmp(&right.id));
+        records.dedup_by(|left, right| left.id == right.id);
+    }
+
+    let mut symbol_sources = std::collections::BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+    for equation in &equations {
+        for notation in extract_latex_symbols(&equation.text) {
+            symbol_sources.entry(notation).or_default().insert(equation.source_id.clone());
+        }
+    }
+    let symbols = symbol_sources
+        .into_iter()
+        .map(|(notation, source_ids)| StructuralSymbol {
+            id: stable_structural_id("sym", "notation", &notation),
+            notation,
+            symbol_type: None,
+            units: None,
+            domain: None,
+            source_ids: source_ids.into_iter().collect(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut relations = Vec::new();
+    for record in sections
+        .iter()
+        .chain(axioms.iter())
+        .chain(assumptions.iter())
+        .chain(definitions.iter())
+        .chain(equations.iter())
+        .chain(initial_conditions.iter())
+        .chain(boundary_conditions.iter())
+        .chain(observables.iter())
+        .chain(tools.iter())
+        .chain(experiments.iter())
+        .chain(predictions.iter())
+        .chain(falsification_criteria.iter())
+        .chain(open_questions.iter())
+    {
+        relations.push(StructuralRelation {
+            id: stable_structural_id("rel", &record.id, &record.source_id),
+            relation_type: "derived_from".to_string(),
+            from_id: record.id.clone(),
+            to_id: record.source_id.clone(),
+        });
+    }
+    relations.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let sources = source_by_path
+        .into_iter()
+        .map(|(path, id)| StructuralSource {
+            id,
+            kind: if path == master_path { "master_axiom" } else { "markdown" }.to_string(),
+            path,
+        })
+        .collect::<Vec<_>>();
+    let model_label = sections
+        .first()
+        .map(|record| record.text.as_str())
+        .unwrap_or("unidentified-model");
+
+    StructuralContextV1 {
+        schema_version: "physics-ide.structural-context/v1".to_string(),
+        model_id: stable_structural_id("model", "project", model_label),
+        model_name: model_label.to_string(),
+        scope: vec!["theory_structure".to_string()],
+        sources,
+        sections,
+        axioms,
+        assumptions,
+        definitions,
+        equations,
+        symbols,
+        initial_conditions,
+        boundary_conditions,
+        observables,
+        tools,
+        experiments,
+        predictions,
+        falsification_criteria,
+        open_questions,
+        relations,
+    }
+}
+
+fn validate_structural_context(context: &StructuralContextV1) -> Result<(), String> {
+    if context.model_id.trim().is_empty() || context.model_name.trim().is_empty() {
+        return Err("Structural context requires model identity.".to_string());
+    }
+    if context.sources.iter().any(|source| Path::new(&source.path).is_absolute()) {
+        return Err("Structural context source paths must be project-relative or logical external paths.".to_string());
+    }
+
+    let mut ids = std::collections::BTreeSet::new();
+    for id in context
+        .sources
+        .iter()
+        .map(|record| record.id.as_str())
+        .chain(context.sections.iter().map(|record| record.id.as_str()))
+        .chain(context.axioms.iter().map(|record| record.id.as_str()))
+        .chain(context.assumptions.iter().map(|record| record.id.as_str()))
+        .chain(context.definitions.iter().map(|record| record.id.as_str()))
+        .chain(context.equations.iter().map(|record| record.id.as_str()))
+        .chain(context.symbols.iter().map(|record| record.id.as_str()))
+        .chain(context.initial_conditions.iter().map(|record| record.id.as_str()))
+        .chain(context.boundary_conditions.iter().map(|record| record.id.as_str()))
+        .chain(context.observables.iter().map(|record| record.id.as_str()))
+        .chain(context.tools.iter().map(|record| record.id.as_str()))
+        .chain(context.experiments.iter().map(|record| record.id.as_str()))
+        .chain(context.predictions.iter().map(|record| record.id.as_str()))
+        .chain(context.falsification_criteria.iter().map(|record| record.id.as_str()))
+        .chain(context.open_questions.iter().map(|record| record.id.as_str()))
+        .chain(context.relations.iter().map(|record| record.id.as_str()))
+    {
+        if id.trim().is_empty() || !ids.insert(id.to_string()) {
+            return Err(format!("Structural context contains a missing or duplicate ID: {id}"));
+        }
+    }
+
+    let node_ids = context
+        .sources
+        .iter()
+        .map(|record| record.id.as_str())
+        .chain(context.sections.iter().map(|record| record.id.as_str()))
+        .chain(context.axioms.iter().map(|record| record.id.as_str()))
+        .chain(context.assumptions.iter().map(|record| record.id.as_str()))
+        .chain(context.definitions.iter().map(|record| record.id.as_str()))
+        .chain(context.equations.iter().map(|record| record.id.as_str()))
+        .chain(context.symbols.iter().map(|record| record.id.as_str()))
+        .chain(context.initial_conditions.iter().map(|record| record.id.as_str()))
+        .chain(context.boundary_conditions.iter().map(|record| record.id.as_str()))
+        .chain(context.observables.iter().map(|record| record.id.as_str()))
+        .chain(context.tools.iter().map(|record| record.id.as_str()))
+        .chain(context.experiments.iter().map(|record| record.id.as_str()))
+        .chain(context.predictions.iter().map(|record| record.id.as_str()))
+        .chain(context.falsification_criteria.iter().map(|record| record.id.as_str()))
+        .chain(context.open_questions.iter().map(|record| record.id.as_str()))
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let source_ids = context.sources.iter().map(|source| source.id.as_str()).collect::<std::collections::BTreeSet<_>>();
+    for record in context
+        .sections
+        .iter()
+        .chain(context.axioms.iter())
+        .chain(context.assumptions.iter())
+        .chain(context.definitions.iter())
+        .chain(context.equations.iter())
+        .chain(context.initial_conditions.iter())
+        .chain(context.boundary_conditions.iter())
+        .chain(context.observables.iter())
+        .chain(context.tools.iter())
+        .chain(context.experiments.iter())
+        .chain(context.predictions.iter())
+        .chain(context.falsification_criteria.iter())
+        .chain(context.open_questions.iter())
+    {
+        if !source_ids.contains(record.source_id.as_str()) {
+            return Err(format!("Structural record has an invalid source: {}", record.id));
+        }
+    }
+    for relation in &context.relations {
+        if !node_ids.contains(relation.from_id.as_str()) || !node_ids.contains(relation.to_id.as_str()) {
+            return Err(format!("Structural context contains a dangling relation: {}", relation.id));
+        }
+    }
+    for symbol in &context.symbols {
+        if symbol.source_ids.iter().any(|source_id| !node_ids.contains(source_id.as_str())) {
+            return Err(format!("Structural symbol has an invalid source: {}", symbol.id));
+        }
+    }
+    Ok(())
 }
 
 fn detect_theory_style(scan: &serde_json::Value) -> &'static str {
@@ -5228,6 +5672,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
     let recap_path = project_root.join("session_recap.md");
     let awareness_path = project_root.join("project_awareness.md");
     let briefing_path = project_root.join("ai_briefing.md");
+    let structural_context_path = project_root.join("structural_context.v1.json");
     let recap_existed_before = recap_path.exists();
     let briefing_existed_before = briefing_path.exists();
     let first_session_bootstrap = !config.first_session_completed && !briefing_existed_before && !recap_existed_before;
@@ -5324,6 +5769,49 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         let _ = fs::write(&briefing_path, ai_briefing_markdown);
     }
 
+    let structural_context = compile_structural_context(
+        &project_root,
+        Path::new(&theory_dir),
+        &master_axiom_path,
+        Path::new(&tools_dir),
+        &scan,
+    );
+    validate_structural_context(&structural_context)?;
+    let structural_context_json = serde_json::to_string_pretty(&structural_context)
+        .map_err(|e| format!("Failed to serialize structural context: {e}"))?;
+    let structural_context_file = format!("{structural_context_json}\n");
+    fs::write(&structural_context_path, &structural_context_file)
+        .map_err(|e| format!("Failed to write structural context: {e}"))?;
+    let mut structural_hasher = Sha256::new();
+    structural_hasher.update(structural_context_file.as_bytes());
+    let structural_context_payload = serde_json::json!({
+        "name": "structural_context",
+        "path": structural_context_path.to_string_lossy().to_string(),
+        "exists": true,
+        "schema_version": structural_context.schema_version,
+        "model_id": structural_context.model_id,
+        "bytes": structural_context_file.len(),
+        "sha256": format!("{:x}", structural_hasher.finalize()),
+        "counts": {
+            "sources": structural_context.sources.len(),
+            "sections": structural_context.sections.len(),
+            "axioms": structural_context.axioms.len(),
+            "assumptions": structural_context.assumptions.len(),
+            "definitions": structural_context.definitions.len(),
+            "equations": structural_context.equations.len(),
+            "symbols": structural_context.symbols.len(),
+            "initial_conditions": structural_context.initial_conditions.len(),
+            "boundary_conditions": structural_context.boundary_conditions.len(),
+            "observables": structural_context.observables.len(),
+            "tools": structural_context.tools.len(),
+            "experiments": structural_context.experiments.len(),
+            "predictions": structural_context.predictions.len(),
+            "falsification_criteria": structural_context.falsification_criteria.len(),
+            "open_questions": structural_context.open_questions.len(),
+            "relations": structural_context.relations.len()
+        }
+    });
+
     let (awareness_payload, awareness_diag) = read_source_payload("project_awareness", &awareness_path, 12_000);
     let (briefing_payload, briefing_diag) = read_source_payload("ai_briefing", &briefing_path, 12_000);
     if let Some(diag) = awareness_diag {
@@ -5354,13 +5842,15 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "master_axiom": axiom_payload,
         "project_awareness": awareness_payload,
         "ai_briefing": briefing_payload,
+        "structural_context": structural_context_payload,
         "generated_files": {
             "session_recap": recap_path.to_string_lossy().to_string(),
             "ai_briefing": briefing_path.to_string_lossy().to_string(),
             "workspace_tree": tree_path.to_string_lossy().to_string(),
             "scratchpad": primer_path.to_string_lossy().to_string(),
             "master_axiom": master_axiom_path.to_string_lossy().to_string(),
-            "project_awareness": awareness_path.to_string_lossy().to_string()
+            "project_awareness": awareness_path.to_string_lossy().to_string(),
+            "structural_context": structural_context_path.to_string_lossy().to_string()
         },
         "reuse_notes_next_session": config.reuse_notes_next_session,
         "first_session_bootstrap": first_session_bootstrap,
@@ -6374,6 +6864,103 @@ mod tests {
         assert!(template.contains("## Hypothesis"));
         assert!(template.contains("## Predictions"));
         assert!(template.contains("## Observational Consequences"));
+    }
+
+    #[test]
+    fn compiles_deterministic_structural_context_with_source_coverage() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_structural_context_test_{}", std::process::id()));
+        let theory_dir = temp_dir.join("theory");
+        let tools_dir = temp_dir.join("tools");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&theory_dir).unwrap();
+        fs::create_dir_all(&tools_dir).unwrap();
+        fs::write(
+            theory_dir.join("foundations.md"),
+            "# Foundations\n\n## Core Axiom\nThe axiom defines a scalar field.\n\n$$\\mathcal{L} = \\frac{1}{2}\\partial_\\mu \\phi \\partial^\\mu \\phi$$\n",
+        )
+        .unwrap();
+        let master_axiom_path = temp_dir.join("master_axiom.md");
+        fs::write(
+            &master_axiom_path,
+            "# Master Axiom\n\n## Hypothesis\nThe hypothesis constrains the field.\n\n## Structural Assumptions\nSpacetime is differentiable.\n\n## Boundary Conditions\nThe field vanishes at infinity.\n\n## Predictions\nThe model predicts a bounded signal.\n\n## Falsification Criteria\nReject the model when the signal diverges.\n\n## Governing Equation\n$$\\mathcal{L}=V(\\phi)$$\n",
+        )
+        .unwrap();
+        fs::write(tools_dir.join("analyze.py"), "# analysis tool\nprint('analyze')\n").unwrap();
+
+        let scan = scan_markdown_theory(theory_dir.to_str().unwrap());
+        let first = compile_structural_context(&temp_dir, &theory_dir, &master_axiom_path, &tools_dir, &scan);
+        let second = compile_structural_context(&temp_dir, &theory_dir, &master_axiom_path, &tools_dir, &scan);
+        let first_json = serde_json::to_string_pretty(&first).unwrap();
+        let second_json = serde_json::to_string_pretty(&second).unwrap();
+
+        assert_eq!(first_json, second_json);
+        assert_eq!(first.schema_version, "physics-ide.structural-context/v1");
+        assert!(first.sources.iter().all(|source| !source.path.contains(temp_dir.to_string_lossy().as_ref())));
+        assert!(first.symbols.iter().any(|symbol| symbol.notation == "\\mathcal{L}"));
+        assert!(first.symbols.iter().any(|symbol| symbol.notation == "\\phi"));
+        assert!(first.axioms.len() >= scan["hypothesis_candidates"].as_array().unwrap().len());
+        assert!(first.equations.len() >= scan["equation_candidates"].as_array().unwrap().len());
+        assert_eq!(first.assumptions.len(), 1);
+        assert_eq!(first.boundary_conditions.len(), 1);
+        assert_eq!(first.predictions.len(), 1);
+        assert_eq!(first.falsification_criteria.len(), 1);
+        assert_eq!(first.tools.len(), 1);
+        let record_count = first.sections.len()
+            + first.axioms.len()
+            + first.assumptions.len()
+            + first.definitions.len()
+            + first.equations.len()
+            + first.initial_conditions.len()
+            + first.boundary_conditions.len()
+            + first.observables.len()
+            + first.tools.len()
+            + first.experiments.len()
+            + first.predictions.len()
+            + first.falsification_criteria.len()
+            + first.open_questions.len();
+        assert_eq!(first.relations.len(), record_count);
+        validate_structural_context(&first).unwrap();
+    }
+
+    #[test]
+    fn structural_context_validation_rejects_dangling_relations() {
+        let mut context = StructuralContextV1 {
+            schema_version: "physics-ide.structural-context/v1".to_string(),
+            model_id: "model-test".to_string(),
+            model_name: "Test Model".to_string(),
+            scope: vec!["test".to_string()],
+            sources: vec![StructuralSource {
+                id: "src-test".to_string(),
+                path: "theory.md".to_string(),
+                kind: "markdown".to_string(),
+            }],
+            sections: Vec::new(),
+            axioms: Vec::new(),
+            assumptions: Vec::new(),
+            definitions: Vec::new(),
+            equations: Vec::new(),
+            symbols: Vec::new(),
+            initial_conditions: Vec::new(),
+            boundary_conditions: Vec::new(),
+            observables: Vec::new(),
+            tools: Vec::new(),
+            experiments: Vec::new(),
+            predictions: Vec::new(),
+            falsification_criteria: Vec::new(),
+            open_questions: Vec::new(),
+            relations: vec![StructuralRelation {
+                id: "rel-test".to_string(),
+                relation_type: "derived_from".to_string(),
+                from_id: "missing-node".to_string(),
+                to_id: "src-test".to_string(),
+            }],
+        };
+
+        let error = validate_structural_context(&context).unwrap_err();
+        assert!(error.contains("dangling relation"));
+
+        context.relations.clear();
+        validate_structural_context(&context).unwrap();
     }
 
     #[test]

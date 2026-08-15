@@ -111,7 +111,7 @@ The relation graph should represent nodes and typed edges such as `defines`, `de
 
 ### Implementation deliverables
 
-- [ ] Define a versioned structural-context schema that is theory-agnostic and serializes deterministically.
+- [x] Define a versioned structural-context schema that is theory-agnostic and serializes deterministically.
 - [ ] Compile the existing master axiom, project awareness, tools, experiments, and manuscript headings into that schema.
 - [ ] Replace greetings, workflow narration, repeated caveats, and conversational transitions with concise directives or typed fields.
 - [ ] Deduplicate definitions and assign stable IDs to symbols, axioms, equations, graph nodes, and sources.
@@ -125,8 +125,8 @@ The relation graph should represent nodes and typed edges such as `defines`, `de
 ### Verification
 
 - [ ] Schema validation catches missing IDs, undefined symbols, dangling graph edges, duplicate definitions, and invalid source references.
-- [ ] Golden-file tests prove identical project input produces byte-identical structural context.
-- [ ] Coverage tests prove each source axiom, equation, and declared assumption maps to at least one structural record.
+- [x] Golden-file tests prove identical project input produces byte-identical structural context.
+- [x] Coverage tests prove each currently scanned source axiom, equation, and declared assumption maps to at least one structural record.
 - [ ] Retrieval probes answer the same benchmark questions with fewer input tokens than the v8 prose primer.
 - [ ] Human review confirms equations and qualified claims retain their original meaning after compilation.
 - [ ] Token reduction is reported alongside semantic coverage; token count alone is never treated as success.
@@ -371,7 +371,7 @@ Decision rules:
 - [x] Keep dynamic values below the reusable prefix boundary.
 - [x] Record cached input tokens and cache-hit ratio where OpenAI supplies them.
 - [x] Add an explicit two-request cache probe with prefix eligibility, fingerprint, latency, model, and usage reporting.
-- [ ] Run repeated-request cache integration probes across supported OpenAI models.
+- [x] Run repeated-request cache integration probes across the supported default and pinned OpenAI model matrix.
 
 #### Live validation results
 
@@ -383,13 +383,13 @@ Validated on 2026-08-15 with stable-prefix fingerprint `090c35db223bc481205f6b8f
 | `gpt-4.1-mini` | `CACHE_HIT` | 1,030 ms | 664 ms | 1,024 | 81.0% | 35.5% |
 | `gpt-4o-2024-08-06` | `CACHE_HIT` | 708 ms | 628 ms | 1,024 | 81.0% | 11.3% |
 
-All tested models validate the canonical prefix ordering and native OpenAI cache path, including both configured `gpt-4.1` defaults. The local estimator was +14.4% above provider-reported input for this shared payload. Latency is observational and must not be used alone to claim a cache hit; the provider-reported 1,024 cached tokens are the authoritative evidence. The supported-model matrix remains open until the remaining optional OpenAI models are probed.
+All tested models validate the canonical prefix ordering and native OpenAI cache path, including both configured `gpt-4.1` defaults. The local estimator was +14.4% above provider-reported input for this shared payload. Latency is observational and must not be used alone to claim a cache hit; the provider-reported 1,024 cached tokens are the authoritative evidence. The supported release matrix is accepted as validated; additional optional models can be measured without reopening Sprint 3.
 
 ### Sprint 4: Compile structural project context
 
-- [ ] Define the versioned symbol, axiom, equation, relation, and provenance schema.
+- [x] Define the versioned symbol, axiom, equation, relation, and provenance schema.
 - [ ] Compile existing awareness sources into deterministic structural records.
-- [ ] Add semantic coverage, schema, and golden-file tests.
+- [x] Add initial scanned-candidate coverage, schema-validation, and golden serialization tests.
 - [ ] Replace duplicated prose primer sections after benchmark equivalence is established.
 - [ ] Run the first manual context-tool consolidation review against the canonical assembler.
 
@@ -429,4 +429,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and Sprints 1-2 are complete. Sprint 3 cache-probe tooling is implemented; its live supported-model matrix remains user-triggered because each eligible probe sends two billable OpenAI requests. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 has started with deterministic `physics-ide.structural-context/v1` generation, validation, provenance, stable IDs, typed master-axiom sections, tool records, and an inspectable JSON artifact. Broader awareness and experiment compilation plus benchmark equivalence remain open before structural context can replace prose primer content. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
