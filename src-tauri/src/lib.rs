@@ -2,7 +2,7 @@ use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
 use pbkdf2::pbkdf2_hmac;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
@@ -64,6 +64,52 @@ struct OpenAiApiError {
 // --- RUNTIME MEMORY STATE ---
 pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
+    pub llm_usage: std::sync::Mutex<std::collections::HashMap<String, ThreadUsageState>>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct ProviderUsage {
+    provider: String,
+    model: String,
+    input_tokens: Option<u64>,
+    cached_input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+}
+
+struct ProviderReply {
+    content: String,
+    usage: ProviderUsage,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ThreadUsageState {
+    request_count: u64,
+    cached_input_report_count: u64,
+    cache_reported_input_tokens: u64,
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    output_tokens: u64,
+    reasoning_tokens: u64,
+    total_tokens: u64,
+    last: ProviderUsage,
+}
+
+impl ThreadUsageState {
+    fn record(&mut self, usage: &ProviderUsage) {
+        self.request_count += 1;
+        if usage.cached_input_tokens.is_some() {
+            self.cached_input_report_count += 1;
+            self.cache_reported_input_tokens += usage.input_tokens.unwrap_or(0);
+        }
+        self.input_tokens += usage.input_tokens.unwrap_or(0);
+        self.cached_input_tokens += usage.cached_input_tokens.unwrap_or(0);
+        self.output_tokens += usage.output_tokens.unwrap_or(0);
+        self.reasoning_tokens += usage.reasoning_tokens.unwrap_or(0);
+        self.total_tokens += usage.total_tokens.unwrap_or(0);
+        self.last = usage.clone();
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2875,6 +2921,176 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn canonical_assembler_orders_volatility_and_preserves_roles() {
+        let history = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": "Earlier question",
+                "context_source": "current_request",
+                "context_volatility": "dynamic"
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "content": "Earlier answer",
+                "context_source": "assistant_history",
+                "context_volatility": "dynamic"
+            }),
+            serde_json::json!({
+                "role": "system",
+                "content": "Stable contract",
+                "context_source": "application_contract",
+                "context_volatility": "stable"
+            }),
+            serde_json::json!({
+                "role": "system",
+                "content": "Project context",
+                "context_source": "startup_primer",
+                "context_volatility": "slowly_changing"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Current question",
+                "context_source": "current_request",
+                "context_volatility": "dynamic"
+            }),
+        ];
+
+        let assembly = assemble_canonical_messages(&history);
+        let contents = assembly
+            .messages
+            .iter()
+            .map(|message| message["content"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents, vec!["Stable contract", "Project context", "Earlier question", "Earlier answer", "Current question"]);
+        assert_eq!(assembly.messages[0]["role"], "system");
+        assert_eq!(assembly.messages[3]["role"], "assistant");
+        assert!(assembly.messages.iter().all(|message| message.get("context_source").is_none()));
+        assert_eq!(assembly.sections[0]["tier"], "stable");
+        assert_eq!(assembly.sections[4]["tier"], "current_request");
+    }
+
+    #[test]
+    fn openai_request_body_keeps_canonical_message_roles() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "Contract"}),
+            serde_json::json!({"role": "user", "content": "Question"}),
+            serde_json::json!({"role": "assistant", "content": "Answer"}),
+        ];
+
+        let body = build_openai_request_body("gpt-4.1-mini", &messages);
+
+        assert_eq!(body["messages"], serde_json::Value::Array(messages));
+        assert_eq!(body["model"], "gpt-4.1-mini");
+    }
+
+    #[test]
+    fn stable_prefix_hash_changes_only_with_reusable_context() {
+        let history = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "Application contract",
+                "context_source": "application_contract",
+                "context_volatility": "stable"
+            }),
+            serde_json::json!({
+                "role": "system",
+                "content": "Project axiom A",
+                "context_source": "startup_primer",
+                "context_volatility": "slowly_changing"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Question one",
+                "context_source": "current_request",
+                "context_volatility": "dynamic"
+            }),
+        ];
+        let mut changed_request = history.clone();
+        changed_request[2]["content"] = serde_json::json!("Question two");
+        let mut changed_project = history.clone();
+        changed_project[1]["content"] = serde_json::json!("Project axiom B");
+
+        let baseline = assemble_canonical_messages(&history);
+        let request_change = assemble_canonical_messages(&changed_request);
+        let project_change = assemble_canonical_messages(&changed_project);
+
+        assert_eq!(baseline.stable_prefix["sha256"], request_change.stable_prefix["sha256"]);
+        assert_ne!(baseline.stable_prefix["sha256"], project_change.stable_prefix["sha256"]);
+        assert_eq!(baseline.stable_prefix["message_count"], 2);
+    }
+
+    #[test]
+    fn parses_openai_cached_and_reasoning_usage() {
+        let response = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 90,
+                "total_tokens": 1290,
+                "prompt_tokens_details": {"cached_tokens": 1024},
+                "completion_tokens_details": {"reasoning_tokens": 40}
+            }
+        });
+
+        let usage = parse_openai_usage(&response, "gpt-4.1");
+
+        assert_eq!(usage.input_tokens, Some(1200));
+        assert_eq!(usage.cached_input_tokens, Some(1024));
+        assert_eq!(usage.reasoning_tokens, Some(40));
+    }
+
+    #[test]
+    fn parses_gemini_usage_metadata() {
+        let response = serde_json::json!({
+            "usageMetadata": {
+                "promptTokenCount": 800,
+                "cachedContentTokenCount": 600,
+                "candidatesTokenCount": 70,
+                "thoughtsTokenCount": 20,
+                "totalTokenCount": 890
+            }
+        });
+
+        let usage = parse_gemini_usage(&response, "gemini-2.5-flash");
+
+        assert_eq!(usage.input_tokens, Some(800));
+        assert_eq!(usage.cached_input_tokens, Some(600));
+        assert_eq!(usage.output_tokens, Some(70));
+        assert_eq!(usage.reasoning_tokens, Some(20));
+    }
+
+    #[test]
+    fn accumulates_thread_usage_without_inventing_cache_metadata() {
+        let mut totals = ThreadUsageState::default();
+        totals.record(&ProviderUsage {
+            provider: "openai".to_string(),
+            model: "gpt-4.1".to_string(),
+            input_tokens: Some(100),
+            cached_input_tokens: None,
+            output_tokens: Some(20),
+            reasoning_tokens: None,
+            total_tokens: Some(120),
+        });
+        totals.record(&ProviderUsage {
+            provider: "openai".to_string(),
+            model: "gpt-4.1".to_string(),
+            input_tokens: Some(100),
+            cached_input_tokens: Some(64),
+            output_tokens: Some(10),
+            reasoning_tokens: Some(4),
+            total_tokens: Some(110),
+        });
+
+        assert_eq!(totals.request_count, 2);
+        assert_eq!(totals.cached_input_report_count, 1);
+        assert_eq!(totals.cache_reported_input_tokens, 100);
+        assert_eq!(totals.input_tokens, 200);
+        assert_eq!(totals.cached_input_tokens, 64);
+        assert_eq!(totals.reasoning_tokens, 4);
+        assert_eq!(totals.total_tokens, 230);
+    }
+
+    #[test]
     fn retries_gemini_auth_for_access_token_type_errors() {
         let response_text = r#"{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}"#;
 
@@ -2932,27 +3148,47 @@ fn read_attachment_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn send_llm_prompt(pane: String, history: Vec<serde_json::Value>, app: tauri::AppHandle) -> Result<String, String> {
+async fn send_llm_prompt(
+    pane: String,
+    history: Vec<serde_json::Value>,
+    thread_id: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
-
-    let prompt = build_prompt_from_history(&history);
-    let prompt_for_model = prompt;
+    let canonical_messages = assemble_canonical_messages(&history).messages;
 
     let provider_name = provider.to_ascii_lowercase();
     let openai_api_key = normalize_api_key(&config.openai_api_key);
     let gemini_api_key = normalize_api_key(&config.gemini_api_key);
-    let request_history = history.clone();
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let reply = tauri::async_runtime::spawn_blocking(move || {
         match provider_name.as_str() {
-            "openai" => call_openai(&openai_api_key, &model, &prompt_for_model),
-            "gemini" => call_gemini(&gemini_api_key, &model, &request_history),
+            "openai" => call_openai(&openai_api_key, &model, &canonical_messages),
+            "gemini" => call_gemini(&gemini_api_key, &model, &canonical_messages),
             other => Err(format!("Unsupported provider '{}'. Choose OpenAI or Gemini.", other)),
         }
     })
     .await
-    .map_err(|e| format!("LLM worker task failed: {e}"))?
+    .map_err(|e| format!("LLM worker task failed: {e}"))??;
+
+    let usage_key = format!("{}:{}", pane.to_ascii_lowercase(), thread_id.unwrap_or_else(|| "default".to_string()));
+    record_thread_usage(&app.state::<AppState>(), &usage_key, &reply.usage)?;
+    Ok(reply.content)
+}
+
+fn record_thread_usage(state: &tauri::State<AppState>, key: &str, usage: &ProviderUsage) -> Result<(), String> {
+    let mut store = state.llm_usage.lock().map_err(|_| "LLM usage mutex poisoned".to_string())?;
+    let totals = store.entry(key.to_string()).or_default();
+    totals.record(usage);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_llm_usage(pane: String, thread_id: Option<String>, state: tauri::State<AppState>) -> Result<String, String> {
+    let usage_key = format!("{}:{}", pane.to_ascii_lowercase(), thread_id.unwrap_or_else(|| "default".to_string()));
+    let store = state.llm_usage.lock().map_err(|_| "LLM usage mutex poisoned".to_string())?;
+    Ok(serde_json::to_string(&store.get(&usage_key).cloned().unwrap_or_default()).map_err(|e| e.to_string())?)
 }
 
 fn get_app_config(app: &AppHandle) -> Result<AppConfig, String> {
@@ -3349,12 +3585,134 @@ fn build_prompt_from_history(history: &[serde_json::Value]) -> String {
     prompt.trim().to_string()
 }
 
+struct CanonicalAssembly {
+    messages: Vec<serde_json::Value>,
+    sections: Vec<serde_json::Value>,
+    stable_prefix: serde_json::Value,
+}
+
+fn history_entry_text(entry: &serde_json::Value) -> String {
+    if let Some(content) = entry.get("content").and_then(|value| value.as_str()) {
+        return content.to_string();
+    }
+
+    entry
+        .get("parts")
+        .and_then(|value| value.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}
+
+fn canonical_role(entry: &serde_json::Value) -> &'static str {
+    match entry
+        .get("role")
+        .and_then(|value| value.as_str())
+        .unwrap_or("user")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "system" => "system",
+        "assistant" | "model" => "assistant",
+        _ => "user",
+    }
+}
+
+fn canonical_tier(entry: &serde_json::Value, index: usize, last_index: usize) -> (u8, &'static str) {
+    let volatility = entry
+        .get("context_volatility")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unspecified");
+    let source = entry
+        .get("context_source")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    match volatility {
+        "stable" => (0, "stable"),
+        "slowly_changing" => (1, "slowly_changing"),
+        _ if index == last_index && matches!(source, "current_request" | "context_probe") => (3, "current_request"),
+        _ => (2, "thread_history"),
+    }
+}
+
+fn assemble_canonical_messages(history: &[serde_json::Value]) -> CanonicalAssembly {
+    let last_index = history.len().saturating_sub(1);
+    let mut entries = history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let content = history_entry_text(entry);
+            if content.trim().is_empty() {
+                return None;
+            }
+            let (tier_rank, tier) = canonical_tier(entry, index, last_index);
+            let role = canonical_role(entry);
+            let source = entry
+                .get("context_source")
+                .and_then(|value| value.as_str())
+                .unwrap_or("legacy_or_unspecified");
+            let message = serde_json::json!({"role": role, "content": content});
+            let section = serde_json::json!({
+                "position": 0,
+                "original_index": index,
+                "tier": tier,
+                "role": role,
+                "source": source,
+                "trigger": entry.get("context_trigger").and_then(|value| value.as_str()).unwrap_or("legacy_or_unspecified"),
+                "volatility": entry.get("context_volatility").and_then(|value| value.as_str()).unwrap_or("unspecified"),
+                "path": entry.get("context_path").and_then(|value| value.as_str()),
+                "characters": content.chars().count(),
+                "estimated_tokens": estimate_token_count(content.chars().count())
+            });
+            Some((tier_rank, index, message, section))
+        })
+        .collect::<Vec<_>>();
+
+    entries.sort_by_key(|(tier_rank, index, _, _)| (*tier_rank, *index));
+    let mut messages = Vec::with_capacity(entries.len());
+    let mut sections = Vec::with_capacity(entries.len());
+    for (position, (_, _, message, mut section)) in entries.into_iter().enumerate() {
+        section["position"] = serde_json::json!(position);
+        messages.push(message);
+        sections.push(section);
+    }
+
+    let stable_message_count = sections
+        .iter()
+        .take_while(|section| matches!(section["tier"].as_str(), Some("stable" | "slowly_changing")))
+        .count();
+    let stable_prefix_bytes = serde_json::to_vec(&messages[..stable_message_count]).unwrap_or_default();
+    let stable_prefix_characters = String::from_utf8_lossy(&stable_prefix_bytes).chars().count();
+    let mut hasher = Sha256::new();
+    hasher.update(&stable_prefix_bytes);
+    let stable_prefix_hash = format!("{:x}", hasher.finalize());
+    let stable_prefix = serde_json::json!({
+        "message_count": stable_message_count,
+        "bytes": stable_prefix_bytes.len(),
+        "estimated_tokens": estimate_token_count(stable_prefix_characters),
+        "sha256": stable_prefix_hash
+    });
+
+    CanonicalAssembly {
+        messages,
+        sections,
+        stable_prefix,
+    }
+}
+
 fn estimate_token_count(character_count: usize) -> usize {
     character_count.saturating_add(3) / 4
 }
 
 fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Value {
-    let serialized_prompt = build_prompt_from_history(history);
+    let assembly = assemble_canonical_messages(history);
+    let serialized_prompt = build_prompt_from_history(&assembly.messages);
     let total_characters = serialized_prompt.chars().count();
     let mut role_totals: std::collections::BTreeMap<String, (usize, usize, usize)> = std::collections::BTreeMap::new();
     let mut source_totals: std::collections::BTreeMap<String, (usize, usize, usize)> = std::collections::BTreeMap::new();
@@ -3465,7 +3823,9 @@ fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Val
         },
         "by_role": by_role,
         "by_source": by_source,
-        "provenance": provenance
+        "provenance": provenance,
+        "assembly": assembly.sections,
+        "stable_prefix": assembly.stable_prefix
     })
 }
 
@@ -3474,7 +3834,34 @@ fn estimate_prompt_usage(history: Vec<serde_json::Value>) -> String {
     estimate_prompt_usage_value(&history).to_string()
 }
 
-fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+fn build_openai_request_body(model: &str, messages: &[serde_json::Value]) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "temperature": 0.7
+    })
+}
+
+fn parse_openai_usage(response: &serde_json::Value, model: &str) -> ProviderUsage {
+    let usage = response.get("usage").unwrap_or(&serde_json::Value::Null);
+    ProviderUsage {
+        provider: "openai".to_string(),
+        model: model.to_string(),
+        input_tokens: usage.get("prompt_tokens").and_then(|value| value.as_u64()),
+        cached_input_tokens: usage
+            .get("prompt_tokens_details")
+            .and_then(|details| details.get("cached_tokens"))
+            .and_then(|value| value.as_u64()),
+        output_tokens: usage.get("completion_tokens").and_then(|value| value.as_u64()),
+        reasoning_tokens: usage
+            .get("completion_tokens_details")
+            .and_then(|details| details.get("reasoning_tokens"))
+            .and_then(|value| value.as_u64()),
+        total_tokens: usage.get("total_tokens").and_then(|value| value.as_u64()),
+    }
+}
+
+fn call_openai(api_key: &str, model: &str, messages: &[serde_json::Value]) -> Result<ProviderReply, String> {
     if api_key.trim().is_empty() {
         return Err("OpenAI API key is not configured. Please add one in Settings.".to_string());
     }
@@ -3540,11 +3927,7 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
             .post("https://api.openai.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&serde_json::json!({
-                "model": candidate_model.clone(),
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7
-            }))
+            .json(&build_openai_request_body(&candidate_model, messages))
             .send()
             .map_err(|e| format!("OpenAI request failed: {e}"))?;
 
@@ -3557,14 +3940,18 @@ fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, Strin
             let parsed: serde_json::Value = serde_json::from_str(&response_text)
                 .map_err(|e| format!("OpenAI response parsing failed: {e}"))?;
 
-            return parsed
+            let content = parsed
                 .get("choices")
                 .and_then(|choices| choices.get(0))
                 .and_then(|choice| choice.get("message"))
                 .and_then(|message| message.get("content"))
                 .and_then(|value| value.as_str())
                 .map(str::to_string)
-                .ok_or_else(|| "OpenAI returned no response content".to_string());
+                .ok_or_else(|| "OpenAI returned no response content".to_string())?;
+            return Ok(ProviderReply {
+                content,
+                usage: parse_openai_usage(&parsed, &candidate_model),
+            });
         }
 
         let parsed_error = parse_openai_error_details(&response_text);
@@ -3825,7 +4212,20 @@ fn gemini_model_candidates(
     deduped
 }
 
-fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Result<String, String> {
+fn parse_gemini_usage(response: &serde_json::Value, model: &str) -> ProviderUsage {
+    let usage = response.get("usageMetadata").unwrap_or(&serde_json::Value::Null);
+    ProviderUsage {
+        provider: "gemini".to_string(),
+        model: model.to_string(),
+        input_tokens: usage.get("promptTokenCount").and_then(|value| value.as_u64()),
+        cached_input_tokens: usage.get("cachedContentTokenCount").and_then(|value| value.as_u64()),
+        output_tokens: usage.get("candidatesTokenCount").and_then(|value| value.as_u64()),
+        reasoning_tokens: usage.get("thoughtsTokenCount").and_then(|value| value.as_u64()),
+        total_tokens: usage.get("totalTokenCount").and_then(|value| value.as_u64()),
+    }
+}
+
+fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Result<ProviderReply, String> {
     if api_key.trim().is_empty() {
         return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
     }
@@ -3852,7 +4252,7 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
             let parsed: serde_json::Value = serde_json::from_str(&response_text)
                 .map_err(|e| format!("Gemini response parsing failed: {e}"))?;
 
-            return parsed
+            let content = parsed
                 .get("candidates")
                 .and_then(|candidates| candidates.get(0))
                 .and_then(|candidate| candidate.get("content"))
@@ -3861,7 +4261,11 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
                 .and_then(|part| part.get("text"))
                 .and_then(|value| value.as_str())
                 .map(str::to_string)
-                .ok_or_else(|| "Gemini returned no response content".to_string());
+                .ok_or_else(|| "Gemini returned no response content".to_string())?;
+            return Ok(ProviderReply {
+                content,
+                usage: parse_gemini_usage(&parsed, &candidate_model),
+            });
         }
 
         let parsed_error = serde_json::from_str::<serde_json::Value>(&response_text)
@@ -6208,6 +6612,7 @@ pub fn run() {
             // Inject the persistent path into Tauri's fast runtime State
             app.manage(AppState {
                 workspace_path: std::sync::Mutex::new(initial_path),
+                llm_usage: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
 
             Ok(())
@@ -6247,6 +6652,7 @@ pub fn run() {
             generate_empirical_analysis_primer,
             export_workspace_tree,
             estimate_prompt_usage,
+            get_llm_usage,
             send_llm_prompt,
             compile_ai_briefing,
             validate_model_selection,

@@ -1086,6 +1086,7 @@
         <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;" title="Show or hide the scratchpad panel"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
         <div class="menu-section">Documents</div>
         <a href="#" onclick="openBriefingPacketEditor(); return false;" title="Open the active primer document and edit the AI briefing context">View/Edit Primer</a>
+        <a href="#" onclick="openRequestInspector(); return false;" title="Inspect ordered AI context sources and estimated token use">AI Request Inspector</a>
         <div class="menu-section">Navigation</div>
         <a href="#" onclick="rotateLeft(1); return false;" title="Switch to next analytical lane thread">Next Analytical Slot</a>
         <a href="#" onclick="rotateRight(1); return false;" title="Switch to next creative lane thread">Next Creative Slot</a>
@@ -2047,6 +2048,26 @@
         <button onclick="saveBriefingPacketEdits()" title="Save primer packet changes">Save Packet</button>
         <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="syncBriefingPacketToThreads()" title="Send primer packet context to both AI lanes">Sync To AI Threads</button>
         <button onclick="closeBriefingPacketEditor()" title="Close primer editor modal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="request-inspector-modal" class="modal" style="z-index: 1145;">
+    <div class="modal-content" style="width: 760px; max-width: 95vw; max-height: 86vh; display: flex; flex-direction: column;">
+      <div class="modal-header">AI Request Inspector</div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+        <label for="request-inspector-pane">Lane</label>
+        <select id="request-inspector-pane" onchange="refreshRequestInspector()">
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+        </select>
+        <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
+      </div>
+      <div id="request-inspector-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">No request inspected yet.</div>
+      <textarea id="request-inspector-output" rows="24" readonly style="width: 100%; box-sizing: border-box; flex: 1; min-height: 300px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Ordered request context report"></textarea>
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">Prompt contents and API credentials are not displayed.</div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+        <button onclick="closeRequestInspector()" title="Close request inspector">Close</button>
       </div>
     </div>
   </div>
@@ -3449,8 +3470,28 @@
       try {
         const reply = await invoke('send_llm_prompt', {
           pane: pane,
-          history: chatHistories[pane][index]
+          history: chatHistories[pane][index],
+          threadId: String(index)
         });
+
+        try {
+          const reported = JSON.parse(await invoke('get_llm_usage', {
+            pane,
+            threadId: String(index)
+          }));
+          const last = reported.last || {};
+          if (reported.request_count > 0 && last.input_tokens != null) {
+            const cached = last.cached_input_tokens == null ? 'unavailable' : last.cached_input_tokens;
+            const cacheRatio = last.cached_input_tokens == null || !last.input_tokens
+              ? 'unavailable'
+              : `${((last.cached_input_tokens / last.input_tokens) * 100).toFixed(1)}%`;
+            appendTerminalLog(
+              `Provider usage [${pane}]: input=${last.input_tokens}, cached=${cached}, cache ratio=${cacheRatio}, output=${last.output_tokens ?? 'unavailable'}, total=${last.total_tokens ?? 'unavailable'}.`
+            );
+          }
+        } catch (usageError) {
+          appendTerminalLog(`Provider usage unavailable [${pane}]: ${usageError}`);
+        }
 
         let responsePayload;
         if (provider === 'gemini') {
@@ -6169,6 +6210,76 @@ async function restoreVersion() {
 
     function closeBriefingPacketEditor() {
       document.getElementById('briefing-packet-modal').style.display = 'none';
+    }
+
+    async function openRequestInspector() {
+      document.getElementById('request-inspector-modal').style.display = 'flex';
+      await refreshRequestInspector();
+    }
+
+    function closeRequestInspector() {
+      document.getElementById('request-inspector-modal').style.display = 'none';
+    }
+
+    async function refreshRequestInspector() {
+      const pane = document.getElementById('request-inspector-pane')?.value === 'right' ? 'right' : 'left';
+      const summary = document.getElementById('request-inspector-summary');
+      const output = document.getElementById('request-inspector-output');
+      if (!summary || !output) return;
+
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      const history = chatHistories[pane][index] || [];
+      summary.textContent = 'Calculating local request estimate...';
+      output.value = '';
+
+      try {
+        const usage = JSON.parse(await invoke('estimate_prompt_usage', { history }));
+        const reported = JSON.parse(await invoke('get_llm_usage', {
+          pane,
+          threadId: String(index)
+        }));
+        const provider = getPaneProvider(pane);
+        const model = getPaneModelName(pane);
+        const sourceLines = Object.entries(usage.by_source || {})
+          .sort((left, right) => right[1].estimated_tokens - left[1].estimated_tokens)
+          .map(([source, totals]) => `- ${source}: ~${totals.estimated_tokens} tokens | ${totals.content_bytes} bytes | ${totals.segments} segment(s)`);
+        const assemblyLines = (usage.assembly || []).map((section) => {
+          const path = section.path ? ` | path=${section.path}` : '';
+          return `${section.position + 1}. ${section.tier} | ${section.role} | ${section.source} | ~${section.estimated_tokens} tokens | trigger=${section.trigger}${path}`;
+        });
+        const lastReported = reported.last || {};
+        const lastCached = lastReported.cached_input_tokens == null ? 'unavailable' : lastReported.cached_input_tokens;
+        const lastCacheRatio = lastReported.cached_input_tokens == null || !lastReported.input_tokens
+          ? 'unavailable'
+          : `${((lastReported.cached_input_tokens / lastReported.input_tokens) * 100).toFixed(1)}%`;
+        const cumulativeCacheRatio = reported.cached_input_report_count > 0 && reported.cache_reported_input_tokens > 0
+          ? `${((reported.cached_input_tokens / reported.cache_reported_input_tokens) * 100).toFixed(1)}%`
+          : 'unavailable';
+        const reportedLines = reported.request_count > 0
+          ? [
+              `Last: provider=${lastReported.provider || 'unavailable'} | model=${lastReported.model || 'unavailable'} | input=${lastReported.input_tokens ?? 'unavailable'} | cached=${lastCached} | cache ratio=${lastCacheRatio} | output=${lastReported.output_tokens ?? 'unavailable'} | reasoning=${lastReported.reasoning_tokens ?? 'unavailable'} | total=${lastReported.total_tokens ?? 'unavailable'}`,
+              `Cumulative: requests=${reported.request_count} | input=${reported.input_tokens} | cached=${reported.cached_input_report_count > 0 ? reported.cached_input_tokens : 'unavailable'} | cache ratio=${cumulativeCacheRatio} | output=${reported.output_tokens} | reasoning=${reported.reasoning_tokens} | total=${reported.total_tokens}`
+            ]
+          : ['No provider-reported usage recorded for this thread.'];
+
+        summary.textContent = `${pane.toUpperCase()} lane | ${provider} / ${model} | ${history.length} message(s)`;
+        output.value = [
+          'TOTAL',
+          `~${usage.total.estimated_tokens} tokens | ${usage.total.bytes} bytes | method=${usage.method}`,
+          `Stable prefix: ${usage.stable_prefix.message_count} message(s) | ~${usage.stable_prefix.estimated_tokens} tokens | sha256=${usage.stable_prefix.sha256}`,
+          '',
+          'PROVIDER REPORTED',
+          ...reportedLines,
+          '',
+          'SOURCE CONTRIBUTIONS',
+          ...(sourceLines.length > 0 ? sourceLines : ['- none']),
+          '',
+          'CANONICAL ORDER',
+          ...(assemblyLines.length > 0 ? assemblyLines : ['- no context messages'])
+        ].join('\n');
+      } catch (err) {
+        summary.textContent = `Request inspection failed: ${err}`;
+      }
     }
 
     async function refreshBriefingPacketEditor() {

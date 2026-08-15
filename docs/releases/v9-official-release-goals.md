@@ -40,17 +40,17 @@ Highly dynamic text must never be inserted into or above the reusable prefix. If
 
 ### Implementation deliverables
 
-- [ ] Replace the flattened single-user-message OpenAI payload with an ordered, structured message payload.
-- [ ] Create one canonical prompt assembler shared by both AI panes so equivalent context serializes identically.
+- [x] Replace the flattened single-user-message OpenAI payload with an ordered, structured message payload.
+- [x] Create one canonical prompt assembler shared by both AI panes so equivalent context serializes identically.
 - [ ] Separate stable primer content from session summary, hypothesis cues, idea-pad notes, timestamps, and transient diagnostics.
 - [ ] Keep static content, whitespace, delimiters, and section order deterministic across requests.
-- [ ] Append current-thread and current-request content only after all reusable project context.
-- [ ] Preserve conversation roles instead of embedding role labels into one text block.
+- [x] Append current-thread and current-request content only after all reusable project context.
+- [x] Preserve conversation roles instead of embedding role labels into one text block.
 - [ ] Avoid cache-hostile values in the prefix, including generated timestamps, absolute paths that vary by machine, random identifiers, and non-deterministic file ordering.
-- [ ] Parse OpenAI usage metadata, including cached input token counts when supplied by the selected model and endpoint.
-- [ ] Surface input tokens, cached input tokens, output tokens, cache-hit ratio, provider, and model in AI diagnostics and probe reports.
+- [x] Parse OpenAI usage metadata, including cached input token counts when supplied by the selected model and endpoint.
+- [x] Surface input tokens, cached input tokens, output tokens, cache-hit ratio, provider, and model in the request inspector.
 - [ ] Track cumulative estimated and provider-reported token use per thread without treating estimates as exact billing data.
-- [ ] Treat absent cached-token metadata as `unavailable`, not as a zero-token cache hit.
+- [x] Treat absent cached-token metadata as `unavailable`, not as a zero-token cache hit.
 - [ ] Keep Gemini request behavior provider-specific; do not force OpenAI caching assumptions onto Gemini.
 
 ### Current migration targets
@@ -359,17 +359,17 @@ Decision rules:
 
 ### Sprint 2: Make prompt assembly deterministic and measurable
 
-- [ ] Introduce one canonical prompt assembler shared by both AI lanes.
-- [ ] Separate stable, slowly changing, thread, and current-request sections.
-- [ ] Add the request inspector and preflight context-load estimate.
-- [ ] Parse provider-reported usage and maintain per-thread totals.
-- [ ] Add stable-prefix and request-order snapshot tests.
+- [x] Introduce one canonical prompt assembler shared by both AI lanes.
+- [x] Separate stable, slowly changing, thread, and current-request sections.
+- [x] Add the request inspector and preflight context-load estimate.
+- [x] Parse provider-reported usage and maintain per-thread totals.
+- [x] Add stable-prefix and request-order snapshot tests.
 
 ### Sprint 3: Activate native prompt-caching benefits
 
-- [ ] Preserve provider message roles instead of flattening OpenAI history.
-- [ ] Keep dynamic values below the reusable prefix boundary.
-- [ ] Record cached input tokens and cache-hit ratio where OpenAI supplies them.
+- [x] Preserve provider message roles instead of flattening OpenAI history.
+- [x] Keep dynamic values below the reusable prefix boundary.
+- [x] Record cached input tokens and cache-hit ratio where OpenAI supplies them.
 - [ ] Run repeated-request cache integration probes across supported OpenAI models.
 
 ### Sprint 4: Compile structural project context
@@ -416,4 +416,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and Sprint 1 is complete. Sprint 2 should introduce the canonical prompt assembler and request inspector on top of the new provenance and benchmark baseline. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprints 1-2 are complete. Sprint 3 should validate native OpenAI cache behavior through repeated live requests across supported models, using the canonical assembler, stable-prefix fingerprint, provider usage telemetry, and request inspector now in place. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
