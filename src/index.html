@@ -2076,6 +2076,9 @@
         <label for="retrieval-query-input" style="flex: 1;">Local retrieval query
           <input id="retrieval-query-input" type="text" style="width: 100%; box-sizing: border-box; margin-top: 4px;" placeholder="Search indexed equations, mechanisms, assumptions, or terms">
         </label>
+        <label for="retrieval-budget-input">Evidence budget
+          <input id="retrieval-budget-input" type="number" min="500" max="24000" step="500" value="6000" style="width: 110px; margin-top: 4px;" title="Maximum retrieval evidence characters eligible for provider dispatch">
+        </label>
         <button onclick="previewLocalRetrieval()" title="Query the local SQLite retrieval index">Query Index</button>
       </div>
       <textarea id="retrieval-query-output" rows="5" readonly style="width: 100%; box-sizing: border-box; min-height: 85px; margin-top: 6px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Local retrieval diagnostics" placeholder="Local retrieval diagnostics will appear here."></textarea>
@@ -2224,8 +2227,13 @@
       rootPath: '',
       query: '',
       evidence: [],
+      diagnostics: null,
+      providerText: '',
+      budgetCharacters: 0,
       loadedAt: 0,
     };
+    let latestRetrievalDiagnostics = null;
+    let latestRetrievalProviderText = '';
     let theoryProfilesState = {
       activeProfile: '',
       profiles: [],
@@ -2609,13 +2617,17 @@
       const rootPath = String(currentWorkspacePath || '').trim();
       const queryText = String(query || '').trim();
       if (!rootPath || !queryText) return [];
+      const budgetCharacters = Math.max(500, Math.min(24000, Number(document.getElementById('retrieval-budget-input')?.value || 6000)));
 
       const cacheExpired = (Date.now() - Number(probeEvidenceCache.loadedAt || 0)) > 60_000;
       if (!forceRefresh
         && probeEvidenceCache.rootPath === rootPath
         && probeEvidenceCache.query === queryText
+        && probeEvidenceCache.budgetCharacters === budgetCharacters
         && !cacheExpired
         && Array.isArray(probeEvidenceCache.evidence)) {
+        latestRetrievalDiagnostics = probeEvidenceCache.diagnostics;
+        latestRetrievalProviderText = probeEvidenceCache.providerText || '';
         return probeEvidenceCache.evidence;
       }
 
@@ -2624,64 +2636,53 @@
         const response = JSON.parse(await invoke('query_retrieval_index', {
           workspacePath: rootPath,
           query: queryText,
-          limit: 8
+          limit: 8,
+          evidenceBudgetCharacters: budgetCharacters
         }));
-        const normalized = [];
-        let remainingCharacters = 6000;
-        for (const [index, row] of (response.results || []).entries()) {
-          if (remainingCharacters <= 0) break;
-          const snippets = [];
-          const content = String(row?.content || '').trim();
-          if (content) {
-            const snippet = `L${row.line_start || '?'}-${row.line_end || '?'}: ${content.slice(0, 700)}`.slice(0, remainingCharacters);
-            snippets.push(snippet);
-            remainingCharacters -= snippet.length;
-          }
-          (row?.neighbors || []).slice(0, 2).forEach((neighbor) => {
-            if (remainingCharacters <= 0) return;
-            const neighborContent = String(neighbor?.content || '').trim();
-            if (neighborContent) {
-              const snippet = `Neighbor L${neighbor.line_start || '?'}-${neighbor.line_end || '?'}: ${neighborContent.slice(0, 450)}`.slice(0, remainingCharacters);
-              snippets.push(snippet);
-              remainingCharacters -= snippet.length;
-            }
-          });
-          (row?.graph_neighbors || []).slice(0, 2).forEach((neighbor) => {
-            if (remainingCharacters <= 0) return;
-            const neighborContent = String(neighbor?.content || '').trim();
-            if (neighborContent) {
-              const relation = `${neighbor.direction || 'related'} ${neighbor.relation_type || 'relation'}`;
-              const snippet = `Graph ${relation} L${neighbor.line_start || '?'}-${neighbor.line_end || '?'}: ${neighborContent.slice(0, 450)}`.slice(0, remainingCharacters);
-              snippets.push(snippet);
-              remainingCharacters -= snippet.length;
-            }
-          });
-          normalized.push({
+        const packet = response.evidence_packet || {};
+        const normalized = (packet.evidence || []).map((row, index) => ({
             relative_path: row.relative_path,
             score: Math.max(1, 100 - index),
-            snippets
-          });
-        }
+            snippets: (row.snippets || []).map((snippet) => `${snippet.label}: ${snippet.content}`)
+          }));
+        latestRetrievalDiagnostics = packet.diagnostics || null;
+        latestRetrievalProviderText = String(packet.provider_text || '');
         probeEvidenceCache.rootPath = rootPath;
         probeEvidenceCache.query = queryText;
         probeEvidenceCache.evidence = normalized;
+        probeEvidenceCache.diagnostics = latestRetrievalDiagnostics;
+        probeEvidenceCache.providerText = latestRetrievalProviderText;
+        probeEvidenceCache.budgetCharacters = budgetCharacters;
         probeEvidenceCache.loadedAt = Date.now();
         return normalized;
       } catch (err) {
-        appendTerminalLog(`Local retrieval warning; using legacy evidence scan: ${err}`);
-        try {
-          return await invoke('collect_probe_evidence', {
-            workspacePath: rootPath,
-            query: queryText,
-          });
-        } catch (fallbackError) {
-          appendTerminalLog(`Probe evidence fallback warning: ${fallbackError}`);
-          return [];
-        }
+        appendTerminalLog(`Local retrieval warning; omitting provider evidence because the budgeted packet failed: ${err}`);
+        latestRetrievalDiagnostics = {
+          budget_characters: budgetCharacters,
+          budget_estimated_tokens: Math.ceil(budgetCharacters / 4),
+          used_characters: 0,
+          used_estimated_tokens: 0,
+          remaining_characters: budgetCharacters,
+          candidate_rows: 0,
+          included_rows: 0,
+          excluded_rows: 0,
+          included_snippets: 0,
+          excluded_snippets: 0,
+          truncated_snippets: 0,
+          included_sources: [],
+          excluded_sources: [],
+          method: 'budgeted_packet_failed_closed',
+          truncation_policy: 'omit_on_packet_failure'
+        };
+        latestRetrievalProviderText = '';
+        return [];
       }
     }
 
     function buildProbeEvidenceBlock(evidenceRows) {
+      if (latestRetrievalProviderText) {
+        return latestRetrievalProviderText.split('\n');
+      }
       if (!Array.isArray(evidenceRows) || evidenceRows.length === 0) {
         return ['No content evidence rows were available from appendix scans.'];
       }
@@ -3236,7 +3237,12 @@
           : structuralPrompt.enabled === true && Boolean(structuralPrompt.content);
       const stableContextBlock = useStructuralCore
         ? ['Structural context core:', structuralPrompt.content]
-        : ['Master axiom excerpt:', axiomExcerpt, 'Project awareness excerpt:', awarenessExcerpt];
+        : contextMode === 'legacy'
+          ? ['Master axiom excerpt:', axiomExcerpt, 'Project awareness excerpt:', awarenessExcerpt]
+          : [
+              'Project corpus transport: omitted from the automatic primer.',
+              'Use bounded local hybrid retrieval for source-grounded theory details; request explicit legacy context only for recovery or comparison.'
+            ];
       const retrievalContract = [
         'Retrieval contract:',
         '1. For file-location questions, return exact relative file path(s) present in project context.',
@@ -3534,8 +3540,20 @@
       messagePayload.context_source = provenance.source || 'current_request';
       messagePayload.context_trigger = provenance.trigger || 'chat_submit';
       messagePayload.context_volatility = 'dynamic';
+      if (Number.isFinite(Number(provenance.retrievalBudgetCharacters))) {
+        messagePayload.retrieval_budget_characters = Math.max(500, Math.min(24000, Number(provenance.retrievalBudgetCharacters)));
+      }
       messagePayload.context_parts = [];
-      if (text) {
+      if (Array.isArray(provenance.contextParts) && provenance.contextParts.length > 0) {
+        provenance.contextParts.forEach((part) => {
+          const content = String(part?.content || '').trim();
+          if (!content) return;
+          messagePayload.context_parts.push({
+            source: String(part?.source || provenance.source || 'current_request'),
+            content
+          });
+        });
+      } else if (text) {
         messagePayload.context_parts.push({
           source: provenance.source || 'current_request',
           content: text
@@ -3898,8 +3916,12 @@
         promptParts.push('Select the best-supported Primary from this list, even if confidence is moderate.');
       }
 
-      promptParts.push(...buildProbeEvidenceBlock(probeEvidence));
-      promptParts.push('Use semantic evidence from snippets (not filename-only matching) to choose Primary and Alternate.');
+      const contextProbeLines = [...promptParts];
+      const retrievalEvidenceLines = buildProbeEvidenceBlock(probeEvidence);
+      promptParts.push(...retrievalEvidenceLines);
+      const retrievalInstruction = 'Use semantic evidence from snippets (not filename-only matching) to choose Primary and Alternate.';
+      promptParts.push(retrievalInstruction);
+      contextProbeLines.push(retrievalInstruction);
 
       const prompt = promptParts.join('\n');
 
@@ -3909,11 +3931,21 @@
       const [leftResult, rightResult] = await Promise.allSettled([
         dispatchPromptToPane('left', prompt, 'Context Probe', [], {
           source: 'context_probe',
-          trigger: 'probe_run'
+          trigger: 'probe_run',
+          retrievalBudgetCharacters: latestRetrievalDiagnostics?.budget_characters || 6000,
+          contextParts: [
+            { source: 'context_probe', content: contextProbeLines.join('\n') },
+            { source: 'retrieval', content: retrievalEvidenceLines.join('\n') }
+          ]
         }),
         dispatchPromptToPane('right', prompt, 'Context Probe', [], {
           source: 'context_probe',
-          trigger: 'probe_run'
+          trigger: 'probe_run',
+          retrievalBudgetCharacters: latestRetrievalDiagnostics?.budget_characters || 6000,
+          contextParts: [
+            { source: 'context_probe', content: contextProbeLines.join('\n') },
+            { source: 'retrieval', content: retrievalEvidenceLines.join('\n') }
+          ]
         }),
       ]);
 
@@ -4615,7 +4647,12 @@
         probeEvidenceCache.rootPath = '';
         probeEvidenceCache.query = '';
         probeEvidenceCache.evidence = [];
+        probeEvidenceCache.diagnostics = null;
+        probeEvidenceCache.providerText = '';
+        probeEvidenceCache.budgetCharacters = 0;
         probeEvidenceCache.loadedAt = 0;
+        latestRetrievalDiagnostics = null;
+        latestRetrievalProviderText = '';
 
         chatHistories.left = [[], [], []];
         chatHistories.right = [[], [], []];
@@ -6384,6 +6421,16 @@ async function restoreVersion() {
               `Cumulative: requests=${reported.request_count} | input=${reported.input_tokens} | cached=${reported.cached_input_report_count > 0 ? reported.cached_input_tokens : 'unavailable'} | cache ratio=${cumulativeCacheRatio} | output=${reported.output_tokens} | reasoning=${reported.reasoning_tokens} | total=${reported.total_tokens}`
             ]
           : ['No provider-reported usage recorded for this thread.'];
+        const retrieval = latestRetrievalDiagnostics;
+        const retrievalLines = retrieval
+          ? [
+              `Budget: ${retrieval.used_characters}/${retrieval.budget_characters} characters | ~${retrieval.used_estimated_tokens}/${retrieval.budget_estimated_tokens} estimated tokens | remaining=${retrieval.remaining_characters}`,
+              `Rows: included=${retrieval.included_rows}/${retrieval.candidate_rows} | excluded=${retrieval.excluded_rows} | snippets included=${retrieval.included_snippets} | excluded=${retrieval.excluded_snippets} | truncated=${retrieval.truncated_snippets} | final text truncated=${retrieval.provider_text_truncated === true ? 'yes' : 'no'}`,
+              `Included sources: ${(retrieval.included_sources || []).join(', ') || 'none'}`,
+              `Excluded sources: ${(retrieval.excluded_sources || []).join(', ') || 'none'}`,
+              `Policy: ${retrieval.truncation_policy || 'unavailable'} | method=${retrieval.method || 'unavailable'}`
+            ]
+          : ['No retrieval packet has been assembled in this session.'];
 
         summary.textContent = `${pane.toUpperCase()} lane | ${provider} / ${model} | ${history.length} message(s)`;
         output.value = [
@@ -6396,6 +6443,9 @@ async function restoreVersion() {
           '',
           'STRUCTURAL CONTEXT',
           ...structuralLines,
+          '',
+          'RETRIEVAL BUDGET',
+          ...retrievalLines,
           '',
           'SOURCE CONTRIBUTIONS',
           ...(sourceLines.length > 0 ? sourceLines : ['- none']),
@@ -6501,14 +6551,21 @@ async function restoreVersion() {
 
       output.value = 'Querying local retrieval index...';
       try {
+        const budgetCharacters = Math.max(500, Math.min(24000, Number(document.getElementById('retrieval-budget-input')?.value || 6000)));
         const result = JSON.parse(await invoke('query_retrieval_index', {
           workspacePath: currentWorkspacePath,
           query,
-          limit: 6
+          limit: 6,
+          evidenceBudgetCharacters: budgetCharacters
         }));
+        const budget = result.evidence_packet?.diagnostics || {};
+        const indexState = result.index || {};
+        latestRetrievalDiagnostics = result.evidence_packet?.diagnostics || null;
         const lines = [
           `Mode: ${result.search_mode || 'unavailable'} | Results: ${(result.results || []).length}`,
-          `Fusion: ${result.fusion || 'unavailable'} | lexical candidates: ${result.lexical_candidates ?? 0} | vector candidates: ${result.vector_candidates ?? 0} | vectors: ${result.vector_status || 'unavailable'}`
+          `Fusion: ${result.fusion || 'unavailable'} | lexical candidates: ${result.lexical_candidates ?? 0} | vector candidates: ${result.vector_candidates ?? 0} | vectors: ${result.vector_status || 'unavailable'}`,
+          `Evidence budget: ${budget.used_characters ?? 0}/${budget.budget_characters ?? budgetCharacters} chars | included rows=${budget.included_rows ?? 0} | excluded=${budget.excluded_rows ?? 0} | truncated snippets=${budget.truncated_snippets ?? 0}`,
+          `Index: ${indexState.freshness_status || 'unavailable'} | files=${indexState.indexed_files ?? 0} | chunks=${indexState.indexed_chunks ?? 0} | vectors=${indexState.indexed_vectors ?? 0} | graph edges=${indexState.graph_edges ?? 0} | stale vectors=${indexState.stale_vectors ?? 0} | model=${indexState.active_model || 'unavailable'}@${indexState.active_model_revision || 'unavailable'}`
         ];
         (result.results || []).forEach((row, index) => {
           lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | score=${Number(row.fusion_score || row.rank || 0).toFixed(6)}`);

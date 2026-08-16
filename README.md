@@ -38,8 +38,9 @@ The project has moved from a simple desktop shell toward a more practical theory
 - added hybrid retrieval using symmetric reciprocal-rank fusion across FTS5 and cosine-vector candidates, cached local inference, rank provenance, and lexical fallback;
 - added deterministic typed graph-neighbor expansion from explicit project-source relation statements, with bounded provider context and inspector provenance;
 - added an eight-case, provider-free four-family retrieval benchmark comparing Recall@3 and MRR@3 with acceptance thresholds, graph coverage, and per-case provenance;
-- limited indexed evidence sent to provider prompts to a global 6,000-character budget;
-- expanded the backend regression suite to 59 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
+- enforced configurable backend retrieval budgets with complete inclusion, exclusion, truncation, freshness, model, and source diagnostics;
+- stopped automatic primer transport of master-axiom/project-awareness corpus excerpts while retaining explicit legacy recovery and comparison modes;
+- expanded the backend regression suite to 62 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
 
 ### Latest progress (2026-08-11)
 

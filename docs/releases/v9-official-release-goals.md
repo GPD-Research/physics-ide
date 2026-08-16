@@ -169,12 +169,12 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 - [x] Add incremental indexing so unchanged chunks retain their vectors and changed or deleted chunks update transactionally.
 - [x] Combine vector similarity with FTS5 or equivalent lexical search so exact mathematical symbols and rare terms are not lost.
 - [x] Add graph-neighborhood expansion for directly related axioms, definitions, equations, experiments, and contradictions.
-- [ ] Enforce configurable retrieval and token budgets before provider dispatch.
-- [ ] Show retrieved sources, relevance scores, index freshness, and embedding model in diagnostics.
+- [x] Enforce configurable retrieval and token budgets before provider dispatch.
+- [x] Show retrieved sources, relevance scores, index freshness, and embedding model in diagnostics.
 - [ ] Provide `Build index`, `Refresh changed`, `Rebuild`, `Inspect`, and `Delete local index` controls.
 - [ ] Keep index files local by default and exclude them from Git, manuscript export, and provider payloads.
-- [ ] Fall back safely to lexical retrieval or a compact core primer when the vector extension/model is unavailable.
-- [ ] Stop sending the full master manuscript or axiom file by default once retrieval quality passes the release benchmark.
+- [x] Fall back safely to lexical retrieval or a compact core primer when the vector extension/model is unavailable.
+- [x] Stop sending the full master manuscript or axiom file by default once retrieval quality passes the release benchmark.
 
 ### Verification
 
@@ -442,9 +442,9 @@ This result rejects full-corpus structural-core activation for the tested BMI ar
 - [ ] Select and package the local embedding model and SQLite vector extension.
 - [ ] Implement incremental structural chunk indexing.
 - [x] Add hybrid vector, lexical, and graph-neighbor retrieval.
-- [ ] Enforce retrieval budgets and expose source diagnostics.
+- [x] Enforce retrieval budgets and expose source diagnostics.
 - [ ] Preserve explanatory neighbor text around retrieved equations and mechanisms; the BMI diagnostic showed that isolated structural records can underperform concise prose context.
-- [ ] Stop transporting full manuscripts after retrieval benchmarks pass.
+- [x] Stop transporting full manuscripts after retrieval benchmarks pass.
 - [ ] Reclassify manual primer controls after automated retrieval benchmarks pass.
 
 #### Local retrieval foundation
@@ -488,6 +488,12 @@ The Request Inspector can run a local, provider-free comparison over a fingerpri
 Acceptance requires hybrid Recall@3 `1.0`, complete graph coverage, no Recall@3 regression against either baseline, and hybrid MRR@3 not below lexical MRR@3. The selected real `all-MiniLM-L6-v2` model passes on fixture fingerprint `b8a41bb4927ee477a051c8d3631cdd1a28adcf7968535fa41c935d7adbea75fd`: lexical Recall/MRR `0.875/0.813`, vector `1.0/0.938`, hybrid `1.0/0.938`, graph `4/4`.
 
 Hybrid remains tied with the saturated vector baseline, so strict superiority remains an explicit open research gate rather than a release acceptance claim. The benchmark improved production retrieval by revealing that hybrid top-k must reserve each modality's strongest candidate and that aliases should be represented as source-grounded typed relations rather than inferred from model priors.
+
+#### Retrieval budget and diagnostics
+
+Provider-eligible retrieval evidence is assembled only by the backend under a configurable `500–24,000` character budget, defaulting to `6,000` characters (approximately `1,500` tokens by the labeled four-characters-per-token estimate). The packet reports included and excluded rows, snippets, sources, truncations, remaining budget, rank provenance, index counts, freshness, active model revision, and stale-vector count. Packet failure omits provider evidence rather than falling back to an unbudgeted recursive scan.
+
+Automatic lane primers no longer transport master-axiom or project-awareness corpus excerpts by default. They retain stable role and retrieval contracts, while explicit legacy mode remains available for recovery and structural A/B comparison. Retrieval evidence is recorded as its own canonical prompt source so the Request Inspector shows its estimated token contribution separately.
 
 Release approval still requires packaged Linux tests and model-license attribution in release artifacts. Strict hybrid superiority remains a separate open research gate because the selected vector baseline is saturated on benchmark v2.
 

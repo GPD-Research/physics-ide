@@ -2936,6 +2936,48 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn retrieval_context_is_reported_as_a_distinct_prompt_source() {
+        let history = vec![serde_json::json!({
+            "role": "user",
+            "content": "Question plus bounded retrieval evidence",
+            "context_source": "context_probe",
+            "context_parts": [
+                {"source": "context_probe", "content": "Question"},
+                {"source": "retrieval", "content": "Source-grounded evidence"}
+            ]
+        })];
+
+        let usage = estimate_prompt_usage_value(&history);
+        assert_eq!(usage["by_source"]["context_probe"]["segments"].as_u64().unwrap(), 1);
+        assert_eq!(usage["by_source"]["retrieval"]["segments"].as_u64().unwrap(), 1);
+        assert!(usage["by_source"]["retrieval"]["estimated_tokens"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn provider_dispatch_rejects_retrieval_context_over_declared_budget() {
+        let bounded = vec![serde_json::json!({
+            "role": "user",
+            "content": "bounded retrieval",
+            "retrieval_budget_characters": 500,
+            "context_parts": [
+                {"source": "retrieval", "content": "e".repeat(500)}
+            ]
+        })];
+        let oversized = vec![serde_json::json!({
+            "role": "user",
+            "content": "oversized retrieval",
+            "retrieval_budget_characters": 500,
+            "context_parts": [
+                {"source": "retrieval", "content": "e".repeat(501)}
+            ]
+        })];
+
+        validate_retrieval_context_budgets(&bounded).unwrap();
+        let error = validate_retrieval_context_budgets(&oversized).unwrap_err();
+        assert!(error.contains("501/500"));
+    }
+
+    #[test]
     fn canonical_assembler_orders_volatility_and_preserves_roles() {
         let history = vec![
             serde_json::json!({
@@ -3297,6 +3339,7 @@ async fn send_llm_prompt(
     thread_id: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    validate_retrieval_context_budgets(&history)?;
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
     let canonical_messages = assemble_canonical_messages(&history).messages;
@@ -3318,6 +3361,43 @@ async fn send_llm_prompt(
     let usage_key = format!("{}:{}", pane.to_ascii_lowercase(), thread_id.unwrap_or_else(|| "default".to_string()));
     record_thread_usage(&app.state::<AppState>(), &usage_key, &reply.usage)?;
     Ok(reply.content)
+}
+
+fn validate_retrieval_context_budgets(history: &[serde_json::Value]) -> Result<(), String> {
+    for entry in history {
+        let retrieval_characters = entry
+            .get("context_parts")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter(|part| part.get("source").and_then(|value| value.as_str()) == Some("retrieval"))
+            .map(|part| {
+                part.get("content")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .chars()
+                    .count()
+            })
+            .sum::<usize>();
+        if retrieval_characters == 0 {
+            continue;
+        }
+        let budget = entry
+            .get("retrieval_budget_characters")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as usize)
+            .unwrap_or(DEFAULT_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS)
+            .clamp(
+                MIN_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS,
+                MAX_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS,
+            );
+        if retrieval_characters > budget {
+            return Err(format!(
+                "Retrieval context exceeds its provider-dispatch budget: {retrieval_characters}/{budget} characters. Re-run retrieval with a bounded evidence packet."
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn record_thread_usage(state: &tauri::State<AppState>, key: &str, usage: &ProviderUsage) -> Result<(), String> {
@@ -5397,6 +5477,45 @@ fn load_retrieval_graph_neighbors(
     Ok(rows.filter_map(Result::ok).collect())
 }
 
+fn retrieval_index_diagnostics(connection: &rusqlite::Connection) -> Result<serde_json::Value, String> {
+    let file_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM retrieval_files", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to count indexed files: {e}"))?;
+    let chunk_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM retrieval_chunks", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to count indexed chunks: {e}"))?;
+    let vector_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM retrieval_vector_records", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to count indexed vectors: {e}"))?;
+    let graph_edge_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM retrieval_graph_edges", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to count retrieval graph edges: {e}"))?;
+    let latest_source_modified_ns: i64 = connection
+        .query_row("SELECT COALESCE(MAX(modified_ns), 0) FROM retrieval_files", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to inspect retrieval index freshness: {e}"))?;
+    let active_model_fingerprint = format!("{}@{}", RETRIEVAL_EMBEDDING_MODEL_ID, RETRIEVAL_EMBEDDING_MODEL_REVISION);
+    let stale_vector_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM retrieval_vector_records
+             WHERE model_id != ?1 OR dimensions != ?2",
+            rusqlite::params![active_model_fingerprint, RETRIEVAL_EMBEDDING_DIMENSIONS as i64],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to inspect vector freshness: {e}"))?;
+    Ok(serde_json::json!({
+        "indexed_files": file_count,
+        "indexed_chunks": chunk_count,
+        "indexed_vectors": vector_count,
+        "graph_edges": graph_edge_count,
+        "latest_source_modified_ns": latest_source_modified_ns,
+        "active_model": RETRIEVAL_EMBEDDING_MODEL_ID,
+        "active_model_revision": RETRIEVAL_EMBEDDING_MODEL_REVISION,
+        "embedding_dimensions": RETRIEVAL_EMBEDDING_DIMENSIONS,
+        "stale_vectors": stale_vector_count,
+        "freshness_status": if stale_vector_count == 0 { "current" } else { "stale_vectors" }
+    }))
+}
+
 fn encode_embedding(values: &[f32]) -> Vec<u8> {
     values
         .iter()
@@ -5978,6 +6097,7 @@ fn query_retrieval_index_hybrid_value(
     }
 
     let vector_used = query_embedding.is_some() && vector_candidate_count > 0;
+    let index_diagnostics = retrieval_index_diagnostics(&connection)?;
     Ok(serde_json::json!({
         "status": "ok",
         "search_mode": match mode {
@@ -5991,6 +6111,7 @@ fn query_retrieval_index_hybrid_value(
         "vector_candidates": vector_candidate_count,
         "modality_coverage_reserved": mode == RetrievalQueryMode::Hybrid && result_limit >= 2 && lexical_candidate_count > 0 && vector_candidate_count > 0,
         "vector_status": if vector_used { "used" } else if query_embedding.is_some() { "index_empty" } else { "unavailable" },
+        "index": index_diagnostics,
         "query": query,
         "results": results
     }))
@@ -5998,6 +6119,175 @@ fn query_retrieval_index_hybrid_value(
 
 fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> Result<serde_json::Value, String> {
     query_retrieval_index_hybrid_value(index_path, query, limit, None, RetrievalQueryMode::Lexical)
+}
+
+const DEFAULT_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS: usize = 6_000;
+const MIN_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS: usize = 500;
+const MAX_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS: usize = 24_000;
+
+fn take_budgeted_text(value: &str, maximum: usize) -> (String, bool) {
+    let character_count = value.chars().count();
+    if character_count <= maximum {
+        return (value.to_string(), false);
+    }
+    (value.chars().take(maximum).collect(), true)
+}
+
+fn build_retrieval_evidence_packet(
+    retrieval: &serde_json::Value,
+    requested_budget: Option<usize>,
+) -> serde_json::Value {
+    let budget = requested_budget
+        .unwrap_or(DEFAULT_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS)
+        .clamp(
+            MIN_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS,
+            MAX_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS,
+        );
+    let rows = retrieval["results"].as_array().cloned().unwrap_or_default();
+    let mut remaining = budget;
+    let mut included = Vec::new();
+    let mut included_sources = std::collections::BTreeSet::new();
+    let mut excluded_sources = std::collections::BTreeSet::new();
+    let mut included_snippets = 0usize;
+    let mut excluded_snippets = 0usize;
+    let mut truncated_snippets = 0usize;
+
+    for row in &rows {
+        let relative_path = row["relative_path"].as_str().unwrap_or_default();
+        if remaining == 0 {
+            if !relative_path.is_empty() {
+                excluded_sources.insert(relative_path.to_string());
+            }
+            excluded_snippets += 1
+                + row["neighbors"].as_array().map(|items| items.len().min(2)).unwrap_or(0)
+                + row["graph_neighbors"].as_array().map(|items| items.len().min(2)).unwrap_or(0);
+            continue;
+        }
+
+        let mut snippets = Vec::new();
+        let mut append_snippet = |kind: &str, label: String, content: &str, source_path: &str, maximum: usize| {
+            if content.trim().is_empty() || remaining == 0 {
+                excluded_snippets += usize::from(!content.trim().is_empty());
+                return;
+            }
+            let allowance = remaining.min(maximum);
+            let (selected, truncated) = take_budgeted_text(content.trim(), allowance);
+            if selected.is_empty() {
+                excluded_snippets += 1;
+                return;
+            }
+            remaining = remaining.saturating_sub(selected.chars().count());
+            included_snippets += 1;
+            truncated_snippets += usize::from(truncated);
+            if !source_path.is_empty() {
+                included_sources.insert(source_path.to_string());
+            }
+            snippets.push(serde_json::json!({
+                "kind": kind,
+                "label": label,
+                "content": selected,
+                "source_path": source_path,
+                "truncated": truncated
+            }));
+        };
+
+        append_snippet(
+            "primary",
+            format!("L{}-{}", row["line_start"], row["line_end"]),
+            row["content"].as_str().unwrap_or_default(),
+            relative_path,
+            700,
+        );
+        for neighbor in row["neighbors"].as_array().into_iter().flatten().take(2) {
+            append_snippet(
+                "adjacent",
+                format!("L{}-{}", neighbor["line_start"], neighbor["line_end"]),
+                neighbor["content"].as_str().unwrap_or_default(),
+                relative_path,
+                450,
+            );
+        }
+        for neighbor in row["graph_neighbors"].as_array().into_iter().flatten().take(2) {
+            let graph_path = neighbor["relative_path"].as_str().unwrap_or(relative_path);
+            append_snippet(
+                "graph",
+                format!(
+                    "{} {} L{}-{}",
+                    neighbor["direction"].as_str().unwrap_or("related"),
+                    neighbor["relation_type"].as_str().unwrap_or("relation"),
+                    neighbor["line_start"],
+                    neighbor["line_end"]
+                ),
+                neighbor["content"].as_str().unwrap_or_default(),
+                graph_path,
+                450,
+            );
+        }
+        if snippets.is_empty() {
+            if !relative_path.is_empty() {
+                excluded_sources.insert(relative_path.to_string());
+            }
+            continue;
+        }
+        included.push(serde_json::json!({
+            "relative_path": relative_path,
+            "chunk_id": row["chunk_id"],
+            "fusion_score": row["fusion_score"],
+            "lexical_rank": row["lexical_rank"],
+            "vector_rank": row["vector_rank"],
+            "snippets": snippets
+        }));
+    }
+    for row in &rows {
+        if let Some(path) = row["relative_path"].as_str() {
+            if !included_sources.contains(path) {
+                excluded_sources.insert(path.to_string());
+            }
+        }
+    }
+    let mut provider_lines = vec!["@retrieval-evidence-v1".to_string()];
+    for row in &included {
+        provider_lines.push(format!(
+            "S|{}|{}|score={}",
+            row["relative_path"].as_str().unwrap_or_default(),
+            row["chunk_id"].as_str().unwrap_or_default(),
+            row["fusion_score"]
+        ));
+        for snippet in row["snippets"].as_array().into_iter().flatten() {
+            provider_lines.push(format!(
+                "{}|{}|{}",
+                snippet["kind"].as_str().unwrap_or("evidence"),
+                snippet["label"].as_str().unwrap_or_default(),
+                snippet["content"].as_str().unwrap_or_default()
+            ));
+        }
+    }
+    let provider_text_full = provider_lines.join("\n");
+    let (provider_text, provider_text_truncated) = take_budgeted_text(&provider_text_full, budget);
+    let used = provider_text.chars().count();
+    remaining = budget.saturating_sub(used);
+    serde_json::json!({
+        "evidence": included,
+        "provider_text": provider_text,
+        "diagnostics": {
+            "budget_characters": budget,
+            "budget_estimated_tokens": estimate_token_count(budget),
+            "used_characters": used,
+            "used_estimated_tokens": estimate_token_count(used),
+            "remaining_characters": remaining,
+            "candidate_rows": rows.len(),
+            "included_rows": included.len(),
+            "excluded_rows": rows.len().saturating_sub(included.len()),
+            "included_snippets": included_snippets,
+            "excluded_snippets": excluded_snippets,
+            "truncated_snippets": truncated_snippets,
+            "provider_text_truncated": provider_text_truncated,
+            "included_sources": included_sources,
+            "excluded_sources": excluded_sources,
+            "method": "character_budget_4_chars_per_estimated_token",
+            "truncation_policy": "rank_order_primary_then_adjacent_then_graph"
+        }
+    })
 }
 
 struct RetrievalBenchmarkCase {
@@ -6328,6 +6618,7 @@ fn query_retrieval_index(
     workspace_path: String,
     query: String,
     limit: Option<usize>,
+    evidence_budget_characters: Option<usize>,
     state: tauri::State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -6355,6 +6646,8 @@ fn query_retrieval_index(
     } else {
         query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?
     };
+    let mut result = result;
+    result["evidence_packet"] = build_retrieval_evidence_packet(&result, evidence_budget_characters);
     Ok(result.to_string())
 }
 
@@ -8872,6 +9165,58 @@ mod tests {
         assert!(chunks.len() >= 4);
         assert!(chunks.iter().all(|chunk| chunk.content.chars().count() <= 4_000));
         assert!(chunks.iter().all(|chunk| chunk.line_start >= 1 && chunk.line_end >= chunk.line_start));
+    }
+
+    #[test]
+    fn retrieval_evidence_packet_enforces_budget_and_reports_exclusions() {
+        let retrieval = serde_json::json!({
+            "results": [
+                {
+                    "relative_path": "theory/primary.md",
+                    "chunk_id": "chunk-primary",
+                    "fusion_score": 0.03,
+                    "lexical_rank": 1,
+                    "vector_rank": 2,
+                    "line_start": 1,
+                    "line_end": 3,
+                    "content": "λ".repeat(700),
+                    "neighbors": [],
+                    "graph_neighbors": []
+                },
+                {
+                    "relative_path": "theory/excluded.md",
+                    "chunk_id": "chunk-excluded",
+                    "fusion_score": 0.02,
+                    "lexical_rank": 2,
+                    "vector_rank": 1,
+                    "line_start": 4,
+                    "line_end": 6,
+                    "content": "excluded evidence",
+                    "neighbors": [],
+                    "graph_neighbors": []
+                }
+            ]
+        });
+
+        let packet = build_retrieval_evidence_packet(&retrieval, Some(100));
+        let diagnostics = &packet["diagnostics"];
+        assert_eq!(diagnostics["budget_characters"].as_u64().unwrap(), 500);
+        assert_eq!(diagnostics["used_characters"].as_u64().unwrap(), 500);
+        assert_eq!(diagnostics["used_estimated_tokens"].as_u64().unwrap(), 125);
+        assert_eq!(diagnostics["included_rows"].as_u64().unwrap(), 1);
+        assert_eq!(diagnostics["excluded_rows"].as_u64().unwrap(), 1);
+        assert_eq!(diagnostics["truncated_snippets"].as_u64().unwrap(), 1);
+        assert_eq!(diagnostics["provider_text_truncated"], true);
+        assert_eq!(diagnostics["excluded_sources"][0], "theory/excluded.md");
+        assert_eq!(packet["provider_text"].as_str().unwrap().chars().count(), 500);
+        assert_eq!(
+            packet["evidence"][0]["snippets"][0]["content"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count(),
+            500
+        );
     }
 
     #[test]
