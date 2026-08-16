@@ -2063,6 +2063,7 @@
         </select>
         <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
         <button id="retrieval-index-refresh" onclick="refreshLocalRetrievalIndex()" title="Incrementally index changed Markdown files for local retrieval">Refresh Local Index</button>
+        <button id="embedding-model-install" onclick="installLocalEmbeddingModel()" title="Download and verify the local embedding model for offline vector indexing">Install Vector Model</button>
         <button id="retrieval-index-delete" onclick="deleteLocalRetrievalIndex()" title="Delete the project-scoped local retrieval index">Delete Local Index</button>
         <button id="request-inspector-cache-probe" onclick="runOpenAiCacheProbe()" title="Run up to two small OpenAI requests to test native prompt caching">Run Cache Probe</button>
       </div>
@@ -6501,6 +6502,30 @@ async function restoreVersion() {
         output.value = lines.join('\n');
       } catch (err) {
         output.value = `Local retrieval query failed: ${err}. Refresh the index first.`;
+      }
+    }
+
+    async function installLocalEmbeddingModel() {
+      const output = document.getElementById('retrieval-query-output');
+      const button = document.getElementById('embedding-model-install');
+      if (!output || !button) return;
+      if (!confirm('Download and verify the 91 MB Apache-2.0 local vector model? It will be stored in application data and used offline after installation.')) return;
+
+      button.disabled = true;
+      output.value = 'Installing and verifying local vector model...';
+      try {
+        const result = JSON.parse(await invoke('install_embedding_model'));
+        output.value = [
+          `Embedding model: ${String(result.status || 'unknown').toUpperCase()}`,
+          `Model: ${result.model || 'unavailable'} | dimensions: ${result.dimensions ?? 'unavailable'}`,
+          `Offline inference: ${result.inference_status || 'unavailable'}`,
+          `Assets: ${result.asset_count ?? 0} | bytes: ${result.total_bytes ?? 'unavailable'}`,
+          `Local directory: ${result.directory || 'unavailable'}`
+        ].join('\n');
+      } catch (err) {
+        output.value = `Embedding model installation failed: ${err}`;
+      } finally {
+        button.disabled = false;
       }
     }
 

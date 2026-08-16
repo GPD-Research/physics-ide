@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 use tauri::{AppHandle, Manager};
@@ -4974,8 +4975,189 @@ fn retrieval_index_path(app: &AppHandle, root: &Path) -> Result<PathBuf, String>
 }
 
 const RETRIEVAL_EMBEDDING_MODEL_ID: &str = "Qdrant/all-MiniLM-L6-v2-onnx";
+const RETRIEVAL_EMBEDDING_MODEL_REVISION: &str = "5f1b8cd78bc4fb444dd171e59b18f3a3af89a079";
 const RETRIEVAL_EMBEDDING_DIMENSIONS: usize = 384;
 static REGISTER_SQLITE_VEC: Once = Once::new();
+
+struct EmbeddingAsset {
+    name: &'static str,
+    size: u64,
+    sha256: &'static str,
+}
+
+const RETRIEVAL_EMBEDDING_ASSETS: &[EmbeddingAsset] = &[
+    EmbeddingAsset {
+        name: "model.onnx",
+        size: 90_387_630,
+        sha256: "bbd7b466f6d58e646fdc2bd5fd67b2f5e93c0b687011bd4548c420f7bd46f0c5",
+    },
+    EmbeddingAsset {
+        name: "tokenizer.json",
+        size: 711_661,
+        sha256: "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0",
+    },
+    EmbeddingAsset {
+        name: "config.json",
+        size: 650,
+        sha256: "1b4d8e2a3988377ed8b519a31d8d31025a25f1c5f8606998e8014111438efcd7",
+    },
+    EmbeddingAsset {
+        name: "special_tokens_map.json",
+        size: 695,
+        sha256: "5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a",
+    },
+    EmbeddingAsset {
+        name: "tokenizer_config.json",
+        size: 1_433,
+        sha256: "bd2e06a5b20fd1b13ca988bedc8763d332d242381b4fbc98f8fead4524158f79",
+    },
+];
+
+fn embedding_model_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    path.push("embedding-models");
+    path.push("all-MiniLM-L6-v2-onnx");
+    Ok(path)
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn validate_embedding_asset_path(path: &Path, asset: &EmbeddingAsset) -> Result<(), String> {
+    let metadata =
+        fs::metadata(&path).map_err(|_| format!("Missing embedding asset: {}", asset.name))?;
+    if metadata.len() != asset.size {
+        return Err(format!(
+            "Embedding asset has the wrong size: {}",
+            asset.name
+        ));
+    }
+    if sha256_file(&path)? != asset.sha256 {
+        return Err(format!(
+            "Embedding asset failed SHA-256 verification: {}",
+            asset.name
+        ));
+    }
+    Ok(())
+}
+
+fn validate_embedding_asset(directory: &Path, asset: &EmbeddingAsset) -> Result<(), String> {
+    validate_embedding_asset_path(&directory.join(asset.name), asset)
+}
+
+fn embedding_model_status_value(directory: &Path) -> serde_json::Value {
+    let errors = RETRIEVAL_EMBEDDING_ASSETS
+        .iter()
+        .filter_map(|asset| validate_embedding_asset(directory, asset).err())
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": if errors.is_empty() { "ready" } else { "model_assets_required" },
+        "model": RETRIEVAL_EMBEDDING_MODEL_ID,
+        "dimensions": RETRIEVAL_EMBEDDING_DIMENSIONS,
+        "directory": directory.to_string_lossy().to_string(),
+        "asset_count": RETRIEVAL_EMBEDDING_ASSETS.len(),
+        "total_bytes": RETRIEVAL_EMBEDDING_ASSETS.iter().map(|asset| asset.size).sum::<u64>(),
+        "errors": errors
+    })
+}
+
+fn install_embedding_model_value(directory: &Path) -> Result<serde_json::Value, String> {
+    fs::create_dir_all(directory)
+        .map_err(|e| format!("Failed to create embedding model directory: {e}"))?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(900))
+        .user_agent("physics-ide/9 local-embedding-installer")
+        .build()
+        .map_err(|e| format!("Failed to initialize embedding model installer: {e}"))?;
+
+    for asset in RETRIEVAL_EMBEDDING_ASSETS {
+        if validate_embedding_asset(directory, asset).is_ok() {
+            continue;
+        }
+        let url = format!(
+            "https://huggingface.co/{}/resolve/{}/{}",
+            RETRIEVAL_EMBEDDING_MODEL_ID, RETRIEVAL_EMBEDDING_MODEL_REVISION, asset.name
+        );
+        let mut response = client
+            .get(&url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .map_err(|e| format!("Failed to download {}: {e}", asset.name))?;
+        let partial_path = directory.join(format!("{}.part", asset.name));
+        let mut output = fs::File::create(&partial_path)
+            .map_err(|e| format!("Failed to create temporary model asset {}: {e}", asset.name))?;
+        std::io::copy(&mut response, &mut output)
+            .map_err(|e| format!("Failed to write model asset {}: {e}", asset.name))?;
+        output
+            .flush()
+            .map_err(|e| format!("Failed to flush model asset {}: {e}", asset.name))?;
+        validate_embedding_asset_path(&partial_path, asset)?;
+        let final_path = directory.join(asset.name);
+        if final_path.exists() {
+            fs::remove_file(&final_path)
+                .map_err(|e| format!("Failed to replace model asset {}: {e}", asset.name))?;
+        }
+        fs::rename(&partial_path, &final_path)
+            .map_err(|e| format!("Failed to activate model asset {}: {e}", asset.name))?;
+    }
+
+    let status = embedding_model_status_value(directory);
+    if status["status"] != "ready" {
+        return Err(
+            "Embedding model installation did not pass integrity verification.".to_string(),
+        );
+    }
+    let mut model = load_local_embedding_model(directory)?;
+    let embeddings = model
+        .embed(
+            vec!["physics-ide local vector model activation probe"],
+            Some(1),
+        )
+        .map_err(|e| format!("Local embedding model activation probe failed: {e}"))?;
+    if embeddings.len() != 1 || embeddings[0].len() != RETRIEVAL_EMBEDDING_DIMENSIONS {
+        return Err("Local embedding model returned an unexpected vector shape.".to_string());
+    }
+    let mut verified_status = status;
+    verified_status["inference_status"] = serde_json::Value::String("ready".to_string());
+    Ok(verified_status)
+}
+
+fn load_local_embedding_model(directory: &Path) -> Result<fastembed::TextEmbedding, String> {
+    for asset in RETRIEVAL_EMBEDDING_ASSETS {
+        validate_embedding_asset(directory, asset)?;
+    }
+    let read = |name: &str| {
+        fs::read(directory.join(name))
+            .map_err(|e| format!("Failed to load local embedding asset {name}: {e}"))
+    };
+    let tokenizer_files = fastembed::TokenizerFiles {
+        tokenizer_file: read("tokenizer.json")?,
+        config_file: read("config.json")?,
+        special_tokens_map_file: read("special_tokens_map.json")?,
+        tokenizer_config_file: read("tokenizer_config.json")?,
+    };
+    let model = fastembed::UserDefinedEmbeddingModel::new(read("model.onnx")?, tokenizer_files)
+        .with_pooling(fastembed::Pooling::Mean);
+    fastembed::TextEmbedding::try_new_from_user_defined(
+        model,
+        fastembed::InitOptionsUserDefined::new().with_intra_threads(2),
+    )
+    .map_err(|e| format!("Failed to initialize local embedding model: {e}"))
+}
 
 fn register_sqlite_vec() {
     REGISTER_SQLITE_VEC.call_once(|| unsafe {
@@ -5389,7 +5571,10 @@ fn refresh_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Res
         return Err("Workspace path is missing or invalid for retrieval indexing.".to_string());
     }
     let index_path = retrieval_index_path(&app, &root)?;
-    Ok(refresh_retrieval_index_value(&root, &index_path)?.to_string())
+    let mut result = refresh_retrieval_index_value(&root, &index_path)?;
+    let model_status = embedding_model_status_value(&embedding_model_dir(&app)?);
+    result["embedding_status"] = model_status["status"].clone();
+    Ok(result.to_string())
 }
 
 #[tauri::command]
@@ -5415,6 +5600,16 @@ fn delete_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Resu
     }
     let index_path = retrieval_index_path(&app, &root)?;
     Ok(delete_retrieval_index_value(&index_path)?.to_string())
+}
+
+#[tauri::command]
+fn get_embedding_model_status(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(embedding_model_status_value(&embedding_model_dir(&app)?).to_string())
+}
+
+#[tauri::command]
+fn install_embedding_model(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(install_embedding_model_value(&embedding_model_dir(&app)?)?.to_string())
 }
 
 fn render_manuscript_content(
@@ -7929,6 +8124,32 @@ mod tests {
     }
 
     #[test]
+    fn reports_missing_local_embedding_assets_without_network_access() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_missing_model_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let status = embedding_model_status_value(&temp_dir);
+        assert_eq!(status["status"], "model_assets_required");
+        assert_eq!(status["asset_count"].as_u64().unwrap(), 5);
+        assert_eq!(status["errors"].as_array().unwrap().len(), 5);
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires PHYSICS_IDE_EMBEDDING_MODEL_DIR with the pinned local model assets"]
+    fn embeds_with_verified_local_model_assets() {
+        let directory = std::env::var("PHYSICS_IDE_EMBEDDING_MODEL_DIR").unwrap();
+        let status = install_embedding_model_value(Path::new(&directory)).unwrap();
+        assert_eq!(status["status"], "ready");
+        assert_eq!(status["inference_status"], "ready");
+    }
+
+    #[test]
     fn deletes_local_retrieval_index_and_sqlite_sidecars() {
         let temp_dir = std::env::temp_dir().join(format!("physics_ide_retrieval_delete_test_{}", std::process::id()));
         let index_path = temp_dir.join("retrieval.sqlite3");
@@ -8394,6 +8615,8 @@ pub fn run() {
             refresh_retrieval_index,
             query_retrieval_index,
             delete_retrieval_index,
+            get_embedding_model_status,
+            install_embedding_model,
             render_manuscript,
             launch_file_editor,
             detach_terminal_shell,

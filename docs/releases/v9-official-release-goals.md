@@ -163,7 +163,7 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 ### Implementation deliverables
 
 - [ ] Select and document the SQLite vector extension, Rust integration, license, supported Linux targets, and packaging strategy.
-- [ ] Select a local embedding model with documented dimensions, model version, license, hardware requirements, and offline behavior.
+- [x] Select a local embedding model with documented dimensions, model version, license, hardware requirements, and offline behavior.
 - [ ] Derive indexed vocabulary and structural relations from project files without injecting theory-family labels or consensus-ranking priors.
 - [ ] Store source path, stable section ID, heading ancestry, content hash, embedding model/version, vector dimensions, and modification time with every record.
 - [ ] Add incremental indexing so unchanged chunks retain their vectors and changed or deleted chunks update transactionally.
@@ -469,11 +469,13 @@ The first vector compatibility gate is validated on x86_64 Ubuntu with bundled S
 
 - `sqlite-vec 0.1.9` is statically registered in each retrieval connection; the crate and extension are dual MIT/Apache-2.0 licensed;
 - `fastembed 6.0.0` supplies local ONNX inference under Apache-2.0, with image support and automatic Hugging Face model fetching disabled;
-- `Qdrant/all-MiniLM-L6-v2-onnx` is the selected general-purpose 384-dimensional baseline, corresponding to the Apache-2.0 `sentence-transformers/all-MiniLM-L6-v2` model;
+- `Qdrant/all-MiniLM-L6-v2-onnx` at immutable revision `5f1b8cd78bc4fb444dd171e59b18f3a3af89a079` is the selected general-purpose 384-dimensional baseline, corresponding to the Apache-2.0 `sentence-transformers/all-MiniLM-L6-v2` model;
 - the local index now provisions a cosine `vec0` store and stable chunk-to-vector metadata table alongside FTS5;
 - a no-network test verifies model metadata, extension loading, vector encoding, and nearest-neighbor ordering.
 
-Model artifacts are not bundled yet. Diagnostics report `model_assets_required`, and normal indexing remains lexical-only until the ONNX and tokenizer files are packaged as Tauri resources and loaded through FastEmbed's user-defined in-memory API. Release approval still requires packaged Linux tests, model-license attribution, incremental vector invalidation, and hybrid benchmark evidence across materially different theory families.
+Model artifacts are installed explicitly rather than committed to Git or embedded in the application package. The Request Inspector offers an `Install Vector Model` action that downloads 91.1 MB into Tauri application-local data from the immutable revision above, verifies the pinned size and SHA-256 of all five files, and requires a successful 384-dimensional local inference probe before reporting `ready`. FastEmbed then loads only verified local bytes through its user-defined in-memory API; no model-fetching feature is compiled into the runtime, so subsequent indexing and queries can operate offline. CPU inference is capped at two intra-operation threads for laptop use and does not require a GPU.
+
+Normal indexing remains lexical-only until incremental embedding generation is connected to refresh. Release approval still requires packaged Linux tests, model-license attribution in release artifacts, incremental vector invalidation, and hybrid benchmark evidence across materially different theory families.
 
 ### Sprint 6: Add directory cost guidance
 
