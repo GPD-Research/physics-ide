@@ -417,12 +417,24 @@ Judgments are stored locally as metadata only: artifact fingerprint, model, outc
 
 Coverage-complete cores that are larger than the truncated legacy excerpt may run as `diagnostic-only` comparisons after an explicit cost warning. Their judgments are recorded for compiler analysis but do not count toward compact-mode approval. Cores with incomplete semantic coverage remain blocked with zero network requests. This distinction is expected for large projects until Sprint 5 retrieval selects a bounded structural subset instead of transporting the full compiled corpus.
 
+#### BMI diagnostic result
+
+The first BMI diagnostic comparison asked how neutrino mass is determined in BMI theory. The human evaluator judged both responses adequate but preferred the legacy response:
+
+- outcome: `structural_worse`;
+- variant A: structural;
+- variant B: legacy;
+- structural core: larger than the truncated legacy excerpt.
+
+This result rejects full-corpus structural-core activation for the tested BMI artifact. Stable IDs and typed records remain useful as a local index format, but the complete core should not replace the primer. Sprint 5 must retrieve a bounded, query-relevant structural subset and preserve enough nearby explanatory text to answer theory-specific mechanism questions before another approval-eligible A/B suite is attempted.
+
 ### Sprint 5: Add local retrieval
 
 - [ ] Select and package the local embedding model and SQLite vector extension.
 - [ ] Implement incremental structural chunk indexing.
 - [ ] Add hybrid vector, lexical, and graph-neighbor retrieval.
 - [ ] Enforce retrieval budgets and expose source diagnostics.
+- [ ] Preserve explanatory neighbor text around retrieved equations and mechanisms; the BMI diagnostic showed that isolated structural records can underperform concise prose context.
 - [ ] Stop transporting full manuscripts after retrieval benchmarks pass.
 - [ ] Reclassify manual primer controls after automated retrieval benchmarks pass.
 
