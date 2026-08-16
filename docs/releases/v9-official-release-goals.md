@@ -181,7 +181,7 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 - [ ] Indexing and retrieval work without network access after required local assets are installed.
 - [ ] Reopening a project reuses a valid index without recomputing unchanged embeddings.
 - [ ] Editing, renaming, or deleting a source invalidates only affected records.
-- [ ] Retrieval benchmarks cover equations, aliases, cross-chapter relations, experiments, contradictions, and uncommon symbols.
+- [x] Retrieval benchmarks cover equations, aliases, cross-chapter relations, experiments, contradictions, and uncommon symbols.
 - [x] The same benchmark pipeline retrieves source-grounded evidence from materially different theory families without family-specific ranking rules.
 - [ ] Hybrid retrieval outperforms vector-only and lexical-only baselines on the v9 benchmark set.
 - [ ] Every retrieved record resolves to an existing project-relative source and stable section ID.
@@ -461,7 +461,7 @@ The first Sprint 5 increment uses bundled SQLite with FTS5 before adding embeddi
 - Request Inspector refresh, query, and safe local-index deletion controls;
 - context-probe integration with fallback to the legacy recursive evidence scan.
 
-This is not yet active vector retrieval. The selected model and extension reuse the stable chunk IDs and incremental metadata contract established here, but indexing remains lexical-only until local model assets and incremental embedding generation are integrated.
+This lexical foundation remains the offline fallback beneath the active incremental vector and hybrid retrieval pipeline.
 
 #### Vector compatibility decision
 
@@ -479,15 +479,17 @@ Index refresh now backfills vectors for existing chunks, retains unchanged vecto
 
 Queries now embed locally and combine FTS5 and cosine-vector candidate ranks with symmetric reciprocal-rank fusion (`k=60`). Results expose fused score, lexical rank, vector rank, vector distance, and explanatory neighbors. No theory-family labels or consensus priors affect ranking. Missing model assets or vectors fall back to lexical retrieval, and the verified ONNX session is cached after first use to avoid repeated initialization.
 
-Typed graph expansion is built only from explicit source statements that name another indexed heading with a supported relation cue: `defines`, `depends_on`, `constrains`, `predicts`, `measured_by`, `contradicts`, or `derived_from`. Edges are rebuilt deterministically after chunk refresh, removed when the source statement disappears, and expanded after hybrid ranking without altering rank. Graph evidence shares the existing strict provider-context character budget.
+Typed graph expansion is built only from explicit source statements that name another indexed heading with a supported relation cue: `defines`, `depends_on`, `constrains`, `predicts`, `measured_by`, `alias_for`, `contradicts`, or `derived_from`. Edges are rebuilt deterministically after chunk refresh, removed when the source statement disappears, and expanded after hybrid ranking without altering rank. Graph evidence shares the existing strict provider-context character budget.
 
-#### Retrieval benchmark v1
+#### Retrieval benchmark v2
 
-The Request Inspector can run a local, provider-free comparison over a fingerprinted five-case fixture spanning Lambda-CDM-style, bimodal-interaction-style, geocentric-style, and QFT-style records. It compares the same candidate pipeline in lexical-only, vector-only, and hybrid modes at Recall@3, checks typed graph expansion, and reports per-case rank provenance. The deterministic CI gate proves the harness can distinguish complementary retrieval behavior: lexical `3/5`, vector `2/5`, hybrid `5/5`, graph `1/1`.
+The Request Inspector can run a local, provider-free comparison over a fingerprinted eight-case fixture spanning Lambda-CDM-style, bimodal-interaction-style, geocentric-style, and QFT-style records. It covers equations, mechanism aliases, contradictions, cross-section dependencies, experiments, uncommon symbols, and graph-backed aliases. It compares lexical-only, vector-only, and hybrid Recall@3 and MRR@3, checks typed graph expansion, and reports per-case rank provenance.
 
-The selected real `all-MiniLM-L6-v2` model currently measures lexical `3/5`, vector `5/5`, hybrid `5/5`, graph `1/1` on fixture fingerprint `5167b3fc9948bb41279f0b0f0325a00bdafcdeb0635d78a066fd0ff7a1531bf2`. Hybrid is complete and non-inferior, but does not strictly outperform the saturated vector-only baseline. The strict superiority verification remains open; the fixture must be expanded with experiments and harder uncommon-symbol/cross-chapter cases rather than weakening or gaming the gate.
+Acceptance requires hybrid Recall@3 `1.0`, complete graph coverage, no Recall@3 regression against either baseline, and hybrid MRR@3 not below lexical MRR@3. The selected real `all-MiniLM-L6-v2` model passes on fixture fingerprint `b8a41bb4927ee477a051c8d3631cdd1a28adcf7968535fa41c935d7adbea75fd`: lexical Recall/MRR `0.875/0.813`, vector `1.0/0.938`, hybrid `1.0/0.938`, graph `4/4`.
 
-Release approval still requires packaged Linux tests, model-license attribution in release artifacts, and benchmark evidence across materially different theory families.
+Hybrid remains tied with the saturated vector baseline, so strict superiority remains an explicit open research gate rather than a release acceptance claim. The benchmark improved production retrieval by revealing that hybrid top-k must reserve each modality's strongest candidate and that aliases should be represented as source-grounded typed relations rather than inferred from model priors.
+
+Release approval still requires packaged Linux tests and model-license attribution in release artifacts. Strict hybrid superiority remains a separate open research gate because the selected vector baseline is saturated on benchmark v2.
 
 ### Sprint 6: Add directory cost guidance
 

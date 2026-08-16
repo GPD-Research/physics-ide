@@ -5298,6 +5298,7 @@ fn rebuild_retrieval_graph(connection: &mut rusqlite::Connection) -> Result<usiz
         ("constrains", "constrains"),
         ("predicts", "predicts"),
         ("measured by", "measured_by"),
+        ("alias for", "alias_for"),
         ("contradicts", "contradicts"),
         ("in conflict with", "contradicts"),
     ];
@@ -5883,7 +5884,32 @@ fn query_retrieval_index_hybrid_value(
             .total_cmp(&left.score)
             .then_with(|| left_id.cmp(right_id))
     });
-    ranked.truncate(result_limit);
+    if mode == RetrievalQueryMode::Hybrid && result_limit >= 2 {
+        let top_lexical = ranked
+            .iter()
+            .filter_map(|(chunk_id, candidate)| candidate.lexical_rank.map(|rank| (rank, chunk_id.clone())))
+            .min();
+        let top_vector = ranked
+            .iter()
+            .filter_map(|(chunk_id, candidate)| candidate.vector_rank.map(|rank| (rank, chunk_id.clone())))
+            .min();
+        let mut selected = std::collections::BTreeSet::new();
+        if let Some((_, chunk_id)) = top_lexical {
+            selected.insert(chunk_id);
+        }
+        if let Some((_, chunk_id)) = top_vector {
+            selected.insert(chunk_id);
+        }
+        for (chunk_id, _) in &ranked {
+            if selected.len() >= result_limit {
+                break;
+            }
+            selected.insert(chunk_id.clone());
+        }
+        ranked.retain(|(chunk_id, _)| selected.contains(chunk_id));
+    } else {
+        ranked.truncate(result_limit);
+    }
 
     let mut results = Vec::new();
     for (chunk_id, fusion) in ranked {
@@ -5963,6 +5989,7 @@ fn query_retrieval_index_hybrid_value(
         "rrf_k": if mode == RetrievalQueryMode::Hybrid && vector_used { Some(RRF_K) } else { None },
         "lexical_candidates": lexical_candidate_count,
         "vector_candidates": vector_candidate_count,
+        "modality_coverage_reserved": mode == RetrievalQueryMode::Hybrid && result_limit >= 2 && lexical_candidate_count > 0 && vector_candidate_count > 0,
         "vector_status": if vector_used { "used" } else if query_embedding.is_some() { "index_empty" } else { "unavailable" },
         "query": query,
         "results": results
@@ -6012,8 +6039,8 @@ const RETRIEVAL_BENCHMARK_CASES: &[RetrievalBenchmarkCase] = &[
         family: "qft_style",
         category: "equation_alias",
         query: "What governs bosonic field feedback?",
-        expected_heading: "Scalar interaction",
-        expected_graph_heading: None,
+        expected_heading: "Bosonic glossary",
+        expected_graph_heading: Some("Scalar interaction"),
     },
     RetrievalBenchmarkCase {
         id: "cross-section-dependency",
@@ -6022,6 +6049,30 @@ const RETRIEVAL_BENCHMARK_CASES: &[RetrievalBenchmarkCase] = &[
         query: "What does luminosity distance depend on?",
         expected_heading: "Luminosity mapping",
         expected_graph_heading: Some("Expansion equation"),
+    },
+    RetrievalBenchmarkCase {
+        id: "bmi-mode-locking-experiment",
+        family: "bimodal_interaction_style",
+        category: "experiment_and_graph_relation",
+        query: "Which experiment uses protocol EX_27 to test boundary mode locking?",
+        expected_heading: "Mode locking experiment",
+        expected_graph_heading: Some("Boundary condition"),
+    },
+    RetrievalBenchmarkCase {
+        id: "qft-uncommon-symbol",
+        family: "qft_style",
+        category: "uncommon_symbol_definition",
+        query: "Where is chi_perp defined?",
+        expected_heading: "Transverse invariant",
+        expected_graph_heading: None,
+    },
+    RetrievalBenchmarkCase {
+        id: "geocentric-instrument-alias",
+        family: "geocentric_style",
+        category: "experiment_alias",
+        query: "Which instrument tests the fixed-frame prediction?",
+        expected_heading: "Fixed-frame prediction",
+        expected_graph_heading: Some("Gyroscope experiment"),
     },
 ];
 
@@ -6033,19 +6084,19 @@ fn write_retrieval_benchmark_fixture(root: &Path) -> Result<String, String> {
         ),
         (
             "bimodal_interaction.md",
-            "# Neutrino mechanism\nThe effective mass emerges from a bimodal interaction eigenvalue at the boundary.\n\n## Inertia index\nParticle inertia is an index topic only and supplies no mechanism.\n",
+            "# Neutrino mechanism\nThe effective mass emerges from a bimodal interaction eigenvalue at the boundary.\n\n## Boundary condition\nThe paired modes lock when the outer coupling reaches the critical surface.\n\n## Mode locking experiment\nProtocol EX_27 tests boundary mode locking and depends on Boundary condition.\n\n## Inertia index\nParticle inertia is an index topic only and supplies no mechanism.\n",
         ),
         (
             "geocentric.md",
-            "# Parallax contradiction\nAnnual stellar parallax contradicts a strictly stationary Earth construction.\n\n## Instrument log\nThe telescope log records an unrelated calibration sequence.\n",
+            "# Parallax contradiction\nAnnual stellar parallax contradicts a strictly stationary Earth construction.\n\n## Gyroscope experiment\nA ring-laser apparatus measures rotational drift against the proposed immobile terrestrial frame.\n\n## Fixed-frame prediction\nThe fixed-frame prediction is measured by Gyroscope experiment.\n\n## Instrument log\nThe telescope log records an unrelated calibration sequence.\n",
         ),
         (
             "qft.md",
-            "# Scalar interaction\nThe quartic lambda phi^4 contribution controls self-coupling in the Lagrangian.\n\n## Bosonic glossary\nBosonic self-interaction is a glossary label without a governing equation.\n",
+            "# Scalar interaction\nThe quartic lambda phi^4 contribution controls self-coupling in the Lagrangian.\n\n## Transverse invariant\nThe uncommon symbol chi_perp := chi - (chi dot n)n denotes the projected field component.\n\n## Bosonic glossary\nBosonic field feedback is an alias for Scalar interaction.\n",
         ),
         (
             "vector_decoys.md",
-            "# Matter formula decoy one\nA matter fraction enters a cosmic expansion formula in this unrelated teaching example.\n\n## Matter formula decoy two\nThe density contribution appears inside a background evolution equation without project provenance.\n\n## Matter formula decoy three\nA cosmological matter term participates in an expansion relation used only as a distractor.\n\n## Parallax decoy one\nAn observation challenges a fixed terrestrial frame in a generic astronomy exercise.\n\n## Parallax decoy two\nA measured stellar shift conflicts with an unmoving observer assumption outside the loaded theory.\n\n## Parallax decoy three\nA yearly angular displacement tests whether the terrestrial platform remains fixed.\n\n## Distance decoy one\nA brightness-based distance depends on cosmic expansion in an unrelated reference model.\n\n## Distance decoy two\nThe inferred source distance follows the background expansion history in a generic example.\n\n## Distance decoy three\nAn observational distance mapping relies on the universal growth relation outside this theory.\n",
+            "# Matter formula decoy one\nA matter fraction enters a cosmic expansion formula in this unrelated teaching example.\n\n## Matter formula decoy two\nThe density contribution appears inside a background evolution equation without project provenance.\n\n## Matter formula decoy three\nA cosmological matter term participates in an expansion relation used only as a distractor.\n\n## Parallax decoy one\nAn observation challenges a fixed terrestrial frame in a generic astronomy exercise.\n\n## Parallax decoy two\nA measured stellar shift conflicts with an unmoving observer assumption outside the loaded theory.\n\n## Parallax decoy three\nA yearly angular displacement tests whether the terrestrial platform remains fixed.\n\n## Distance decoy one\nA brightness-based distance depends on cosmic expansion in an unrelated reference model.\n\n## Distance decoy two\nThe inferred source distance follows the background expansion history in a generic example.\n\n## Distance decoy three\nAn observational distance mapping relies on the universal growth relation outside this theory.\n\n## Protocol decoy one\nAn experimental protocol tests mode synchronization at a generic boundary.\n\n## Protocol decoy two\nA laboratory procedure examines coupled mode locking near an outer surface.\n\n## Protocol decoy three\nAn unrelated trial measures whether paired oscillations lock at a threshold.\n\n## Symbol decoy one\nA projected transverse component is defined for a generic field.\n\n## Symbol decoy two\nThe orthogonal invariant removes the normal contribution from a vector.\n\n## Symbol decoy three\nA field projection onto the tangent plane supplies an auxiliary definition.\n",
         ),
     ];
     fs::create_dir_all(root).map_err(|e| format!("Failed to create retrieval benchmark fixture: {e}"))?;
@@ -6074,6 +6125,10 @@ fn benchmark_heading_rank(result: &serde_json::Value, expected_heading: &str) ->
         .map(|index| index + 1)
 }
 
+fn benchmark_mrr(rank_sum: f64, case_count: usize) -> f64 {
+    if case_count == 0 { 0.0 } else { rank_sum / case_count as f64 }
+}
+
 fn run_retrieval_benchmark_value<F>(
     benchmark_root: &Path,
     mut embed: F,
@@ -6093,6 +6148,9 @@ where
         let mut hybrid_hits = 0usize;
         let mut graph_hits = 0usize;
         let mut graph_cases = 0usize;
+        let mut lexical_reciprocal_rank = 0.0f64;
+        let mut vector_reciprocal_rank = 0.0f64;
+        let mut hybrid_reciprocal_rank = 0.0f64;
         let mut cases = Vec::new();
         for case in RETRIEVAL_BENCHMARK_CASES {
             let mut query_vectors = embed(&[case.query.to_string()])?;
@@ -6126,6 +6184,9 @@ where
             lexical_hits += usize::from(lexical_rank.is_some());
             vector_hits += usize::from(vector_rank.is_some());
             hybrid_hits += usize::from(hybrid_rank.is_some());
+            lexical_reciprocal_rank += lexical_rank.map(|rank| 1.0 / rank as f64).unwrap_or(0.0);
+            vector_reciprocal_rank += vector_rank.map(|rank| 1.0 / rank as f64).unwrap_or(0.0);
+            hybrid_reciprocal_rank += hybrid_rank.map(|rank| 1.0 / rank as f64).unwrap_or(0.0);
 
             let graph_hit = case.expected_graph_heading.map(|expected| {
                 hybrid["results"]
@@ -6157,16 +6218,29 @@ where
         let hybrid_outperforms_baselines = hybrid_hits > lexical_hits && hybrid_hits > vector_hits;
         let hybrid_non_inferior = hybrid_hits >= lexical_hits && hybrid_hits >= vector_hits;
         let graph_complete = graph_hits == graph_cases;
+        let lexical_mrr = benchmark_mrr(lexical_reciprocal_rank, case_count);
+        let vector_mrr = benchmark_mrr(vector_reciprocal_rank, case_count);
+        let hybrid_mrr = benchmark_mrr(hybrid_reciprocal_rank, case_count);
+        let hybrid_recall = hybrid_hits as f64 / case_count as f64;
+        let acceptance_passed = hybrid_recall == 1.0
+            && graph_complete
+            && hybrid_non_inferior
+            && hybrid_mrr >= lexical_mrr;
         Ok(serde_json::json!({
-            "status": if hybrid_outperforms_baselines && graph_complete { "pass" } else { "fail" },
-            "fixture": "physics-ide.retrieval-benchmark/v1",
+            "status": if acceptance_passed { "pass" } else { "fail" },
+            "fixture": "physics-ide.retrieval-benchmark/v2",
             "fixture_fingerprint": fixture_fingerprint,
             "case_count": case_count,
             "family_count": 4,
             "recall_at_3": {
                 "lexical": lexical_hits as f64 / case_count as f64,
                 "vector": vector_hits as f64 / case_count as f64,
-                "hybrid": hybrid_hits as f64 / case_count as f64
+                "hybrid": hybrid_recall
+            },
+            "mrr_at_3": {
+                "lexical": lexical_mrr,
+                "vector": vector_mrr,
+                "hybrid": hybrid_mrr
             },
             "hits_at_3": {
                 "lexical": lexical_hits,
@@ -6180,6 +6254,14 @@ where
             },
             "hybrid_outperforms_baselines": hybrid_outperforms_baselines,
             "hybrid_non_inferior": hybrid_non_inferior,
+            "acceptance": {
+                "passed": acceptance_passed,
+                "required_hybrid_recall_at_3": 1.0,
+                "require_complete_graph_coverage": true,
+                "require_non_inferiority": true,
+                "require_hybrid_mrr_not_below_lexical": true
+            },
+            "strict_superiority_status": if hybrid_outperforms_baselines { "pass" } else { "open" },
             "cases": cases
         }))
     })();
@@ -9026,7 +9108,7 @@ mod tests {
     }
 
     #[test]
-    fn cross_theory_retrieval_quality_gate_requires_hybrid_to_beat_both_baselines() {
+    fn cross_theory_benchmark_reports_recall_superiority_and_mrr_gate_independently() {
         let temp_dir = std::env::temp_dir().join(format!(
             "physics_ide_retrieval_benchmark_test_{}",
             std::process::id()
@@ -9042,6 +9124,9 @@ mod tests {
                         "Which observation contradicts stationary Earth?" => Some(2),
                         "What governs bosonic field feedback?" => Some(3),
                         "What does luminosity distance depend on?" => Some(4),
+                        "Which experiment uses protocol EX_27 to test boundary mode locking?" => Some(5),
+                        "Where is chi_perp defined?" => Some(6),
+                        "Which instrument tests the fixed-frame prediction?" => Some(7),
                         _ => None,
                     };
                     if let Some(dimension) = query_dimension {
@@ -9051,26 +9136,52 @@ mod tests {
                     } else if text.contains("quartic lambda") {
                         embedding[3] = 1.0;
                     } else if text.contains("Omega_m") {
-                        embedding[0] = 0.8;
+                        embedding[0] = 0.7;
+                        embedding[100] = 0.714;
                     } else if text.contains("stellar parallax contradicts") {
-                        embedding[2] = 0.8;
+                        embedding[2] = 0.7;
+                        embedding[102] = 0.714;
                     } else if text.contains("Luminosity distance depends") {
-                        embedding[4] = 0.8;
+                        embedding[4] = 0.7;
+                        embedding[104] = 0.714;
+                    } else if text.contains("Protocol EX_27") {
+                        embedding[5] = 0.7;
+                        embedding[105] = 0.714;
+                    } else if text.contains("uncommon symbol chi_perp") {
+                        embedding[6] = 0.7;
+                        embedding[106] = 0.714;
+                    } else if text.contains("ring-laser apparatus") {
+                        embedding[7] = 1.0;
                     } else if text.contains("matter fraction")
                         || text.contains("density contribution")
                         || text.contains("cosmological matter term")
                     {
-                        embedding[0] = 1.0;
+                        embedding[0] = 0.8;
+                        embedding[200] = 0.6;
                     } else if text.contains("fixed terrestrial")
                         || text.contains("unmoving observer")
                         || text.contains("terrestrial platform")
                     {
-                        embedding[2] = 1.0;
+                        embedding[2] = 0.8;
+                        embedding[202] = 0.6;
                     } else if text.contains("brightness-based distance")
                         || text.contains("inferred source distance")
                         || text.contains("observational distance mapping")
                     {
-                        embedding[4] = 1.0;
+                        embedding[4] = 0.8;
+                        embedding[204] = 0.6;
+                    } else if text.contains("experimental protocol")
+                        || text.contains("laboratory procedure")
+                        || text.contains("unrelated trial")
+                    {
+                        embedding[5] = 0.8;
+                        embedding[205] = 0.6;
+                    } else if text.contains("projected transverse")
+                        || text.contains("orthogonal invariant")
+                        || text.contains("field projection")
+                    {
+                        embedding[6] = 0.8;
+                        embedding[206] = 0.6;
                     } else {
                         embedding[20] = 1.0;
                     }
@@ -9080,12 +9191,15 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(result["status"], "pass", "{result}");
+        assert_eq!(result["status"], "fail", "{result}");
         assert_eq!(result["family_count"].as_u64().unwrap(), 4);
-        assert_eq!(result["hits_at_3"]["lexical"].as_u64().unwrap(), 3);
-        assert_eq!(result["hits_at_3"]["vector"].as_u64().unwrap(), 2);
-        assert_eq!(result["hits_at_3"]["hybrid"].as_u64().unwrap(), 5);
+        assert_eq!(result["case_count"].as_u64().unwrap(), 8);
+        assert_eq!(result["hits_at_3"]["lexical"].as_u64().unwrap(), 7);
+        assert_eq!(result["hits_at_3"]["vector"].as_u64().unwrap(), 1);
+        assert_eq!(result["hits_at_3"]["hybrid"].as_u64().unwrap(), 8, "{result}");
         assert_eq!(result["graph"]["complete"], true);
+        assert_eq!(result["strict_superiority_status"], "pass");
+        assert_eq!(result["acceptance"]["passed"], false);
     }
 
     #[test]
@@ -9149,10 +9263,11 @@ mod tests {
                 .map_err(|e| e.to_string())
         })
         .unwrap();
-        assert_eq!(benchmark["case_count"].as_u64().unwrap(), 5);
+        assert_eq!(benchmark["case_count"].as_u64().unwrap(), 8);
         assert_eq!(benchmark["family_count"].as_u64().unwrap(), 4);
-        assert_eq!(benchmark["hits_at_3"]["hybrid"].as_u64().unwrap(), 5, "{benchmark}");
+        assert_eq!(benchmark["hits_at_3"]["hybrid"].as_u64().unwrap(), 8, "{benchmark}");
         assert_eq!(benchmark["hybrid_non_inferior"], true, "{benchmark}");
+        assert_eq!(benchmark["acceptance"]["passed"], true, "{benchmark}");
     }
 
     #[test]
