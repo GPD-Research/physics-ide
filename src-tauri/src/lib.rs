@@ -515,6 +515,17 @@ pub struct ProbeEvidenceItem {
     snippets: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct RetrievalChunk {
+    id: String,
+    path: String,
+    chunk_index: usize,
+    line_start: usize,
+    line_end: usize,
+    heading: String,
+    content: String,
+}
+
 // Helper: Resolve the OS-specific config path
 fn get_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     let mut path = app.path()
@@ -1482,6 +1493,7 @@ fn collect_markdown_files_recursive(root: &Path) -> Result<Vec<PathBuf>, String>
             "__pycache__",
             ".idea",
             ".vscode",
+            ".physics-ide",
             "versions",
         ];
 
@@ -4948,6 +4960,401 @@ fn collect_probe_evidence(workspace_path: String, query: String) -> Result<Vec<P
     Ok(ranked.into_iter().take(8).collect())
 }
 
+fn retrieval_index_path(app: &AppHandle, root: &Path) -> Result<PathBuf, String> {
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.to_string_lossy().as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    let mut path = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    path.push("retrieval");
+    path.push(&digest[..20]);
+    path.push("retrieval.sqlite3");
+    Ok(path)
+}
+
+fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, String> {
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create retrieval index directory: {e}"))?;
+    }
+    let connection = rusqlite::Connection::open(&index_path)
+        .map_err(|e| format!("Failed to open retrieval index: {e}"))?;
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             CREATE TABLE IF NOT EXISTS retrieval_files (
+                 path TEXT PRIMARY KEY,
+                 size_bytes INTEGER NOT NULL,
+                 modified_ns INTEGER NOT NULL,
+                 content_hash TEXT NOT NULL,
+                 chunk_count INTEGER NOT NULL
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_chunks USING fts5(
+                 chunk_id UNINDEXED,
+                 path UNINDEXED,
+                 chunk_index UNINDEXED,
+                 line_start UNINDEXED,
+                 line_end UNINDEXED,
+                 heading,
+                 content,
+                 tokenize='unicode61'
+             );",
+        )
+        .map_err(|e| format!("Failed to initialize retrieval index: {e}"))?;
+    Ok(connection)
+}
+
+fn file_modified_ns(metadata: &fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+fn chunk_markdown(relative_path: &str, content: &str) -> Vec<RetrievalChunk> {
+    const MAX_CHUNK_CHARACTERS: usize = 4_000;
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    let mut boundaries = vec![0usize];
+    for (index, line) in lines.iter().enumerate().skip(1) {
+        if line.trim_start().starts_with('#') {
+            boundaries.push(index);
+        }
+    }
+    boundaries.push(lines.len());
+
+    let mut chunks = Vec::new();
+    for window in boundaries.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        let heading = lines[start]
+            .trim()
+            .trim_start_matches('#')
+            .trim()
+            .to_string();
+        let mut part_start = start;
+        let mut part_lines = Vec::new();
+        let mut part_characters = 0usize;
+        for line_index in start..end {
+            if lines[line_index].chars().count() > MAX_CHUNK_CHARACTERS {
+                if !part_lines.is_empty() {
+                    let section = part_lines.join("\n").trim().to_string();
+                    if !section.is_empty() {
+                        let chunk_index = chunks.len();
+                        chunks.push(RetrievalChunk {
+                            id: stable_structural_id("chunk", relative_path, &section),
+                            path: relative_path.to_string(),
+                            chunk_index,
+                            line_start: part_start + 1,
+                            line_end: line_index,
+                            heading: heading.clone(),
+                            content: section,
+                        });
+                    }
+                    part_lines.clear();
+                    part_characters = 0;
+                }
+                let line_chars = lines[line_index].chars().collect::<Vec<_>>();
+                for character_slice in line_chars.chunks(MAX_CHUNK_CHARACTERS) {
+                    let section = character_slice.iter().collect::<String>();
+                    let chunk_index = chunks.len();
+                    chunks.push(RetrievalChunk {
+                        id: stable_structural_id("chunk", relative_path, &section),
+                        path: relative_path.to_string(),
+                        chunk_index,
+                        line_start: line_index + 1,
+                        line_end: line_index + 1,
+                        heading: heading.clone(),
+                        content: section,
+                    });
+                }
+                part_start = line_index + 1;
+                continue;
+            }
+            let line_characters = lines[line_index].chars().count() + usize::from(!part_lines.is_empty());
+            if !part_lines.is_empty() && part_characters + line_characters > MAX_CHUNK_CHARACTERS {
+                let section = part_lines.join("\n").trim().to_string();
+                if !section.is_empty() {
+                    let chunk_index = chunks.len();
+                    chunks.push(RetrievalChunk {
+                        id: stable_structural_id("chunk", relative_path, &section),
+                        path: relative_path.to_string(),
+                        chunk_index,
+                        line_start: part_start + 1,
+                        line_end: line_index,
+                        heading: heading.clone(),
+                        content: section,
+                    });
+                }
+                part_start = line_index;
+                part_lines.clear();
+                part_characters = 0;
+            }
+            part_lines.push(lines[line_index]);
+            part_characters += line_characters;
+        }
+        let section = part_lines.join("\n").trim().to_string();
+        if !section.is_empty() {
+            let chunk_index = chunks.len();
+            chunks.push(RetrievalChunk {
+                id: stable_structural_id("chunk", relative_path, &section),
+                path: relative_path.to_string(),
+                chunk_index,
+                line_start: part_start + 1,
+                line_end: end,
+                heading,
+                content: section,
+            });
+        }
+    }
+    chunks
+}
+
+fn refresh_retrieval_index_value(root: &Path, index_path: &Path) -> Result<serde_json::Value, String> {
+    let files = collect_markdown_files_recursive(root)?;
+    let mut connection = open_retrieval_index(index_path)?;
+    let existing = {
+        let mut statement = connection
+            .prepare("SELECT path, size_bytes, modified_ns FROM retrieval_files")
+            .map_err(|e| format!("Failed to read retrieval metadata: {e}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|e| format!("Failed to query retrieval metadata: {e}"))?
+            .filter_map(Result::ok)
+            .map(|(path, size, modified)| (path, (size, modified)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        rows
+    };
+
+    let transaction = connection.transaction().map_err(|e| format!("Failed to start retrieval refresh: {e}"))?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut indexed_files = 0usize;
+    let mut unchanged_files = 0usize;
+    let mut indexed_chunks = 0usize;
+
+    for file in files {
+        let relative = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let file_name = file.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        if matches!(
+            file_name,
+            "ai_briefing.md"
+                | "project_awareness.md"
+                | "session_recap.md"
+                | "workspace_tree.md"
+                | "next_session_notes.md"
+                | "first_session_startup_guide.md"
+        ) {
+            continue;
+        }
+        let metadata = match fs::metadata(&file) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        let size = metadata.len();
+        let modified = file_modified_ns(&metadata);
+        seen.insert(relative.clone());
+        if existing.get(&relative).is_some_and(|value| *value == (size, modified)) {
+            unchanged_files += 1;
+            continue;
+        }
+
+        let content = match fs::read_to_string(&file) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let chunks = chunk_markdown(&relative, &content);
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let content_hash = format!("{:x}", hasher.finalize());
+        transaction
+            .execute("DELETE FROM retrieval_chunks WHERE path = ?1", [&relative])
+            .map_err(|e| format!("Failed to replace retrieval chunks: {e}"))?;
+        for chunk in &chunks {
+            transaction
+                .execute(
+                    "INSERT INTO retrieval_chunks (chunk_id, path, chunk_index, line_start, line_end, heading, content)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![
+                        chunk.id,
+                        chunk.path,
+                        chunk.chunk_index as i64,
+                        chunk.line_start as i64,
+                        chunk.line_end as i64,
+                        chunk.heading,
+                        chunk.content
+                    ],
+                )
+                .map_err(|e| format!("Failed to insert retrieval chunk: {e}"))?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO retrieval_files (path, size_bytes, modified_ns, content_hash, chunk_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(path) DO UPDATE SET
+                   size_bytes=excluded.size_bytes,
+                   modified_ns=excluded.modified_ns,
+                   content_hash=excluded.content_hash,
+                   chunk_count=excluded.chunk_count",
+                rusqlite::params![relative, size, modified, content_hash, chunks.len() as i64],
+            )
+            .map_err(|e| format!("Failed to update retrieval metadata: {e}"))?;
+        indexed_files += 1;
+        indexed_chunks += chunks.len();
+    }
+
+    let deleted = existing
+        .keys()
+        .filter(|path| !seen.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    for path in &deleted {
+        transaction.execute("DELETE FROM retrieval_chunks WHERE path = ?1", [path])
+            .map_err(|e| format!("Failed to delete stale retrieval chunks: {e}"))?;
+        transaction.execute("DELETE FROM retrieval_files WHERE path = ?1", [path])
+            .map_err(|e| format!("Failed to delete stale retrieval metadata: {e}"))?;
+    }
+    transaction.commit().map_err(|e| format!("Failed to commit retrieval refresh: {e}"))?;
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "index_path": index_path.to_string_lossy().to_string(),
+        "indexed_files": indexed_files,
+        "unchanged_files": unchanged_files,
+        "deleted_files": deleted.len(),
+        "indexed_chunks": indexed_chunks,
+        "embedding_status": "not_configured",
+        "search_mode": "fts5_lexical_with_neighbors"
+    }))
+}
+
+fn fts_query(query: &str) -> String {
+    build_probe_terms(query)
+        .into_iter()
+        .take(12)
+        .map(|term| format!("\"{}\"", term.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> Result<serde_json::Value, String> {
+    let match_query = fts_query(query);
+    if match_query.is_empty() {
+        return Ok(serde_json::json!({"status": "ok", "results": [], "search_mode": "fts5_lexical_with_neighbors"}));
+    }
+    let connection = open_retrieval_index(index_path)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT chunk_id, path, chunk_index, line_start, line_end, heading, content, bm25(retrieval_chunks) AS rank
+             FROM retrieval_chunks
+             WHERE retrieval_chunks MATCH ?1
+             ORDER BY rank ASC, path ASC, chunk_index ASC
+             LIMIT ?2",
+        )
+        .map_err(|e| format!("Failed to prepare retrieval query: {e}"))?;
+    let matches = statement
+        .query_map(rusqlite::params![match_query, limit.clamp(1, 20) as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, f64>(7)?,
+            ))
+        })
+        .map_err(|e| format!("Failed to execute retrieval query: {e}"))?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+
+    let mut results = Vec::new();
+    for (chunk_id, path, chunk_index, line_start, line_end, heading, content, rank) in matches {
+        let mut neighbors = Vec::new();
+        let mut neighbor_statement = connection
+            .prepare(
+                "SELECT chunk_index, line_start, line_end, heading, content
+                 FROM retrieval_chunks
+                 WHERE path = ?1 AND chunk_index IN (?2, ?3)
+                 ORDER BY chunk_index ASC",
+            )
+            .map_err(|e| format!("Failed to prepare neighbor query: {e}"))?;
+        let neighbor_rows = neighbor_statement
+            .query_map(
+                rusqlite::params![path, chunk_index - 1, chunk_index + 1],
+                |row| {
+                    Ok(serde_json::json!({
+                        "chunk_index": row.get::<_, i64>(0)?,
+                        "line_start": row.get::<_, i64>(1)?,
+                        "line_end": row.get::<_, i64>(2)?,
+                        "heading": row.get::<_, String>(3)?,
+                        "content": row.get::<_, String>(4)?
+                    }))
+                },
+            )
+            .map_err(|e| format!("Failed to load retrieval neighbors: {e}"))?;
+        neighbors.extend(neighbor_rows.filter_map(Result::ok));
+        results.push(serde_json::json!({
+            "chunk_id": chunk_id,
+            "relative_path": path,
+            "chunk_index": chunk_index,
+            "line_start": line_start,
+            "line_end": line_end,
+            "heading": heading,
+            "content": content,
+            "rank": rank,
+            "neighbors": neighbors
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "search_mode": "fts5_lexical_with_neighbors",
+        "query": query,
+        "results": results
+    }))
+}
+
+#[tauri::command]
+fn refresh_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let root = PathBuf::from(workspace_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err("Workspace path is missing or invalid for retrieval indexing.".to_string());
+    }
+    let index_path = retrieval_index_path(&app, &root)?;
+    Ok(refresh_retrieval_index_value(&root, &index_path)?.to_string())
+}
+
+#[tauri::command]
+fn query_retrieval_index(
+    workspace_path: String,
+    query: String,
+    limit: Option<usize>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let root = PathBuf::from(workspace_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err("Workspace path is missing or invalid for retrieval query.".to_string());
+    }
+    let index_path = retrieval_index_path(&app, &root)?;
+    Ok(query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?.to_string())
+}
+
 fn render_manuscript_content(
     mode: &str,
     source_file: &str,
@@ -7355,6 +7762,66 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_index_refreshes_incrementally_and_returns_explanatory_neighbors() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_retrieval_test_{}", std::process::id()));
+        let index_path = temp_dir.join(".test-retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let theory_path = temp_dir.join("bmi_neutrino.md");
+        fs::write(
+            &theory_path,
+            "# BMI Foundations\nThe bimodal interaction defines the model.\n\n## Neutrino mechanism\nNeutrino mass is determined by the interaction eigenvalue and boundary coupling.\n\n## Consequence\nThe effective mass changes when the coupling changes.\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("ai_briefing.md"),
+            "# Generated Briefing\nThis synthetic duplicate should never enter retrieval.",
+        )
+        .unwrap();
+
+        let first = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(first["indexed_files"].as_u64().unwrap(), 1);
+        assert_eq!(first["unchanged_files"].as_u64().unwrap(), 0);
+
+        let second = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(second["indexed_files"].as_u64().unwrap(), 0);
+        assert_eq!(second["unchanged_files"].as_u64().unwrap(), 1);
+
+        let query = query_retrieval_index_value(&index_path, "how is neutrino mass determined", 4).unwrap();
+        let results = query["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0]["relative_path"], "bmi_neutrino.md");
+        assert!(results[0]["content"].as_str().unwrap().contains("interaction eigenvalue"));
+        assert!(!results[0]["neighbors"].as_array().unwrap().is_empty());
+        let generated_query = query_retrieval_index_value(&index_path, "synthetic duplicate", 4).unwrap();
+        assert!(generated_query["results"].as_array().unwrap().is_empty());
+
+        fs::write(
+            &theory_path,
+            "# BMI Foundations\nThe bimodal interaction defines the model.\n\n## Neutrino mechanism\nNeutrino mass is determined by a revised interaction eigenvalue and boundary coupling.\n",
+        )
+        .unwrap();
+        let changed = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(changed["indexed_files"].as_u64().unwrap(), 1);
+
+        fs::remove_file(&theory_path).unwrap();
+        let deleted = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(deleted["deleted_files"].as_u64().unwrap(), 1);
+        let empty = query_retrieval_index_value(&index_path, "neutrino mass", 4).unwrap();
+        assert!(empty["results"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn retrieval_chunks_bound_large_unicode_sections() {
+        let content = format!("# Large Section\n{}", "λ".repeat(9_001));
+        let chunks = chunk_markdown("large.md", &content);
+
+        assert!(chunks.len() >= 4);
+        assert!(chunks.iter().all(|chunk| chunk.content.chars().count() <= 4_000));
+        assert!(chunks.iter().all(|chunk| chunk.line_start >= 1 && chunk.line_end >= chunk.line_start));
+    }
+
+    #[test]
     fn classifies_left_field_theory_as_non_mainstream() {
         let temp_dir = std::env::temp_dir().join("physics_ide_left_field_style_test");
         let _ = fs::remove_dir_all(&temp_dir);
@@ -7796,6 +8263,8 @@ pub fn run() {
             generate_master_axiom_from_theory,
             list_markdown_files,
             collect_probe_evidence,
+            refresh_retrieval_index,
+            query_retrieval_index,
             render_manuscript,
             launch_file_editor,
             detach_terminal_shell,

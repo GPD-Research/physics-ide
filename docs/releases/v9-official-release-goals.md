@@ -438,6 +438,22 @@ This result rejects full-corpus structural-core activation for the tested BMI ar
 - [ ] Stop transporting full manuscripts after retrieval benchmarks pass.
 - [ ] Reclassify manual primer controls after automated retrieval benchmarks pass.
 
+#### Local retrieval foundation
+
+The first Sprint 5 increment uses bundled SQLite with FTS5 before adding embeddings or a vector extension:
+
+- project-keyed `retrieval.sqlite3` under Tauri local application data, physically outside project repositories and therefore excluded from Git by construction;
+- explicit or query-triggered refresh, never automatic during project opening;
+- metadata-only checks for unchanged Markdown files;
+- transactional replacement of changed chunks and cleanup of deleted files;
+- deterministic heading/line chunks bounded to approximately 4,000 Unicode characters;
+- FTS5 lexical ranking with adjacent explanatory chunks;
+- a 6,000-character global evidence budget before selected snippets enter provider prompts;
+- Request Inspector refresh/query diagnostics;
+- context-probe integration with fallback to the legacy recursive evidence scan.
+
+This is not yet vector retrieval. The embedding model and `sqlite-vec`/validated vector extension remain open, but will reuse the stable chunk IDs and incremental metadata contract established here.
+
 ### Sprint 6: Add directory cost guidance
 
 - [ ] Derive heatmap thresholds from measured token budgets.
@@ -465,4 +481,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 now generates deterministic `physics-ide.structural-context/v1`, renders a compact core, verifies ID/provenance coverage, measures it against the legacy excerpt budget, and provides blind A/B human evaluation. Eligible cores remain disabled until the per-fingerprint/model human gate passes and results are reviewed. The first manual-tool classification is documented, and duplicate baseline contexts are prevented; no controls have been removed. Broader awareness and experiment compilation remain open. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 established structural compilation and showed that full-corpus structural transport can underperform concise prose for BMI. Sprint 5 has started with a local incremental SQLite FTS5 index, bounded semantic chunks, explanatory neighbors, diagnostics, and safe legacy fallback. Embeddings, vector search, hybrid reranking, and retrieval-based structural A/B approval remain open. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.

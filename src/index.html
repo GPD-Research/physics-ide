@@ -2062,12 +2062,20 @@
           <option value="right">Right</option>
         </select>
         <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
+        <button id="retrieval-index-refresh" onclick="refreshLocalRetrievalIndex()" title="Incrementally index changed Markdown files for local retrieval">Refresh Local Index</button>
         <button id="request-inspector-cache-probe" onclick="runOpenAiCacheProbe()" title="Run up to two small OpenAI requests to test native prompt caching">Run Cache Probe</button>
       </div>
       <div id="request-inspector-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">No request inspected yet.</div>
       <textarea id="request-inspector-output" rows="10" readonly style="width: 100%; box-sizing: border-box; min-height: 140px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Ordered request context report"></textarea>
       <label for="request-cache-probe-output" style="font-size: 0.78rem; margin-top: 8px;">OpenAI cache probe</label>
       <textarea id="request-cache-probe-output" rows="4" readonly style="width: 100%; box-sizing: border-box; min-height: 70px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="OpenAI cache probe report" placeholder="No cache probe has been run. Ineligible prefixes make no network requests."></textarea>
+      <div style="display: flex; align-items: end; gap: 8px; margin-top: 8px;">
+        <label for="retrieval-query-input" style="flex: 1;">Local retrieval query
+          <input id="retrieval-query-input" type="text" style="width: 100%; box-sizing: border-box; margin-top: 4px;" placeholder="Search indexed equations, mechanisms, assumptions, or terms">
+        </label>
+        <button onclick="previewLocalRetrieval()" title="Query the local SQLite retrieval index">Query Index</button>
+      </div>
+      <textarea id="retrieval-query-output" rows="5" readonly style="width: 100%; box-sizing: border-box; min-height: 85px; margin-top: 6px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Local retrieval diagnostics" placeholder="Local retrieval diagnostics will appear here."></textarea>
       <div style="display: flex; align-items: end; gap: 8px; margin-top: 10px;">
         <label for="structural-ab-question" style="flex: 1;">Structural A/B question
           <textarea id="structural-ab-question" rows="2" style="width: 100%; box-sizing: border-box; margin-top: 4px;" placeholder="Ask a project-specific question that requires equations, assumptions, or source provenance."></textarea>
@@ -2609,19 +2617,54 @@
       }
 
       try {
-        const evidence = await invoke('collect_probe_evidence', {
+        await invoke('refresh_retrieval_index', { workspacePath: rootPath });
+        const response = JSON.parse(await invoke('query_retrieval_index', {
           workspacePath: rootPath,
           query: queryText,
-        });
-        const normalized = Array.isArray(evidence) ? evidence : [];
+          limit: 8
+        }));
+        const normalized = [];
+        let remainingCharacters = 6000;
+        for (const [index, row] of (response.results || []).entries()) {
+          if (remainingCharacters <= 0) break;
+          const snippets = [];
+          const content = String(row?.content || '').trim();
+          if (content) {
+            const snippet = `L${row.line_start || '?'}-${row.line_end || '?'}: ${content.slice(0, 700)}`.slice(0, remainingCharacters);
+            snippets.push(snippet);
+            remainingCharacters -= snippet.length;
+          }
+          (row?.neighbors || []).slice(0, 2).forEach((neighbor) => {
+            if (remainingCharacters <= 0) return;
+            const neighborContent = String(neighbor?.content || '').trim();
+            if (neighborContent) {
+              const snippet = `Neighbor L${neighbor.line_start || '?'}-${neighbor.line_end || '?'}: ${neighborContent.slice(0, 450)}`.slice(0, remainingCharacters);
+              snippets.push(snippet);
+              remainingCharacters -= snippet.length;
+            }
+          });
+          normalized.push({
+            relative_path: row.relative_path,
+            score: Math.max(1, 100 - index),
+            snippets
+          });
+        }
         probeEvidenceCache.rootPath = rootPath;
         probeEvidenceCache.query = queryText;
         probeEvidenceCache.evidence = normalized;
         probeEvidenceCache.loadedAt = Date.now();
         return normalized;
       } catch (err) {
-        appendTerminalLog(`Probe evidence scan warning: ${err}`);
-        return [];
+        appendTerminalLog(`Local retrieval warning; using legacy evidence scan: ${err}`);
+        try {
+          return await invoke('collect_probe_evidence', {
+            workspacePath: rootPath,
+            query: queryText,
+          });
+        } catch (fallbackError) {
+          appendTerminalLog(`Probe evidence fallback warning: ${fallbackError}`);
+          return [];
+        }
       }
     }
 
@@ -6399,6 +6442,63 @@ async function restoreVersion() {
         output.value = `Cache probe failed: ${err}`;
       } finally {
         button.disabled = false;
+      }
+    }
+
+    async function refreshLocalRetrievalIndex() {
+      const output = document.getElementById('retrieval-query-output');
+      const button = document.getElementById('retrieval-index-refresh');
+      if (!output || !button) return;
+      if (!currentWorkspacePath) {
+        output.value = 'Load a workspace before refreshing the local retrieval index.';
+        return;
+      }
+
+      button.disabled = true;
+      output.value = 'Refreshing changed Markdown files...';
+      try {
+        const result = JSON.parse(await invoke('refresh_retrieval_index', {
+          workspacePath: currentWorkspacePath
+        }));
+        output.value = [
+          `Status: ${String(result.status || 'unknown').toUpperCase()}`,
+          `Changed files indexed: ${result.indexed_files ?? 0} | unchanged: ${result.unchanged_files ?? 0} | deleted: ${result.deleted_files ?? 0}`,
+          `Chunks replaced: ${result.indexed_chunks ?? 0}`,
+          `Search mode: ${result.search_mode || 'unavailable'} | embeddings: ${result.embedding_status || 'unavailable'}`,
+          `Index: ${result.index_path || 'unavailable'}`
+        ].join('\n');
+      } catch (err) {
+        output.value = `Local retrieval refresh failed: ${err}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function previewLocalRetrieval() {
+      const query = (document.getElementById('retrieval-query-input')?.value || '').trim();
+      const output = document.getElementById('retrieval-query-output');
+      if (!output) return;
+      if (!currentWorkspacePath || !query) {
+        output.value = 'Load a workspace and enter a retrieval query.';
+        return;
+      }
+
+      output.value = 'Querying local retrieval index...';
+      try {
+        const result = JSON.parse(await invoke('query_retrieval_index', {
+          workspacePath: currentWorkspacePath,
+          query,
+          limit: 6
+        }));
+        const lines = [`Mode: ${result.search_mode || 'unavailable'} | Results: ${(result.results || []).length}`];
+        (result.results || []).forEach((row, index) => {
+          lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | rank=${Number(row.rank || 0).toFixed(4)}`);
+          if (row.heading) lines.push(`   ${row.heading}`);
+          lines.push(`   neighbors=${(row.neighbors || []).length}`);
+        });
+        output.value = lines.join('\n');
+      } catch (err) {
+        output.value = `Local retrieval query failed: ${err}. Refresh the index first.`;
       }
     }
 
