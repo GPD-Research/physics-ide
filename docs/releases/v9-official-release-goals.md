@@ -318,13 +318,13 @@ Color states:
 - Sprint 1 stopped recursive tree regeneration during briefing compilation and added compact visible-tree export; existing verbose tree files remain until refreshed.
 - Primer assembly still has several manual entry points and needs one authoritative automated awareness path.
 - `read_directory` and the file-tree viewer already load child directories lazily, providing the correct trigger boundary for visible-row estimates.
-- Preflight prompt estimates are available, but OpenAI response usage is still discarded, so exact post-request thread accounting is not yet available.
+- Preflight prompt estimates and provider-reported thread usage are available in the Request Inspector.
 
 ### Manual context-tool consolidation gate
 
 Automated awareness should become the authoritative path when it can produce fresher, smaller, source-grounded context than manual primer generation. Manual controls must not remain merely for compatibility if they resend stale data, duplicate automatic context, bypass token budgets, or contradict retrieval and cache ordering.
 
-Current controls requiring review include:
+Controls reviewed during migration included:
 
 - `View/Edit Primer`, `Save Packet`, and `Sync To AI Threads`;
 - `Sync AI Context Now` and pane reset-to-primer behavior;
@@ -340,27 +340,28 @@ Decision rules:
 - `deprecate`: automation supersedes the control, but users need a transition period and migration notice;
 - `remove`: the control is redundant, contradictory, unsafe, or permanently bypasses the canonical awareness pipeline.
 
-Sprint 4 review snapshot (proposal; no controls removed yet):
+Implemented v9 migration:
 
 | Control | Classification | Proposed direction |
 | --- | --- | --- |
 | `AI Request Inspector` | `retain` | Authoritative audit, provenance, token, cache, and structural benchmark surface. |
-| Pane reset-to-primer | `retain` | Recovery action; rebuild through the canonical assembler. |
+| Pane reset-to-awareness | `retain` | Recovery action; rebuild through the canonical assembler. |
 | `Export AI Project Map` | `retain` | Explicit human scope selection, never automatic provider transmission. |
 | Carry-over notes | `retain` | Unique human-authored dynamic context; keep outside the reusable prefix. |
-| `Sync AI Context Now` / briefing refresh | `merge` | One refresh-awareness action; replace the baseline context slot instead of appending duplicates. |
-| `View/Edit Primer`, `Save Packet`, `Sync To AI Threads` | `deprecate` | Replace with read-only awareness inspection plus an explicit dynamic override after structural equivalence passes. |
-| `Pass Into Primer` / idea-pad sync | `deprecate` | Preserve notes as dynamic session context rather than mutating stable primer content. |
+| `Refresh AI Awareness` | `merge` | One canonical retrieval-first refresh action replaces the baseline context slot. |
+| `Awareness Inspector` / legacy recovery | `retain` | Generated awareness is read-only; explicit bounded legacy recovery replaces the baseline slot for recovery/A/B comparison. |
+| `Pass Into Analysis Plan` | `retain` | User-authored transfer into the separate editable empirical analysis plan. |
+| Idea-pad `Sync AI Context` | `retain` | Dynamic `session_notes` slot with separate idea-pad/visible-tree provenance; never mutates generated awareness. |
 
-The canonical assembler and frontend now enforce a single `baseline_context` slot, so repeated refresh or manual override actions replace the prior baseline instead of stacking duplicate primers. Final deprecations remain blocked on structural retrieval benchmarks, human review, and recovery/export for unique notes.
+The canonical assembler and frontend enforce one `baseline_context` slot and one independent dynamic `session_notes` slot. Repeated awareness refresh or legacy recovery replaces the baseline; repeated idea-pad sync replaces only session notes. Scratchpad `Save` and `Save As` preserve a recovery/export path for unique user content.
 
-- [ ] Compare each manual action with the canonical assembler and local retrieval pipeline after Sprints 2, 4, and 5.
+- [x] Compare each manual action with the canonical assembler and local retrieval pipeline after Sprints 2, 4, and 5.
 - [ ] Measure whether each action improves benchmark awareness enough to justify its token and UX cost.
-- [ ] Require all retained manual overrides to pass through the same provenance, ordering, deduplication, and token-budget checks as automation.
-- [ ] Never let editing a generated primer silently mutate canonical source files, structural records, or vector-index content.
-- [ ] Present a migration proposal for discussion before removing user-facing controls or project artifacts.
-- [ ] Provide a recovery/export path for user-authored notes before deprecating any tool that stores unique human content.
-- [ ] Remove obsolete primer terminology when the remaining surface is more accurately an awareness inspector, scope selector, or context override.
+- [x] Require all retained manual overrides to pass through the same provenance, ordering, deduplication, and token-budget checks as automation.
+- [x] Never let editing a generated primer silently mutate canonical source files, structural records, or vector-index content.
+- [x] Present a migration proposal for discussion before removing user-facing controls or project artifacts.
+- [x] Provide a recovery/export path for user-authored notes before deprecating any tool that stores unique human content.
+- [x] Remove obsolete primer terminology when the remaining surface is more accurately an awareness inspector, scope selector, or context override.
 
 ### Non-goals
 
@@ -445,7 +446,7 @@ This result rejects full-corpus structural-core activation for the tested BMI ar
 - [x] Enforce retrieval budgets and expose source diagnostics.
 - [ ] Preserve explanatory neighbor text around retrieved equations and mechanisms; the BMI diagnostic showed that isolated structural records can underperform concise prose context.
 - [x] Stop transporting full manuscripts after retrieval benchmarks pass.
-- [ ] Reclassify manual primer controls after automated retrieval benchmarks pass.
+- [x] Reclassify manual primer controls after automated retrieval benchmarks pass.
 
 #### Local retrieval foundation
 

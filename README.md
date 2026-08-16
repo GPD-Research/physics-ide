@@ -41,7 +41,9 @@ The project has moved from a simple desktop shell toward a more practical theory
 - enforced configurable backend retrieval budgets with complete inclusion, exclusion, truncation, freshness, model, and source diagnostics;
 - stopped automatic primer transport of master-axiom/project-awareness corpus excerpts while retaining explicit legacy recovery and comparison modes;
 - added complete local-index lifecycle controls, non-mutating integrity/freshness inspection, versioned schema validation, and corruption/incompatibility quarantine recovery;
-- expanded the backend regression suite to 65 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
+- replaced generated-primer editing/raw sync with a read-only Awareness Inspector, canonical refresh, and explicit bounded legacy recovery;
+- restored idea-pad sync as an independent dynamic session-notes slot with visible-tree provenance while retaining Save/Save As recovery for user notes;
+- expanded the backend regression suite to 66 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
 
 ### Latest progress (2026-08-11)
 

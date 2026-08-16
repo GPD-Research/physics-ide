@@ -3059,6 +3059,41 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn session_notes_replace_independently_from_baseline_awareness() {
+        let history = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "Retrieval-first baseline",
+                "context_slot": "baseline_context",
+                "context_source": "startup_awareness",
+                "context_volatility": "slowly_changing"
+            }),
+            serde_json::json!({
+                "role": "system",
+                "content": "Old idea note",
+                "context_slot": "session_notes",
+                "context_source": "idea_pad",
+                "context_volatility": "dynamic"
+            }),
+            serde_json::json!({
+                "role": "system",
+                "content": "Current idea note",
+                "context_slot": "session_notes",
+                "context_source": "idea_pad",
+                "context_volatility": "dynamic"
+            }),
+        ];
+
+        let assembly = assemble_canonical_messages(&history);
+        let contents = assembly
+            .messages
+            .iter()
+            .map(|message| message["content"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(contents, vec!["Retrieval-first baseline", "Current idea note"]);
+    }
+
+    #[test]
     fn openai_request_body_keeps_canonical_message_roles() {
         let messages = vec![
             serde_json::json!({"role": "system", "content": "Contract"}),

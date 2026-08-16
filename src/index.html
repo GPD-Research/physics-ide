@@ -1085,7 +1085,7 @@
         <a href="#" class="menu-item-toggle" id="view-menu-equation" onclick="toggleViewTool('equation'); return false;" title="Show or hide equation tools panel"><span>Equation Tools</span><span class="menu-item-state">●</span></a>
         <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;" title="Show or hide the scratchpad panel"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
         <div class="menu-section">Documents</div>
-        <a href="#" onclick="openBriefingPacketEditor(); return false;" title="Open the active primer document and edit the AI briefing context">View/Edit Primer</a>
+        <a href="#" onclick="openBriefingPacketEditor(); return false;" title="Inspect generated awareness and use explicit legacy recovery when needed">Awareness Inspector</a>
         <a href="#" onclick="openRequestInspector(); return false;" title="Inspect ordered AI context sources and estimated token use">AI Request Inspector</a>
         <div class="menu-section">Navigation</div>
         <a href="#" onclick="rotateLeft(1); return false;" title="Switch to next analytical lane thread">Next Analytical Slot</a>
@@ -1329,7 +1329,7 @@
           </div>
 
           <div class="panel-section" style="margin-top: auto;">
-            <button style="width: 100%;" onclick="injectPrimerIntoThreads(false)" title="Inject primer context into both AI lanes">Sync AI Context Now</button>
+            <button style="width: 100%;" onclick="injectPrimerIntoThreads(false)" title="Refresh canonical retrieval-first awareness in both AI lanes">Refresh AI Awareness</button>
           </div>
         </div>
 
@@ -1394,7 +1394,7 @@
             <div class="btn-group" style="margin-top: 5px;">
               <button onclick="saveScratchpad(false)" title="Save scratchpad to default note file">💾 Save</button>
               <button onclick="saveScratchpad(true)" title="Save scratchpad to a new file path">💾 Save As...</button>
-              <button class="btn-large" onclick="passScratchpadIntoPrimer()" title="Append scratchpad notes into primer context">➡ Pass Into Primer</button>
+              <button class="btn-large" onclick="passScratchpadIntoAnalysisPlan()" title="Insert scratchpad goals into the editable empirical analysis plan">Pass Into Analysis Plan</button>
             </div>
             <div class="btn-group" style="margin-top: 8px; align-items: center; justify-content: space-between; gap: 8px;">
               <button style="flex: 1; min-width: 0;" onclick="syncIdeaPadContext()" title="Sync the current idea pad note and, optionally, the visible project tree into the AI context">🔄 Sync AI Context</button>
@@ -1574,7 +1574,7 @@
                   <label for="settings-right-preserve-thread-history" style="margin: 0;">Keep right pane thread history when its model/provider changes</label>
                 </div>
                 <div style="font-size: 0.78rem; color: var(--accent-dim);">
-                  ON (default): the pane can keep referencing earlier context. OFF: only that pane resets to baseline primer when you change its model/provider.
+                  ON (default): the pane can keep referencing earlier context. OFF: only that pane resets to baseline awareness when you change its model/provider.
                 </div>
               </div>
 	        </div>
@@ -2001,7 +2001,7 @@
         </label>
         <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 0.85rem; color: var(--text);">
           <input type="checkbox" id="exit-reuse-notes" style="margin-top: 3px;">
-          <span>Reuse existing user notes for next session startup primer (default: off).</span>
+          <span>Reuse existing user notes for next session startup awareness (default: off).</span>
         </label>
       </div>
       <div class="form-group" style="margin-bottom: 10px;">
@@ -2013,7 +2013,7 @@
       </div>
       <div class="form-group" style="margin-bottom: 12px;">
         <label for="exit-notes-editor">Next-session carry-over notes (editable)</label>
-        <textarea id="exit-notes-editor" rows="5" style="width: 100%; box-sizing: border-box;" placeholder="Optional carry-over notes for next startup primer."></textarea>
+        <textarea id="exit-notes-editor" rows="5" style="width: 100%; box-sizing: border-box;" placeholder="Optional carry-over notes for next startup awareness."></textarea>
         <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
           Saved only when "Reuse existing user notes" is checked.
         </div>
@@ -2035,18 +2035,18 @@
 
   <div id="briefing-packet-modal" class="modal" style="z-index: 1140;">
     <div class="modal-content" style="width: 700px; max-height: 82vh; display: flex; flex-direction: column;">
-      <div class="modal-header">Primer Editor</div>
+      <div class="modal-header">Awareness Inspector</div>
       <div id="briefing-packet-meta" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
         Loading primer...
       </div>
-      <textarea id="briefing-packet-editor" rows="20" style="width: 100%; box-sizing: border-box; flex: 1; min-height: 220px;" placeholder="Primer content will appear here."></textarea>
+      <textarea id="briefing-packet-editor" rows="20" readonly style="width: 100%; box-sizing: border-box; flex: 1; min-height: 220px;" placeholder="Generated awareness content will appear here."></textarea>
       <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
-        First-session note: if no primer file exists yet, it will be generated after workspace context is available.
+        Generated awareness is read-only. Canonical refresh uses retrieval-first context; legacy recovery is explicit and replaces the current baseline slot.
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px;">
-        <button onclick="refreshBriefingPacketEditor()" title="Reload primer content from disk">Refresh</button>
-        <button onclick="saveBriefingPacketEdits()" title="Save primer packet changes">Save Packet</button>
-        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="syncBriefingPacketToThreads()" title="Send primer packet context to both AI lanes">Sync To AI Threads</button>
+        <button onclick="refreshBriefingPacketEditor()" title="Recompile and reload generated awareness">Refresh Inspection</button>
+        <button onclick="refreshCanonicalAwarenessFromInspector()" title="Refresh canonical retrieval-first awareness in both lanes">Refresh AI Awareness</button>
+        <button onclick="syncLegacyAwarenessToThreads()" title="Explicitly load bounded legacy excerpts for recovery or comparison">Use Legacy Recovery</button>
         <button onclick="closeBriefingPacketEditor()" title="Close primer editor modal">Close</button>
       </div>
     </div>
@@ -3289,7 +3289,7 @@
 
       if (lane === 'theory') {
         return [
-          'Startup primer injected at application load.',
+          'Startup awareness injected at application load.',
           'Role: theory development and model-structure reasoning.',
           `Project root: ${briefing.project_root || 'unset'}`,
           `Summary: ${briefing.summary || 'No summary available.'}`,
@@ -3304,7 +3304,7 @@
       }
 
       return [
-        'Startup primer injected at application load.',
+        'Startup awareness injected at application load.',
         'Role: empirical critique and test design guardrails.',
         `Project root: ${briefing.project_root || 'unset'}`,
         `Summary: ${briefing.summary || 'No summary available.'}`,
@@ -3395,8 +3395,8 @@
       }
 
       document.getElementById('briefing-indicator').innerText = isStartup
-        ? '🤖 Startup Primer Syncing...'
-        : '🤖 Syncing Briefing...';
+        ? 'Startup Awareness Syncing...'
+        : 'Refreshing Awareness...';
 
       try {
         const briefing = JSON.parse(await invoke('compile_ai_briefing'));
@@ -3405,25 +3405,25 @@
         const rightPrompt = buildPanePrimerText(briefing, 'critique');
 
         const primerProvenance = (promptText) => ({
-          source: isStartup ? 'startup_primer' : 'briefing_refresh',
+          source: isStartup ? 'startup_awareness' : 'awareness_refresh',
           trigger: isStartup ? 'application_start' : 'manual_sync',
           volatility: isStartup ? 'slowly_changing' : 'dynamic',
           slot: 'baseline_context',
           path: briefing?.generated_files?.ai_briefing || '',
           parts: buildPrimerContextParts(briefing, promptText)
         });
-        injectSystemPrimerMessage('left', leftIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', leftPrompt, primerProvenance(leftPrompt));
-        injectSystemPrimerMessage('right', rightIndex, isStartup ? 'Startup Primer' : 'Briefing Primer', rightPrompt, primerProvenance(rightPrompt));
+        injectSystemPrimerMessage('left', leftIndex, isStartup ? 'Startup Awareness' : 'Awareness Refresh', leftPrompt, primerProvenance(leftPrompt));
+        injectSystemPrimerMessage('right', rightIndex, isStartup ? 'Startup Awareness' : 'Awareness Refresh', rightPrompt, primerProvenance(rightPrompt));
 
         document.getElementById('briefing-indicator').innerText = briefing.status === 'Partial'
           ? '🤖 AI Synced (Partial Sources)'
           : '🤖 AI Synced (Ready)';
 
-        appendTerminalLog(`Primer synced (${briefing.status || 'unknown'}).`);
+        appendTerminalLog(`Awareness synced (${briefing.status || 'unknown'}).`);
         if (Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0) {
-          appendTerminalLog(`Primer diagnostics: ${briefing.diagnostics.join(' | ')}`);
+          appendTerminalLog(`Awareness diagnostics: ${briefing.diagnostics.join(' | ')}`);
         }
-        appendTerminalLog(`Primer file: ${briefing?.generated_files?.ai_briefing || 'not generated'}`);
+        appendTerminalLog(`Generated awareness file: ${briefing?.generated_files?.ai_briefing || 'not generated'}`);
         latestStructuralContext = briefing?.structural_context || null;
         appendTerminalLog(`Structural context: ${briefing?.generated_files?.structural_context || 'not generated'}`);
 
@@ -3835,7 +3835,7 @@
       if (pane !== 'left' && pane !== 'right') return;
 
       if (askConfirmation) {
-        const confirmed = window.confirm(`Reset the ${pane} pane to its baseline primer and clear only that pane's history?`);
+        const confirmed = window.confirm(`Reset the ${pane} pane to baseline awareness and clear only that pane's history?`);
         if (!confirmed) return;
       }
 
@@ -3851,18 +3851,18 @@
       try {
         const briefing = JSON.parse(await invoke('compile_ai_briefing'));
         const prompt = buildPanePrimerText(briefing, pane === 'left' ? 'theory' : 'critique');
-        injectSystemPrimerMessage(pane, 0, 'Pane Reset Primer', prompt, {
-          source: 'pane_reset_primer',
+        injectSystemPrimerMessage(pane, 0, 'Pane Reset Awareness', prompt, {
+          source: 'pane_reset_awareness',
           trigger: 'pane_reset',
           volatility: 'slowly_changing',
           slot: 'baseline_context',
           path: briefing?.generated_files?.ai_briefing || '',
           parts: buildPrimerContextParts(briefing, prompt)
         });
-        appendTerminalLog(`${pane === 'left' ? 'Left' : 'Right'} pane reset to baseline primer.`);
+        appendTerminalLog(`${pane === 'left' ? 'Left' : 'Right'} pane reset to baseline awareness.`);
         refreshContextProbeModeLabels();
       } catch (err) {
-        appendTerminalLog(`Pane reset primer sync error (${pane}): ${err}`);
+        appendTerminalLog(`Pane reset awareness sync error (${pane}): ${err}`);
       }
     }
 
@@ -6880,20 +6880,22 @@ async function restoreVersion() {
 
       try {
         const briefing = JSON.parse(await invoke('compile_ai_briefing'));
+        latestBriefingContext = briefing;
         const briefingFilePath = briefing?.generated_files?.ai_briefing || '';
         activeBriefingPacketPath = briefingFilePath;
         const content = briefing?.ai_briefing?.content || briefing?.summary || '';
 
         editor.value = content;
-        meta.textContent = `Status: ${briefing.status || 'unknown'} | File: ${briefingFilePath || 'unavailable'}`;
+        const promptMode = briefing?.structural_context?.prompt_core?.enabled ? 'structural core' : 'retrieval-first';
+        meta.textContent = `Status: ${briefing.status || 'unknown'} | Mode: ${promptMode} | Generated file: ${briefingFilePath || 'unavailable'}`;
         if (Array.isArray(briefing.diagnostics) && briefing.diagnostics.length > 0) {
-          appendTerminalLog(`Primer diagnostics: ${briefing.diagnostics.join(' | ')}`);
+          appendTerminalLog(`Awareness diagnostics: ${briefing.diagnostics.join(' | ')}`);
         }
       } catch (err) {
         activeBriefingPacketPath = currentWorkspacePath ? `${currentWorkspacePath}/ai_briefing.md` : 'ai_briefing.md';
-        meta.textContent = `Unable to compile primer: ${err}`;
+        meta.textContent = `Unable to compile awareness: ${err}`;
         editor.value = [
-          '# AI Primer',
+          '# Awareness Unavailable',
           '',
           '## Session Summary',
           '- Workspace is not fully initialized yet.',
@@ -6905,67 +6907,33 @@ async function restoreVersion() {
       }
     }
 
-    async function saveBriefingPacketEdits() {
-      const editor = document.getElementById('briefing-packet-editor');
-      const meta = document.getElementById('briefing-packet-meta');
-      if (!editor) return;
-
-      const content = editor.value.trim();
-      if (!content) {
-        appendTerminalLog('Primer save skipped: editor is empty.');
-        return;
-      }
-
-      const fallbackPath = currentWorkspacePath ? `${currentWorkspacePath}/ai_briefing.md` : 'ai_briefing.md';
-      const targetPath = activeBriefingPacketPath || fallbackPath;
-
-      try {
-        await invoke('save_scratchpad_content', { content, path: targetPath });
-        activeBriefingPacketPath = targetPath;
-        if (meta) {
-          meta.textContent = `Saved primer to ${targetPath}`;
-        }
-        appendTerminalLog(`Primer saved: ${targetPath}`);
-      } catch (err) {
-        appendTerminalLog(`Primer save error: ${err}`);
-      }
+    async function refreshCanonicalAwarenessFromInspector() {
+      await injectPrimerIntoThreads(false);
+      await refreshBriefingPacketEditor();
+      appendTerminalLog('Canonical retrieval-first awareness refreshed in both lanes.');
     }
 
-    async function syncBriefingPacketToThreads() {
-      const editor = document.getElementById('briefing-packet-editor');
-      if (!editor) return;
-
-      const packetText = editor.value.trim();
-      if (!packetText) {
-        appendTerminalLog('Primer sync skipped: packet is empty.');
-        return;
+    async function syncLegacyAwarenessToThreads() {
+      try {
+        const briefing = latestBriefingContext || JSON.parse(await invoke('compile_ai_briefing'));
+        latestBriefingContext = briefing;
+        const leftPrompt = buildPanePrimerText(briefing, 'theory', 'legacy');
+        const rightPrompt = buildPanePrimerText(briefing, 'critique', 'legacy');
+        const provenance = (promptText) => ({
+          source: 'legacy_awareness_recovery',
+          trigger: 'explicit_legacy_recovery',
+          volatility: 'slowly_changing',
+          slot: 'baseline_context',
+          path: activeBriefingPacketPath,
+          parts: buildPrimerContextParts(briefing, promptText)
+        });
+        injectSystemPrimerMessage('left', leftIndex, 'Legacy Recovery', leftPrompt, provenance(leftPrompt));
+        injectSystemPrimerMessage('right', rightIndex, 'Legacy Recovery', rightPrompt, provenance(rightPrompt));
+        document.getElementById('briefing-indicator').innerText = 'AI Synced (Legacy Recovery)';
+        appendTerminalLog('Explicit bounded legacy awareness replaced the baseline slot in both lanes.');
+      } catch (err) {
+        appendTerminalLog(`Legacy awareness recovery failed: ${err}`);
       }
-
-      await saveBriefingPacketEdits();
-
-      const leftPrompt = [
-        'Primer synced for theory lane.',
-        packetText,
-        'Focus: clarify assumptions and plan the highest-value model-development tasks first.'
-      ].join('\n\n');
-
-      const rightPrompt = [
-        'Primer synced for critique lane.',
-        packetText,
-        'Focus: identify empirical checkpoints, uncertainty risks, and falsification paths.'
-      ].join('\n\n');
-
-      const manualPrimerProvenance = {
-        source: 'manual_primer_override',
-        trigger: 'primer_editor_sync',
-        volatility: 'dynamic',
-        slot: 'baseline_context',
-        path: activeBriefingPacketPath
-      };
-      injectSystemPrimerMessage('left', leftIndex, 'Primer', leftPrompt, manualPrimerProvenance);
-      injectSystemPrimerMessage('right', rightIndex, 'Primer', rightPrompt, manualPrimerProvenance);
-      document.getElementById('briefing-indicator').innerText = '🤖 AI Synced (Packet Edited)';
-      appendTerminalLog('Edited primer synced to both AI threads.');
     }
 
     async function closeAppWindow() {
@@ -7346,7 +7314,7 @@ async function restoreVersion() {
 
         if (baselineResetTriggered) {
           await injectPrimerIntoThreads(false);
-          appendTerminalLog('Baseline primer re-synced after model switch for clean testing.');
+          appendTerminalLog('Baseline awareness re-synced after model switch for clean testing.');
         }
 
         localStorage.setItem('physics-ide-settings-fallback', JSON.stringify(payload));
@@ -7622,19 +7590,56 @@ async function restoreVersion() {
       }
     }
 
-    function passScratchpadIntoPrimer() {
+    async function syncIdeaPadContext() {
+      const note = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
+      const includeTree = document.getElementById('idea-pad-include-file-tree')?.checked === true;
+      if (!note && !includeTree) {
+        appendTerminalLog('Idea pad sync skipped: note is empty and visible tree inclusion is off.');
+        return;
+      }
+
+      const contextParts = [];
+      const promptParts = ['Dynamic session notes. Do not treat these notes as canonical theory source records.'];
+      if (note) {
+        contextParts.push({ source: 'idea_pad', content: note });
+        promptParts.push(`Idea pad note:\n${note}`);
+      }
+      if (includeTree) {
+        const visibleTree = buildVisibleProjectTreeMarkdown();
+        const treeBudget = 12000;
+        const treeContent = visibleTree.length > treeBudget
+          ? `${visibleTree.slice(0, treeBudget)}\n[visible tree truncated at ${treeBudget} characters]`
+          : visibleTree;
+        contextParts.push({ source: 'visible_tree', content: treeContent });
+        promptParts.push(`Visible project scope:\n${treeContent}`);
+      }
+      const prompt = promptParts.join('\n\n');
+      const provenance = {
+        source: 'idea_pad',
+        trigger: 'explicit_note_sync',
+        volatility: 'dynamic',
+        slot: 'session_notes',
+        parts: contextParts
+      };
+      injectSystemPrimerMessage('left', leftIndex, 'Session Notes', prompt, provenance);
+      injectSystemPrimerMessage('right', rightIndex, 'Session Notes', prompt, provenance);
+      appendTerminalLog(`Dynamic idea-pad context synced to both lanes (${note.length} note characters${includeTree ? ', visible tree included' : ''}).`);
+      await refreshRequestInspector();
+    }
+
+    function passScratchpadIntoAnalysisPlan() {
       const scratchpadText = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
       const outputEl = document.getElementById('analysis-primer-output');
       const statusEl = document.getElementById('analysis-status');
 
       if (!outputEl) {
-        appendTerminalLog('Primer output field is not available.');
+        appendTerminalLog('Analysis plan output field is not available.');
         return;
       }
 
       if (!scratchpadText) {
-        if (statusEl) statusEl.textContent = 'Scratchpad is empty: nothing passed to primer.';
-        appendTerminalLog('Scratchpad is empty: no content passed into primer.');
+        if (statusEl) statusEl.textContent = 'Scratchpad is empty: nothing passed to the analysis plan.';
+        appendTerminalLog('Scratchpad is empty: no content passed into the analysis plan.');
         return;
       }
 
@@ -7651,8 +7656,8 @@ async function restoreVersion() {
         outputEl.value = `${existing.trimEnd()}\n\n${sectionText}`;
       }
 
-      if (statusEl) statusEl.textContent = 'Scratchpad goals passed into primer output.';
-      appendTerminalLog('Scratchpad content inserted into empirical primer output.');
+      if (statusEl) statusEl.textContent = 'Scratchpad goals passed into the analysis plan.';
+      appendTerminalLog('Scratchpad content inserted into the empirical analysis plan.');
     }
 
     async function runEmpiricalAnalysis() {
