@@ -67,6 +67,7 @@ struct OpenAiApiError {
 pub struct AppState {
     pub workspace_path: std::sync::Mutex<String>,
     pub llm_usage: std::sync::Mutex<std::collections::HashMap<String, ThreadUsageState>>,
+    embedding_model: std::sync::Mutex<Option<fastembed::TextEmbedding>>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -5160,6 +5161,24 @@ fn load_local_embedding_model(directory: &Path) -> Result<fastembed::TextEmbeddi
     .map_err(|e| format!("Failed to initialize local embedding model: {e}"))
 }
 
+fn with_local_embedding_model<T, F>(
+    state: &AppState,
+    directory: &Path,
+    operation: F,
+) -> Result<T, String>
+where
+    F: FnOnce(&mut fastembed::TextEmbedding) -> Result<T, String>,
+{
+    let mut cached = state
+        .embedding_model
+        .lock()
+        .map_err(|_| "Local embedding model cache is unavailable.".to_string())?;
+    if cached.is_none() {
+        *cached = Some(load_local_embedding_model(directory)?);
+    }
+    operation(cached.as_mut().expect("embedding model initialized"))
+}
+
 fn register_sqlite_vec() {
     REGISTER_SQLITE_VEC.call_once(|| unsafe {
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
@@ -5584,40 +5603,132 @@ fn fts_query(query: &str) -> String {
         .join(" OR ")
 }
 
-fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> Result<serde_json::Value, String> {
+#[derive(Default)]
+struct RetrievalFusionCandidate {
+    score: f64,
+    lexical_rank: Option<usize>,
+    lexical_score: Option<f64>,
+    vector_rank: Option<usize>,
+    vector_distance: Option<f64>,
+}
+
+fn query_retrieval_index_hybrid_value(
+    index_path: &Path,
+    query: &str,
+    limit: usize,
+    query_embedding: Option<&[f32]>,
+) -> Result<serde_json::Value, String> {
+    const RRF_K: f64 = 60.0;
     let match_query = fts_query(query);
-    if match_query.is_empty() {
-        return Ok(serde_json::json!({"status": "ok", "results": [], "search_mode": "fts5_lexical_with_neighbors"}));
-    }
     let connection = open_retrieval_index(index_path)?;
-    let mut statement = connection
-        .prepare(
-            "SELECT chunk_id, path, chunk_index, line_start, line_end, heading, content, bm25(retrieval_chunks) AS rank
-             FROM retrieval_chunks
-             WHERE retrieval_chunks MATCH ?1
-             ORDER BY rank ASC, path ASC, chunk_index ASC
-             LIMIT ?2",
-        )
-        .map_err(|e| format!("Failed to prepare retrieval query: {e}"))?;
-    let matches = statement
-        .query_map(rusqlite::params![match_query, limit.clamp(1, 20) as i64], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, f64>(7)?,
-            ))
-        })
-        .map_err(|e| format!("Failed to execute retrieval query: {e}"))?
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
+    let result_limit = limit.clamp(1, 20);
+    let candidate_limit = (result_limit * 4).clamp(20, 80);
+    let mut candidates = std::collections::BTreeMap::<String, RetrievalFusionCandidate>::new();
+    let mut lexical_candidate_count = 0usize;
+    if !match_query.is_empty() {
+        let lexical_matches = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT chunk_id, bm25(retrieval_chunks) AS rank
+                     FROM retrieval_chunks
+                     WHERE retrieval_chunks MATCH ?1
+                     ORDER BY rank ASC, path ASC, chunk_index ASC
+                     LIMIT ?2",
+                )
+                .map_err(|e| format!("Failed to prepare lexical retrieval query: {e}"))?;
+            let rows = statement
+                .query_map(rusqlite::params![match_query, candidate_limit as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+                })
+                .map_err(|e| format!("Failed to execute lexical retrieval query: {e}"))?
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            rows
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for (chunk_id, lexical_score) in lexical_matches {
+            if !seen.insert(chunk_id.clone()) {
+                continue;
+            }
+            lexical_candidate_count += 1;
+            let candidate = candidates.entry(chunk_id).or_default();
+            candidate.lexical_rank = Some(lexical_candidate_count);
+            candidate.lexical_score = Some(lexical_score);
+            candidate.score += 1.0 / (RRF_K + lexical_candidate_count as f64);
+        }
+    }
+
+    let mut vector_candidate_count = 0usize;
+    if let Some(embedding) = query_embedding.filter(|values| values.len() == RETRIEVAL_EMBEDDING_DIMENSIONS) {
+        let model_fingerprint = format!("{}@{}", RETRIEVAL_EMBEDDING_MODEL_ID, RETRIEVAL_EMBEDDING_MODEL_REVISION);
+        let vector_matches = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT records.chunk_id, vectors.distance
+                     FROM retrieval_vectors AS vectors
+                     JOIN retrieval_vector_records AS records ON records.vector_rowid = vectors.rowid
+                                         WHERE vectors.embedding MATCH ?1 AND k = ?2
+                                             AND records.model_id = ?3
+                                             AND records.dimensions = ?4
+                     ORDER BY vectors.distance ASC, records.chunk_id ASC",
+                )
+                .map_err(|e| format!("Failed to prepare vector retrieval query: {e}"))?;
+            let rows = statement
+                .query_map(
+                    rusqlite::params![
+                        encode_embedding(embedding),
+                        candidate_limit as i64,
+                        model_fingerprint,
+                        RETRIEVAL_EMBEDDING_DIMENSIONS as i64
+                    ],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+                )
+                .map_err(|e| format!("Failed to execute vector retrieval query: {e}"))?
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            rows
+        };
+        for (index, (chunk_id, distance)) in vector_matches.into_iter().enumerate() {
+            let rank = index + 1;
+            vector_candidate_count += 1;
+            let candidate = candidates.entry(chunk_id).or_default();
+            candidate.vector_rank = Some(rank);
+            candidate.vector_distance = Some(distance);
+            candidate.score += 1.0 / (RRF_K + rank as f64);
+        }
+    }
+
+    let mut ranked = candidates.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|(left_id, left), (right_id, right)| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left_id.cmp(right_id))
+    });
+    ranked.truncate(result_limit);
 
     let mut results = Vec::new();
-    for (chunk_id, path, chunk_index, line_start, line_end, heading, content, rank) in matches {
+    for (chunk_id, fusion) in ranked {
+        let (path, chunk_index, line_start, line_end, heading, content) = connection
+            .query_row(
+                "SELECT path, chunk_index, line_start, line_end, heading, content
+                 FROM retrieval_chunks
+                 WHERE chunk_id = ?1
+                 ORDER BY path ASC, chunk_index ASC
+                 LIMIT 1",
+                [&chunk_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .map_err(|e| format!("Failed to load fused retrieval result: {e}"))?;
         let mut neighbors = Vec::new();
         let mut neighbor_statement = connection
             .prepare(
@@ -5650,17 +5761,32 @@ fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> 
             "line_end": line_end,
             "heading": heading,
             "content": content,
-            "rank": rank,
+            "rank": fusion.score,
+            "fusion_score": fusion.score,
+            "lexical_rank": fusion.lexical_rank,
+            "lexical_score": fusion.lexical_score,
+            "vector_rank": fusion.vector_rank,
+            "vector_distance": fusion.vector_distance,
             "neighbors": neighbors
         }));
     }
 
+    let vector_used = query_embedding.is_some() && vector_candidate_count > 0;
     Ok(serde_json::json!({
         "status": "ok",
-        "search_mode": "fts5_lexical_with_neighbors",
+        "search_mode": if vector_used { "hybrid_rrf_fts5_vector_with_neighbors" } else { "fts5_lexical_with_neighbors" },
+        "fusion": if vector_used { "reciprocal_rank_fusion" } else { "lexical_only" },
+        "rrf_k": if vector_used { Some(RRF_K) } else { None },
+        "lexical_candidates": lexical_candidate_count,
+        "vector_candidates": vector_candidate_count,
+        "vector_status": if vector_used { "used" } else if query_embedding.is_some() { "index_empty" } else { "unavailable" },
         "query": query,
         "results": results
     }))
+}
+
+fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> Result<serde_json::Value, String> {
+    query_retrieval_index_hybrid_value(index_path, query, limit, None)
 }
 
 fn delete_retrieval_index_value(index_path: &Path) -> Result<serde_json::Value, String> {
@@ -5689,7 +5815,11 @@ fn delete_retrieval_index_value(index_path: &Path) -> Result<serde_json::Value, 
 }
 
 #[tauri::command]
-fn refresh_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
+fn refresh_retrieval_index(
+    workspace_path: String,
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let root = PathBuf::from(workspace_path.trim());
     if !root.exists() || !root.is_dir() {
         return Err("Workspace path is missing or invalid for retrieval indexing.".to_string());
@@ -5700,11 +5830,12 @@ fn refresh_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Res
     let model_status = embedding_model_status_value(&model_directory);
     result["embedding_status"] = model_status["status"].clone();
     if model_status["status"] == "ready" {
-        let mut model = load_local_embedding_model(&model_directory)?;
-        let vector_sync = sync_retrieval_vectors_value(&index_path, |texts| {
-            model
-                .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
-                .map_err(|e| format!("Failed to embed retrieval chunks: {e}"))
+        let vector_sync = with_local_embedding_model(&state, &model_directory, |model| {
+            sync_retrieval_vectors_value(&index_path, |texts| {
+                model
+                    .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
+                    .map_err(|e| format!("Failed to embed retrieval chunks: {e}"))
+            })
         })?;
         result["vector_sync"] = vector_sync;
         result["search_mode"] = serde_json::Value::String("fts5_lexical_with_neighbors_vector_index_ready".to_string());
@@ -5717,6 +5848,7 @@ fn query_retrieval_index(
     workspace_path: String,
     query: String,
     limit: Option<usize>,
+    state: tauri::State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let root = PathBuf::from(workspace_path.trim());
@@ -5724,7 +5856,20 @@ fn query_retrieval_index(
         return Err("Workspace path is missing or invalid for retrieval query.".to_string());
     }
     let index_path = retrieval_index_path(&app, &root)?;
-    Ok(query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?.to_string())
+    let model_directory = embedding_model_dir(&app)?;
+    let query_embedding = with_local_embedding_model(&state, &model_directory, |model| {
+            model
+                .embed(vec![query.as_str()], Some(1))
+                .map_err(|e| format!("Failed to embed retrieval query: {e}"))
+        })
+        .ok()
+        .and_then(|mut embeddings| embeddings.pop());
+    let result = if let Some(embedding) = query_embedding.as_deref() {
+        query_retrieval_index_hybrid_value(&index_path, &query, limit.unwrap_or(8), Some(embedding))?
+    } else {
+        query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?
+    };
+    Ok(result.to_string())
 }
 
 #[tauri::command]
@@ -5743,8 +5888,16 @@ fn get_embedding_model_status(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn install_embedding_model(app: tauri::AppHandle) -> Result<String, String> {
-    Ok(install_embedding_model_value(&embedding_model_dir(&app)?)?.to_string())
+fn install_embedding_model(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let result = install_embedding_model_value(&embedding_model_dir(&app)?)?;
+    *state
+        .embedding_model
+        .lock()
+        .map_err(|_| "Local embedding model cache is unavailable.".to_string())? = None;
+    Ok(result.to_string())
 }
 
 fn render_manuscript_content(
@@ -8348,6 +8501,62 @@ mod tests {
     }
 
     #[test]
+    fn fuses_lexical_and_vector_candidates_without_theory_specific_rules() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_hybrid_retrieval_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            temp_dir.join("theory.md"),
+            "# Dual evidence\nNeutrino mass follows the internal coupling.\n\n## Lexical evidence\nNeutrino observations constrain the detector.\n\n## Semantic bridge\nThe hidden boundary response follows the internal coupling.\n",
+        )
+        .unwrap();
+        refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        sync_retrieval_vectors_value(&index_path, |texts| {
+            Ok(texts
+                .iter()
+                .map(|text| {
+                    let mut embedding = vec![0.0f32; RETRIEVAL_EMBEDDING_DIMENSIONS];
+                    if text.contains("Neutrino mass") || text.contains("hidden boundary") {
+                        embedding[0] = 1.0;
+                    } else {
+                        embedding[1] = 1.0;
+                    }
+                    embedding
+                })
+                .collect::<Vec<_>>())
+        })
+        .unwrap();
+
+        let mut query_embedding = vec![0.0f32; RETRIEVAL_EMBEDDING_DIMENSIONS];
+        query_embedding[0] = 1.0;
+        let result = query_retrieval_index_hybrid_value(
+            &index_path,
+            "neutrino mass",
+            3,
+            Some(&query_embedding),
+        )
+        .unwrap();
+        assert_eq!(result["search_mode"], "hybrid_rrf_fts5_vector_with_neighbors");
+        assert_eq!(result["vector_status"], "used");
+        let rows = result["results"].as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0]["content"].as_str().unwrap().contains("Neutrino mass"));
+        assert!(rows[0]["lexical_rank"].is_number());
+        assert!(rows[0]["vector_rank"].is_number());
+        assert!(rows.iter().any(|row| {
+            row["content"].as_str().unwrap().contains("hidden boundary")
+                && row["lexical_rank"].is_null()
+                && row["vector_rank"].is_number()
+        }));
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
     #[ignore = "requires PHYSICS_IDE_EMBEDDING_MODEL_DIR with the pinned local model assets"]
     fn embeds_with_verified_local_model_assets() {
         let directory = std::env::var("PHYSICS_IDE_EMBEDDING_MODEL_DIR").unwrap();
@@ -8383,6 +8592,21 @@ mod tests {
             .unwrap();
         assert_eq!(vector_count, 1);
         drop(connection);
+        let query_embedding = model
+            .embed(vec!["What determines the boundary response?"], Some(1))
+            .unwrap()
+            .pop()
+            .unwrap();
+        let query = query_retrieval_index_hybrid_value(
+            &index_path,
+            "What determines the boundary response?",
+            4,
+            Some(&query_embedding),
+        )
+        .unwrap();
+        assert_eq!(query["search_mode"], "hybrid_rrf_fts5_vector_with_neighbors");
+        assert_eq!(query["vector_status"], "used");
+        assert_eq!(query["results"].as_array().unwrap().len(), 1);
         delete_retrieval_index_value(&index_path).unwrap();
     }
 
@@ -8798,6 +9022,7 @@ pub fn run() {
             app.manage(AppState {
                 workspace_path: std::sync::Mutex::new(initial_path),
                 llm_usage: std::sync::Mutex::new(std::collections::HashMap::new()),
+                embedding_model: std::sync::Mutex::new(None),
             });
 
             Ok(())

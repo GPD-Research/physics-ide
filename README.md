@@ -35,8 +35,9 @@ The project has moved from a simple desktop shell toward a more practical theory
 - validated the local vector foundation with statically linked `sqlite-vec`, a 384-dimensional cosine index, and FastEmbed model metadata without network-dependent tests;
 - added an explicit 91 MB local model installer with immutable revision pinning, per-file SHA-256 verification, app-local storage, and a required offline inference activation probe;
 - connected index refresh to incremental local embeddings with stable-ID reuse, transactional changed/deleted-vector invalidation, and inspector diagnostics;
+- added hybrid retrieval using symmetric reciprocal-rank fusion across FTS5 and cosine-vector candidates, cached local inference, rank provenance, and lexical fallback;
 - limited indexed evidence sent to provider prompts to a global 6,000-character budget;
-- expanded the backend regression suite to 56 passing tests plus an explicit model-install and real-vector persistence probe.
+- expanded the backend regression suite to 57 passing tests plus an explicit model-install, real-vector persistence, and hybrid-query probe.
 
 ### Latest progress (2026-08-11)
 

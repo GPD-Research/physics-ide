@@ -167,7 +167,7 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 - [ ] Derive indexed vocabulary and structural relations from project files without injecting theory-family labels or consensus-ranking priors.
 - [ ] Store source path, stable section ID, heading ancestry, content hash, embedding model/version, vector dimensions, and modification time with every record.
 - [x] Add incremental indexing so unchanged chunks retain their vectors and changed or deleted chunks update transactionally.
-- [ ] Combine vector similarity with FTS5 or equivalent lexical search so exact mathematical symbols and rare terms are not lost.
+- [x] Combine vector similarity with FTS5 or equivalent lexical search so exact mathematical symbols and rare terms are not lost.
 - [ ] Add graph-neighborhood expansion for directly related axioms, definitions, equations, experiments, and contradictions.
 - [ ] Enforce configurable retrieval and token budgets before provider dispatch.
 - [ ] Show retrieved sources, relevance scores, index freshness, and embedding model in diagnostics.
@@ -475,9 +475,11 @@ The first vector compatibility gate is validated on x86_64 Ubuntu with bundled S
 
 Model artifacts are installed explicitly rather than committed to Git or embedded in the application package. The Request Inspector offers an `Install Vector Model` action that downloads 91.1 MB into Tauri application-local data from the immutable revision above, verifies the pinned size and SHA-256 of all five files, and requires a successful 384-dimensional local inference probe before reporting `ready`. FastEmbed then loads only verified local bytes through its user-defined in-memory API; no model-fetching feature is compiled into the runtime, so subsequent indexing and queries can operate offline. CPU inference is capped at two intra-operation threads for laptop use and does not require a GPU.
 
-Index refresh now backfills vectors for existing chunks, retains unchanged vectors, replaces only changed stable chunk IDs, removes deleted or model-stale vectors, and commits each vector synchronization atomically. Failed inference leaves the prior vector store untouched. The Request Inspector reports embedded and removed vector counts. Query ranking remains lexical with explanatory neighbors until hybrid FTS5/vector reranking is connected next.
+Index refresh now backfills vectors for existing chunks, retains unchanged vectors, replaces only changed stable chunk IDs, removes deleted or model-stale vectors, and commits each vector synchronization atomically. Failed inference leaves the prior vector store untouched. The Request Inspector reports embedded and removed vector counts.
 
-Release approval still requires packaged Linux tests, model-license attribution in release artifacts, hybrid query integration, and benchmark evidence across materially different theory families.
+Queries now embed locally and combine FTS5 and cosine-vector candidate ranks with symmetric reciprocal-rank fusion (`k=60`). Results expose fused score, lexical rank, vector rank, vector distance, and explanatory neighbors. No theory-family labels or consensus priors affect ranking. Missing model assets or vectors fall back to lexical retrieval, and the verified ONNX session is cached after first use to avoid repeated initialization.
+
+Release approval still requires packaged Linux tests, model-license attribution in release artifacts, typed graph-neighborhood expansion, and benchmark evidence across materially different theory families.
 
 ### Sprint 6: Add directory cost guidance
 

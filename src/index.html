@@ -6495,9 +6495,13 @@ async function restoreVersion() {
           query,
           limit: 6
         }));
-        const lines = [`Mode: ${result.search_mode || 'unavailable'} | Results: ${(result.results || []).length}`];
+        const lines = [
+          `Mode: ${result.search_mode || 'unavailable'} | Results: ${(result.results || []).length}`,
+          `Fusion: ${result.fusion || 'unavailable'} | lexical candidates: ${result.lexical_candidates ?? 0} | vector candidates: ${result.vector_candidates ?? 0} | vectors: ${result.vector_status || 'unavailable'}`
+        ];
         (result.results || []).forEach((row, index) => {
-          lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | rank=${Number(row.rank || 0).toFixed(4)}`);
+          lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | score=${Number(row.fusion_score || row.rank || 0).toFixed(6)}`);
+          lines.push(`   lexical rank=${row.lexical_rank ?? '-'} | vector rank=${row.vector_rank ?? '-'} | vector distance=${row.vector_distance == null ? '-' : Number(row.vector_distance).toFixed(6)}`);
           if (row.heading) lines.push(`   ${row.heading}`);
           lines.push(`   neighbors=${(row.neighbors || []).length}`);
         });
