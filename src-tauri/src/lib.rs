@@ -5330,6 +5330,31 @@ fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> 
     }))
 }
 
+fn delete_retrieval_index_value(index_path: &Path) -> Result<serde_json::Value, String> {
+    let sidecar_paths = [
+        index_path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", index_path.to_string_lossy())),
+        PathBuf::from(format!("{}-shm", index_path.to_string_lossy())),
+    ];
+    let mut deleted_files = 0usize;
+    for path in sidecar_paths {
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|e| format!("Failed to delete local retrieval index {}: {e}", path.display()))?;
+            deleted_files += 1;
+        }
+    }
+    if let Some(parent) = index_path.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+
+    Ok(serde_json::json!({
+        "status": if deleted_files > 0 { "deleted" } else { "not_found" },
+        "deleted_files": deleted_files,
+        "index_path": index_path.to_string_lossy().to_string()
+    }))
+}
+
 #[tauri::command]
 fn refresh_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
     let root = PathBuf::from(workspace_path.trim());
@@ -5353,6 +5378,16 @@ fn query_retrieval_index(
     }
     let index_path = retrieval_index_path(&app, &root)?;
     Ok(query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?.to_string())
+}
+
+#[tauri::command]
+fn delete_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let root = PathBuf::from(workspace_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err("Workspace path is missing or invalid for retrieval index deletion.".to_string());
+    }
+    let index_path = retrieval_index_path(&app, &root)?;
+    Ok(delete_retrieval_index_value(&index_path)?.to_string())
 }
 
 fn render_manuscript_content(
@@ -7822,6 +7857,27 @@ mod tests {
     }
 
     #[test]
+    fn deletes_local_retrieval_index_and_sqlite_sidecars() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_retrieval_delete_test_{}", std::process::id()));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(&index_path, "index").unwrap();
+        fs::write(format!("{}-wal", index_path.to_string_lossy()), "wal").unwrap();
+        fs::write(format!("{}-shm", index_path.to_string_lossy()), "shm").unwrap();
+
+        let deleted = delete_retrieval_index_value(&index_path).unwrap();
+        assert_eq!(deleted["status"], "deleted");
+        assert_eq!(deleted["deleted_files"].as_u64().unwrap(), 3);
+        assert!(!index_path.exists());
+        assert!(!temp_dir.exists());
+
+        let absent = delete_retrieval_index_value(&index_path).unwrap();
+        assert_eq!(absent["status"], "not_found");
+        assert_eq!(absent["deleted_files"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
     fn classifies_left_field_theory_as_non_mainstream() {
         let temp_dir = std::env::temp_dir().join("physics_ide_left_field_style_test");
         let _ = fs::remove_dir_all(&temp_dir);
@@ -8265,6 +8321,7 @@ pub fn run() {
             collect_probe_evidence,
             refresh_retrieval_index,
             query_retrieval_index,
+            delete_retrieval_index,
             render_manuscript,
             launch_file_editor,
             detach_terminal_shell,

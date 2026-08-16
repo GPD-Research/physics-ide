@@ -2063,6 +2063,7 @@
         </select>
         <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
         <button id="retrieval-index-refresh" onclick="refreshLocalRetrievalIndex()" title="Incrementally index changed Markdown files for local retrieval">Refresh Local Index</button>
+        <button id="retrieval-index-delete" onclick="deleteLocalRetrievalIndex()" title="Delete the project-scoped local retrieval index">Delete Local Index</button>
         <button id="request-inspector-cache-probe" onclick="runOpenAiCacheProbe()" title="Run up to two small OpenAI requests to test native prompt caching">Run Cache Probe</button>
       </div>
       <div id="request-inspector-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">No request inspected yet.</div>
@@ -6499,6 +6500,32 @@ async function restoreVersion() {
         output.value = lines.join('\n');
       } catch (err) {
         output.value = `Local retrieval query failed: ${err}. Refresh the index first.`;
+      }
+    }
+
+    async function deleteLocalRetrievalIndex() {
+      const output = document.getElementById('retrieval-query-output');
+      const button = document.getElementById('retrieval-index-delete');
+      if (!output || !button) return;
+      if (!currentWorkspacePath) {
+        output.value = 'Load a workspace before deleting its local retrieval index.';
+        return;
+      }
+      if (!confirm('Delete this workspace\'s local retrieval index? Source files will not be changed.')) return;
+
+      button.disabled = true;
+      output.value = 'Deleting local retrieval index...';
+      try {
+        const result = JSON.parse(await invoke('delete_retrieval_index', {
+          workspacePath: currentWorkspacePath
+        }));
+        output.value = result.status === 'deleted'
+          ? `Local retrieval index deleted (${result.deleted_files || 0} database files removed).`
+          : 'No local retrieval index exists for this workspace.';
+      } catch (err) {
+        output.value = `Local retrieval index deletion failed: ${err}`;
+      } finally {
+        button.disabled = false;
       }
     }
 

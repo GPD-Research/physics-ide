@@ -449,7 +449,7 @@ The first Sprint 5 increment uses bundled SQLite with FTS5 before adding embeddi
 - deterministic heading/line chunks bounded to approximately 4,000 Unicode characters;
 - FTS5 lexical ranking with adjacent explanatory chunks;
 - a 6,000-character global evidence budget before selected snippets enter provider prompts;
-- Request Inspector refresh/query diagnostics;
+- Request Inspector refresh, query, and safe local-index deletion controls;
 - context-probe integration with fallback to the legacy recursive evidence scan.
 
 This is not yet vector retrieval. The embedding model and `sqlite-vec`/validated vector extension remain open, but will reuse the stable chunk IDs and incremental metadata contract established here.
