@@ -2064,6 +2064,7 @@
         <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
         <button id="retrieval-index-refresh" onclick="refreshLocalRetrievalIndex()" title="Incrementally index changed Markdown files for local retrieval">Refresh Local Index</button>
         <button id="embedding-model-install" onclick="installLocalEmbeddingModel()" title="Download and verify the local embedding model for offline vector indexing">Install Vector Model</button>
+        <button id="retrieval-benchmark-run" onclick="runLocalRetrievalBenchmark()" title="Compare local hybrid, lexical-only, and vector-only retrieval across the built-in cross-theory fixture">Run Retrieval Benchmark</button>
         <button id="retrieval-index-delete" onclick="deleteLocalRetrievalIndex()" title="Delete the project-scoped local retrieval index">Delete Local Index</button>
         <button id="request-inspector-cache-probe" onclick="runOpenAiCacheProbe()" title="Run up to two small OpenAI requests to test native prompt caching">Run Cache Probe</button>
       </div>
@@ -6569,6 +6570,32 @@ async function restoreVersion() {
           : 'No local retrieval index exists for this workspace.';
       } catch (err) {
         output.value = `Local retrieval index deletion failed: ${err}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function runLocalRetrievalBenchmark() {
+      const output = document.getElementById('retrieval-query-output');
+      const button = document.getElementById('retrieval-benchmark-run');
+      if (!output || !button) return;
+      button.disabled = true;
+      output.value = 'Running local cross-theory retrieval benchmark...';
+      try {
+        const result = JSON.parse(await invoke('run_retrieval_benchmark'));
+        const recall = result.recall_at_3 || {};
+        const lines = [
+          `Benchmark: ${String(result.status || 'unknown').toUpperCase()} | fixture=${result.fixture || 'unavailable'}`,
+          `Families: ${result.family_count ?? 0} | cases: ${result.case_count ?? 0} | fingerprint=${result.fixture_fingerprint || 'unavailable'}`,
+          `Recall@3: lexical=${Number(recall.lexical || 0).toFixed(3)} | vector=${Number(recall.vector || 0).toFixed(3)} | hybrid=${Number(recall.hybrid || 0).toFixed(3)}`,
+          `Hybrid non-inferior: ${result.hybrid_non_inferior === true ? 'yes' : 'no'} | strictly beats both: ${result.hybrid_outperforms_baselines === true ? 'yes' : 'no'} | graph coverage: ${result.graph?.hits ?? 0}/${result.graph?.cases ?? 0}`
+        ];
+        (result.cases || []).forEach((row) => {
+          lines.push(`${row.id} [${row.family}/${row.category}] lexical=${row.lexical_rank ?? '-'} vector=${row.vector_rank ?? '-'} hybrid=${row.hybrid_rank ?? '-'} graph=${row.graph_hit == null ? '-' : row.graph_hit}`);
+        });
+        output.value = lines.join('\n');
+      } catch (err) {
+        output.value = `Retrieval benchmark failed: ${err}. Install the vector model first.`;
       } finally {
         button.disabled = false;
       }

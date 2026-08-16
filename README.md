@@ -37,8 +37,9 @@ The project has moved from a simple desktop shell toward a more practical theory
 - connected index refresh to incremental local embeddings with stable-ID reuse, transactional changed/deleted-vector invalidation, and inspector diagnostics;
 - added hybrid retrieval using symmetric reciprocal-rank fusion across FTS5 and cosine-vector candidates, cached local inference, rank provenance, and lexical fallback;
 - added deterministic typed graph-neighbor expansion from explicit project-source relation statements, with bounded provider context and inspector provenance;
+- added a provider-free four-family retrieval benchmark comparing lexical-only, vector-only, and hybrid Recall@3 with graph coverage and per-case provenance;
 - limited indexed evidence sent to provider prompts to a global 6,000-character budget;
-- expanded the backend regression suite to 58 passing tests plus an explicit model-install, real-vector persistence, and hybrid-query probe.
+- expanded the backend regression suite to 59 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
 
 ### Latest progress (2026-08-11)
 

@@ -5780,11 +5780,19 @@ struct RetrievalFusionCandidate {
     vector_distance: Option<f64>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RetrievalQueryMode {
+    Lexical,
+    Vector,
+    Hybrid,
+}
+
 fn query_retrieval_index_hybrid_value(
     index_path: &Path,
     query: &str,
     limit: usize,
     query_embedding: Option<&[f32]>,
+    mode: RetrievalQueryMode,
 ) -> Result<serde_json::Value, String> {
     const RRF_K: f64 = 60.0;
     let match_query = fts_query(query);
@@ -5793,7 +5801,7 @@ fn query_retrieval_index_hybrid_value(
     let candidate_limit = (result_limit * 4).clamp(20, 80);
     let mut candidates = std::collections::BTreeMap::<String, RetrievalFusionCandidate>::new();
     let mut lexical_candidate_count = 0usize;
-    if !match_query.is_empty() {
+    if mode != RetrievalQueryMode::Vector && !match_query.is_empty() {
         let lexical_matches = {
             let mut statement = connection
                 .prepare(
@@ -5827,7 +5835,8 @@ fn query_retrieval_index_hybrid_value(
     }
 
     let mut vector_candidate_count = 0usize;
-    if let Some(embedding) = query_embedding.filter(|values| values.len() == RETRIEVAL_EMBEDDING_DIMENSIONS) {
+    if mode != RetrievalQueryMode::Lexical {
+        if let Some(embedding) = query_embedding.filter(|values| values.len() == RETRIEVAL_EMBEDDING_DIMENSIONS) {
         let model_fingerprint = format!("{}@{}", RETRIEVAL_EMBEDDING_MODEL_ID, RETRIEVAL_EMBEDDING_MODEL_REVISION);
         let vector_matches = {
             let mut statement = connection
@@ -5863,6 +5872,7 @@ fn query_retrieval_index_hybrid_value(
             candidate.vector_rank = Some(rank);
             candidate.vector_distance = Some(distance);
             candidate.score += 1.0 / (RRF_K + rank as f64);
+        }
         }
     }
 
@@ -5944,9 +5954,13 @@ fn query_retrieval_index_hybrid_value(
     let vector_used = query_embedding.is_some() && vector_candidate_count > 0;
     Ok(serde_json::json!({
         "status": "ok",
-        "search_mode": if vector_used { "hybrid_rrf_fts5_vector_with_neighbors" } else { "fts5_lexical_with_neighbors" },
-        "fusion": if vector_used { "reciprocal_rank_fusion" } else { "lexical_only" },
-        "rrf_k": if vector_used { Some(RRF_K) } else { None },
+        "search_mode": match mode {
+            RetrievalQueryMode::Hybrid if vector_used => "hybrid_rrf_fts5_vector_with_neighbors",
+            RetrievalQueryMode::Vector if vector_used => "vector_only_with_neighbors",
+            _ => "fts5_lexical_with_neighbors"
+        },
+        "fusion": if mode == RetrievalQueryMode::Hybrid && vector_used { "reciprocal_rank_fusion" } else if mode == RetrievalQueryMode::Vector && vector_used { "vector_only" } else { "lexical_only" },
+        "rrf_k": if mode == RetrievalQueryMode::Hybrid && vector_used { Some(RRF_K) } else { None },
         "lexical_candidates": lexical_candidate_count,
         "vector_candidates": vector_candidate_count,
         "vector_status": if vector_used { "used" } else if query_embedding.is_some() { "index_empty" } else { "unavailable" },
@@ -5956,7 +5970,221 @@ fn query_retrieval_index_hybrid_value(
 }
 
 fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> Result<serde_json::Value, String> {
-    query_retrieval_index_hybrid_value(index_path, query, limit, None)
+    query_retrieval_index_hybrid_value(index_path, query, limit, None, RetrievalQueryMode::Lexical)
+}
+
+struct RetrievalBenchmarkCase {
+    id: &'static str,
+    family: &'static str,
+    category: &'static str,
+    query: &'static str,
+    expected_heading: &'static str,
+    expected_graph_heading: Option<&'static str>,
+}
+
+const RETRIEVAL_BENCHMARK_CASES: &[RetrievalBenchmarkCase] = &[
+    RetrievalBenchmarkCase {
+        id: "lambda-equation-symbol",
+        family: "lambda_cdm_style",
+        category: "equation_and_uncommon_symbol",
+        query: "Where does Omega_m enter the expansion equation?",
+        expected_heading: "Expansion equation",
+        expected_graph_heading: None,
+    },
+    RetrievalBenchmarkCase {
+        id: "bmi-mechanism-alias",
+        family: "bimodal_interaction_style",
+        category: "mechanism_alias",
+        query: "What establishes particle inertia?",
+        expected_heading: "Neutrino mechanism",
+        expected_graph_heading: None,
+    },
+    RetrievalBenchmarkCase {
+        id: "geocentric-contradiction",
+        family: "geocentric_style",
+        category: "contradiction_and_observation",
+        query: "Which observation contradicts stationary Earth?",
+        expected_heading: "Parallax contradiction",
+        expected_graph_heading: None,
+    },
+    RetrievalBenchmarkCase {
+        id: "qft-interaction-alias",
+        family: "qft_style",
+        category: "equation_alias",
+        query: "What governs bosonic field feedback?",
+        expected_heading: "Scalar interaction",
+        expected_graph_heading: None,
+    },
+    RetrievalBenchmarkCase {
+        id: "cross-section-dependency",
+        family: "lambda_cdm_style",
+        category: "cross_section_relation",
+        query: "What does luminosity distance depend on?",
+        expected_heading: "Luminosity mapping",
+        expected_graph_heading: Some("Expansion equation"),
+    },
+];
+
+fn write_retrieval_benchmark_fixture(root: &Path) -> Result<String, String> {
+    let documents = [
+        (
+            "lambda_cdm.md",
+            "# Expansion equation\nThe relation E(z)^2 = Omega_m(1+z)^3 + Omega_lambda specifies background evolution.\n\n## Luminosity mapping\nLuminosity distance depends on Expansion equation.\n\n## Distance catalog\nA catalog entry stores unrelated distance metadata.\n",
+        ),
+        (
+            "bimodal_interaction.md",
+            "# Neutrino mechanism\nThe effective mass emerges from a bimodal interaction eigenvalue at the boundary.\n\n## Inertia index\nParticle inertia is an index topic only and supplies no mechanism.\n",
+        ),
+        (
+            "geocentric.md",
+            "# Parallax contradiction\nAnnual stellar parallax contradicts a strictly stationary Earth construction.\n\n## Instrument log\nThe telescope log records an unrelated calibration sequence.\n",
+        ),
+        (
+            "qft.md",
+            "# Scalar interaction\nThe quartic lambda phi^4 contribution controls self-coupling in the Lagrangian.\n\n## Bosonic glossary\nBosonic self-interaction is a glossary label without a governing equation.\n",
+        ),
+        (
+            "vector_decoys.md",
+            "# Matter formula decoy one\nA matter fraction enters a cosmic expansion formula in this unrelated teaching example.\n\n## Matter formula decoy two\nThe density contribution appears inside a background evolution equation without project provenance.\n\n## Matter formula decoy three\nA cosmological matter term participates in an expansion relation used only as a distractor.\n\n## Parallax decoy one\nAn observation challenges a fixed terrestrial frame in a generic astronomy exercise.\n\n## Parallax decoy two\nA measured stellar shift conflicts with an unmoving observer assumption outside the loaded theory.\n\n## Parallax decoy three\nA yearly angular displacement tests whether the terrestrial platform remains fixed.\n\n## Distance decoy one\nA brightness-based distance depends on cosmic expansion in an unrelated reference model.\n\n## Distance decoy two\nThe inferred source distance follows the background expansion history in a generic example.\n\n## Distance decoy three\nAn observational distance mapping relies on the universal growth relation outside this theory.\n",
+        ),
+    ];
+    fs::create_dir_all(root).map_err(|e| format!("Failed to create retrieval benchmark fixture: {e}"))?;
+    let mut fingerprint_source = String::new();
+    for (path, content) in documents {
+        fs::write(root.join(path), content)
+            .map_err(|e| format!("Failed to write retrieval benchmark fixture {path}: {e}"))?;
+        fingerprint_source.push_str(path);
+        fingerprint_source.push_str(content);
+    }
+    for case in RETRIEVAL_BENCHMARK_CASES {
+        fingerprint_source.push_str(case.id);
+        fingerprint_source.push_str(case.query);
+        fingerprint_source.push_str(case.expected_heading);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(fingerprint_source.as_bytes());
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn benchmark_heading_rank(result: &serde_json::Value, expected_heading: &str) -> Option<usize> {
+    result["results"]
+        .as_array()?
+        .iter()
+        .position(|row| row["heading"] == expected_heading)
+        .map(|index| index + 1)
+}
+
+fn run_retrieval_benchmark_value<F>(
+    benchmark_root: &Path,
+    mut embed: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&[String]) -> Result<Vec<Vec<f32>>, String>,
+{
+    let _ = fs::remove_dir_all(benchmark_root);
+    let result = (|| {
+        let fixture_fingerprint = write_retrieval_benchmark_fixture(benchmark_root)?;
+        let index_path = benchmark_root.join("retrieval.sqlite3");
+        refresh_retrieval_index_value(benchmark_root, &index_path)?;
+        sync_retrieval_vectors_value(&index_path, |texts| embed(texts))?;
+
+        let mut lexical_hits = 0usize;
+        let mut vector_hits = 0usize;
+        let mut hybrid_hits = 0usize;
+        let mut graph_hits = 0usize;
+        let mut graph_cases = 0usize;
+        let mut cases = Vec::new();
+        for case in RETRIEVAL_BENCHMARK_CASES {
+            let mut query_vectors = embed(&[case.query.to_string()])?;
+            let query_vector = query_vectors
+                .pop()
+                .ok_or_else(|| format!("Benchmark embedding was missing for {}.", case.id))?;
+            let lexical = query_retrieval_index_hybrid_value(
+                &index_path,
+                case.query,
+                3,
+                None,
+                RetrievalQueryMode::Lexical,
+            )?;
+            let vector = query_retrieval_index_hybrid_value(
+                &index_path,
+                case.query,
+                3,
+                Some(&query_vector),
+                RetrievalQueryMode::Vector,
+            )?;
+            let hybrid = query_retrieval_index_hybrid_value(
+                &index_path,
+                case.query,
+                3,
+                Some(&query_vector),
+                RetrievalQueryMode::Hybrid,
+            )?;
+            let lexical_rank = benchmark_heading_rank(&lexical, case.expected_heading);
+            let vector_rank = benchmark_heading_rank(&vector, case.expected_heading);
+            let hybrid_rank = benchmark_heading_rank(&hybrid, case.expected_heading);
+            lexical_hits += usize::from(lexical_rank.is_some());
+            vector_hits += usize::from(vector_rank.is_some());
+            hybrid_hits += usize::from(hybrid_rank.is_some());
+
+            let graph_hit = case.expected_graph_heading.map(|expected| {
+                hybrid["results"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|row| row["heading"] == case.expected_heading)
+                    .flat_map(|row| row["graph_neighbors"].as_array().into_iter().flatten())
+                    .any(|neighbor| neighbor["heading"] == expected)
+            });
+            if let Some(hit) = graph_hit {
+                graph_cases += 1;
+                graph_hits += usize::from(hit);
+            }
+            cases.push(serde_json::json!({
+                "id": case.id,
+                "family": case.family,
+                "category": case.category,
+                "query": case.query,
+                "expected_heading": case.expected_heading,
+                "lexical_rank": lexical_rank,
+                "vector_rank": vector_rank,
+                "hybrid_rank": hybrid_rank,
+                "graph_hit": graph_hit
+            }));
+        }
+
+        let case_count = RETRIEVAL_BENCHMARK_CASES.len();
+        let hybrid_outperforms_baselines = hybrid_hits > lexical_hits && hybrid_hits > vector_hits;
+        let hybrid_non_inferior = hybrid_hits >= lexical_hits && hybrid_hits >= vector_hits;
+        let graph_complete = graph_hits == graph_cases;
+        Ok(serde_json::json!({
+            "status": if hybrid_outperforms_baselines && graph_complete { "pass" } else { "fail" },
+            "fixture": "physics-ide.retrieval-benchmark/v1",
+            "fixture_fingerprint": fixture_fingerprint,
+            "case_count": case_count,
+            "family_count": 4,
+            "recall_at_3": {
+                "lexical": lexical_hits as f64 / case_count as f64,
+                "vector": vector_hits as f64 / case_count as f64,
+                "hybrid": hybrid_hits as f64 / case_count as f64
+            },
+            "hits_at_3": {
+                "lexical": lexical_hits,
+                "vector": vector_hits,
+                "hybrid": hybrid_hits
+            },
+            "graph": {
+                "hits": graph_hits,
+                "cases": graph_cases,
+                "complete": graph_complete
+            },
+            "hybrid_outperforms_baselines": hybrid_outperforms_baselines,
+            "hybrid_non_inferior": hybrid_non_inferior,
+            "cases": cases
+        }))
+    })();
+    let _ = fs::remove_dir_all(benchmark_root);
+    result
 }
 
 fn delete_retrieval_index_value(index_path: &Path) -> Result<serde_json::Value, String> {
@@ -6035,7 +6263,13 @@ fn query_retrieval_index(
         .ok()
         .and_then(|mut embeddings| embeddings.pop());
     let result = if let Some(embedding) = query_embedding.as_deref() {
-        query_retrieval_index_hybrid_value(&index_path, &query, limit.unwrap_or(8), Some(embedding))?
+        query_retrieval_index_hybrid_value(
+            &index_path,
+            &query,
+            limit.unwrap_or(8),
+            Some(embedding),
+            RetrievalQueryMode::Hybrid,
+        )?
     } else {
         query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?
     };
@@ -6067,6 +6301,28 @@ fn install_embedding_model(
         .embedding_model
         .lock()
         .map_err(|_| "Local embedding model cache is unavailable.".to_string())? = None;
+    Ok(result.to_string())
+}
+
+#[tauri::command]
+fn run_retrieval_benchmark(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let model_directory = embedding_model_dir(&app)?;
+    let benchmark_root = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("retrieval-benchmarks")
+        .join("v1");
+    let result = with_local_embedding_model(&state, &model_directory, |model| {
+        run_retrieval_benchmark_value(&benchmark_root, |texts| {
+            model
+                .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
+                .map_err(|e| format!("Failed to embed retrieval benchmark text: {e}"))
+        })
+    })?;
     Ok(result.to_string())
 }
 
@@ -8708,6 +8964,7 @@ mod tests {
             "neutrino mass",
             3,
             Some(&query_embedding),
+            RetrievalQueryMode::Hybrid,
         )
         .unwrap();
         assert_eq!(result["search_mode"], "hybrid_rrf_fts5_vector_with_neighbors");
@@ -8769,6 +9026,69 @@ mod tests {
     }
 
     #[test]
+    fn cross_theory_retrieval_quality_gate_requires_hybrid_to_beat_both_baselines() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_retrieval_benchmark_test_{}",
+            std::process::id()
+        ));
+        let result = run_retrieval_benchmark_value(&temp_dir, |texts| {
+            Ok(texts
+                .iter()
+                .map(|text| {
+                    let mut embedding = vec![0.0f32; RETRIEVAL_EMBEDDING_DIMENSIONS];
+                    let query_dimension = match text.as_str() {
+                        "Where does Omega_m enter the expansion equation?" => Some(0),
+                        "What establishes particle inertia?" => Some(1),
+                        "Which observation contradicts stationary Earth?" => Some(2),
+                        "What governs bosonic field feedback?" => Some(3),
+                        "What does luminosity distance depend on?" => Some(4),
+                        _ => None,
+                    };
+                    if let Some(dimension) = query_dimension {
+                        embedding[dimension] = 1.0;
+                    } else if text.contains("effective mass emerges") {
+                        embedding[1] = 1.0;
+                    } else if text.contains("quartic lambda") {
+                        embedding[3] = 1.0;
+                    } else if text.contains("Omega_m") {
+                        embedding[0] = 0.8;
+                    } else if text.contains("stellar parallax contradicts") {
+                        embedding[2] = 0.8;
+                    } else if text.contains("Luminosity distance depends") {
+                        embedding[4] = 0.8;
+                    } else if text.contains("matter fraction")
+                        || text.contains("density contribution")
+                        || text.contains("cosmological matter term")
+                    {
+                        embedding[0] = 1.0;
+                    } else if text.contains("fixed terrestrial")
+                        || text.contains("unmoving observer")
+                        || text.contains("terrestrial platform")
+                    {
+                        embedding[2] = 1.0;
+                    } else if text.contains("brightness-based distance")
+                        || text.contains("inferred source distance")
+                        || text.contains("observational distance mapping")
+                    {
+                        embedding[4] = 1.0;
+                    } else {
+                        embedding[20] = 1.0;
+                    }
+                    embedding
+                })
+                .collect::<Vec<_>>())
+        })
+        .unwrap();
+
+        assert_eq!(result["status"], "pass", "{result}");
+        assert_eq!(result["family_count"].as_u64().unwrap(), 4);
+        assert_eq!(result["hits_at_3"]["lexical"].as_u64().unwrap(), 3);
+        assert_eq!(result["hits_at_3"]["vector"].as_u64().unwrap(), 2);
+        assert_eq!(result["hits_at_3"]["hybrid"].as_u64().unwrap(), 5);
+        assert_eq!(result["graph"]["complete"], true);
+    }
+
+    #[test]
     #[ignore = "requires PHYSICS_IDE_EMBEDDING_MODEL_DIR with the pinned local model assets"]
     fn embeds_with_verified_local_model_assets() {
         let directory = std::env::var("PHYSICS_IDE_EMBEDDING_MODEL_DIR").unwrap();
@@ -8814,12 +9134,25 @@ mod tests {
             "What determines the boundary response?",
             4,
             Some(&query_embedding),
+            RetrievalQueryMode::Hybrid,
         )
         .unwrap();
         assert_eq!(query["search_mode"], "hybrid_rrf_fts5_vector_with_neighbors");
         assert_eq!(query["vector_status"], "used");
         assert_eq!(query["results"].as_array().unwrap().len(), 1);
         delete_retrieval_index_value(&index_path).unwrap();
+
+        let benchmark_root = Path::new(&directory).join("integration-retrieval-benchmark");
+        let benchmark = run_retrieval_benchmark_value(&benchmark_root, |texts| {
+            model
+                .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(benchmark["case_count"].as_u64().unwrap(), 5);
+        assert_eq!(benchmark["family_count"].as_u64().unwrap(), 4);
+        assert_eq!(benchmark["hits_at_3"]["hybrid"].as_u64().unwrap(), 5, "{benchmark}");
+        assert_eq!(benchmark["hybrid_non_inferior"], true, "{benchmark}");
     }
 
     #[test]
@@ -9291,6 +9624,7 @@ pub fn run() {
             delete_retrieval_index,
             get_embedding_model_status,
             install_embedding_model,
+            run_retrieval_benchmark,
             render_manuscript,
             launch_file_editor,
             detach_terminal_shell,

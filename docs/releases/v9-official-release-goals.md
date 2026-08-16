@@ -182,7 +182,7 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 - [ ] Reopening a project reuses a valid index without recomputing unchanged embeddings.
 - [ ] Editing, renaming, or deleting a source invalidates only affected records.
 - [ ] Retrieval benchmarks cover equations, aliases, cross-chapter relations, experiments, contradictions, and uncommon symbols.
-- [ ] The same benchmark pipeline retrieves source-grounded evidence from materially different theory families without family-specific ranking rules.
+- [x] The same benchmark pipeline retrieves source-grounded evidence from materially different theory families without family-specific ranking rules.
 - [ ] Hybrid retrieval outperforms vector-only and lexical-only baselines on the v9 benchmark set.
 - [ ] Every retrieved record resolves to an existing project-relative source and stable section ID.
 - [ ] No embedding vectors, index files, or unrelated manuscript chunks appear in provider request captures.
@@ -480,6 +480,12 @@ Index refresh now backfills vectors for existing chunks, retains unchanged vecto
 Queries now embed locally and combine FTS5 and cosine-vector candidate ranks with symmetric reciprocal-rank fusion (`k=60`). Results expose fused score, lexical rank, vector rank, vector distance, and explanatory neighbors. No theory-family labels or consensus priors affect ranking. Missing model assets or vectors fall back to lexical retrieval, and the verified ONNX session is cached after first use to avoid repeated initialization.
 
 Typed graph expansion is built only from explicit source statements that name another indexed heading with a supported relation cue: `defines`, `depends_on`, `constrains`, `predicts`, `measured_by`, `contradicts`, or `derived_from`. Edges are rebuilt deterministically after chunk refresh, removed when the source statement disappears, and expanded after hybrid ranking without altering rank. Graph evidence shares the existing strict provider-context character budget.
+
+#### Retrieval benchmark v1
+
+The Request Inspector can run a local, provider-free comparison over a fingerprinted five-case fixture spanning Lambda-CDM-style, bimodal-interaction-style, geocentric-style, and QFT-style records. It compares the same candidate pipeline in lexical-only, vector-only, and hybrid modes at Recall@3, checks typed graph expansion, and reports per-case rank provenance. The deterministic CI gate proves the harness can distinguish complementary retrieval behavior: lexical `3/5`, vector `2/5`, hybrid `5/5`, graph `1/1`.
+
+The selected real `all-MiniLM-L6-v2` model currently measures lexical `3/5`, vector `5/5`, hybrid `5/5`, graph `1/1` on fixture fingerprint `5167b3fc9948bb41279f0b0f0325a00bdafcdeb0635d78a066fd0ff7a1531bf2`. Hybrid is complete and non-inferior, but does not strictly outperform the saturated vector-only baseline. The strict superiority verification remains open; the fixture must be expanded with experiments and harder uncommon-symbol/cross-chapter cases rather than weakening or gaming the gate.
 
 Release approval still requires packaged Linux tests, model-license attribution in release artifacts, and benchmark evidence across materially different theory families.
 
