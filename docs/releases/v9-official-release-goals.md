@@ -404,8 +404,16 @@ All tested models validate the canonical prefix ordering and native OpenAI cache
 - [x] Define the versioned symbol, axiom, equation, relation, and provenance schema.
 - [ ] Compile existing awareness sources into deterministic structural records.
 - [x] Add initial scanned-candidate coverage, schema-validation, and golden serialization tests.
+- [x] Add a blind, same-question legacy-vs-structural A/B probe with bounded exact-model requests and provider usage metrics.
+- [ ] Record at least three adequate human judgments with no `structural_worse` result for each approved artifact fingerprint/model pair.
 - [ ] Replace duplicated prose primer sections after benchmark equivalence is established.
 - [x] Run the first manual context-tool consolidation review against the canonical assembler.
+
+#### Structural A/B approval gate
+
+The Request Inspector can run a blind comparison between the current legacy lane primer and the benchmark-eligible structural core. It sends up to two bounded OpenAI requests only after confirmation, uses the same model and question, and reveals the variant mapping only after judgment.
+
+Judgments are stored locally as metadata only: artifact fingerprint, model, outcome, latency, and provider usage. Questions and model responses are not persisted. Approval requires at least three `equivalent` or `structural_preferred` outcomes for the same fingerprint/model and zero `structural_worse` outcomes. A single `structural_worse` judgment marks that pair rejected. Approval remains advisory; compact mode must not activate automatically.
 
 ### Sprint 5: Add local retrieval
 
@@ -443,4 +451,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 now generates deterministic `physics-ide.structural-context/v1`, renders a compact core, verifies ID/provenance coverage, and measures it against the legacy excerpt budget. Eligible cores remain disabled pending A/B retrieval probes and human equivalence review. The first manual-tool classification is documented, and duplicate baseline contexts are prevented; no controls have been removed. Broader awareness and experiment compilation remain open. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 now generates deterministic `physics-ide.structural-context/v1`, renders a compact core, verifies ID/provenance coverage, measures it against the legacy excerpt budget, and provides blind A/B human evaluation. Eligible cores remain disabled until the per-fingerprint/model human gate passes and results are reviewed. The first manual-tool classification is documented, and duplicate baseline contexts are prevented; no controls have been removed. Broader awareness and experiment compilation remain open. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.

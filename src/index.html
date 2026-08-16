@@ -2053,7 +2053,7 @@
   </div>
 
   <div id="request-inspector-modal" class="modal" style="z-index: 1145;">
-    <div class="modal-content" style="width: 760px; max-width: 95vw; max-height: 86vh; display: flex; flex-direction: column;">
+    <div class="modal-content" style="width: 960px; max-width: 96vw; max-height: 92vh; display: flex; flex-direction: column; overflow: auto;">
       <div class="modal-header">AI Request Inspector</div>
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
         <label for="request-inspector-pane">Lane</label>
@@ -2065,10 +2065,31 @@
         <button id="request-inspector-cache-probe" onclick="runOpenAiCacheProbe()" title="Run up to two small OpenAI requests to test native prompt caching">Run Cache Probe</button>
       </div>
       <div id="request-inspector-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">No request inspected yet.</div>
-      <textarea id="request-inspector-output" rows="18" readonly style="width: 100%; box-sizing: border-box; flex: 1; min-height: 240px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Ordered request context report"></textarea>
+      <textarea id="request-inspector-output" rows="10" readonly style="width: 100%; box-sizing: border-box; min-height: 140px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="Ordered request context report"></textarea>
       <label for="request-cache-probe-output" style="font-size: 0.78rem; margin-top: 8px;">OpenAI cache probe</label>
-      <textarea id="request-cache-probe-output" rows="7" readonly style="width: 100%; box-sizing: border-box; min-height: 110px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="OpenAI cache probe report" placeholder="No cache probe has been run. Ineligible prefixes make no network requests."></textarea>
-      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">Prompt contents and API credentials are not displayed.</div>
+      <textarea id="request-cache-probe-output" rows="4" readonly style="width: 100%; box-sizing: border-box; min-height: 70px; font-family: monospace; font-size: 0.78rem; resize: vertical;" aria-label="OpenAI cache probe report" placeholder="No cache probe has been run. Ineligible prefixes make no network requests."></textarea>
+      <div style="display: flex; align-items: end; gap: 8px; margin-top: 10px;">
+        <label for="structural-ab-question" style="flex: 1;">Structural A/B question
+          <textarea id="structural-ab-question" rows="2" style="width: 100%; box-sizing: border-box; margin-top: 4px;" placeholder="Ask a project-specific question that requires equations, assumptions, or source provenance."></textarea>
+        </label>
+        <button id="structural-ab-run" onclick="runStructuralAbProbe()" title="Compare legacy and structural context using up to two OpenAI requests">Run Blind A/B</button>
+      </div>
+      <div id="structural-ab-meta" style="font-size: 0.78rem; color: var(--text-muted); margin: 6px 0;">No structural A/B probe has been run.</div>
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px;">
+        <label for="structural-ab-a">Response A
+          <textarea id="structural-ab-a" rows="8" readonly style="width: 100%; box-sizing: border-box; margin-top: 4px; resize: vertical;"></textarea>
+        </label>
+        <label for="structural-ab-b">Response B
+          <textarea id="structural-ab-b" rows="8" readonly style="width: 100%; box-sizing: border-box; margin-top: 4px; resize: vertical;"></textarea>
+        </label>
+      </div>
+      <div id="structural-ab-judgments" style="display: none; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+        <button onclick="recordStructuralAbJudgment('equivalent')">Equivalent</button>
+        <button onclick="recordStructuralAbJudgment('a_better')">A Better</button>
+        <button onclick="recordStructuralAbJudgment('b_better')">B Better</button>
+        <button onclick="recordStructuralAbJudgment('neither')">Neither Adequate</button>
+      </div>
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">Request prompt contents and API credentials are not displayed. A/B responses are shown for judgment but are not persisted.</div>
       <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
         <button onclick="closeRequestInspector()" title="Close request inspector">Close</button>
       </div>
@@ -2157,6 +2178,7 @@
     const PROJECT_TITLE_KEY = 'physics-ide-project-title';
     const CONTEXT_PROBE_HISTORY_KEY = 'physics-ide-context-probe-history-v1';
     const CONTEXT_PROBE_SUITES_KEY = 'physics-ide-context-probe-suites-v1';
+    const STRUCTURAL_AB_HISTORY_KEY = 'physics-ide-structural-ab-history-v1';
 
     let currentConfig = null;
     const chatHistories = {
@@ -2174,6 +2196,8 @@
     let startupPrimerInjected = false;
     let activeBriefingPacketPath = "";
     let latestStructuralContext = null;
+    let latestBriefingContext = null;
+    let latestStructuralAbResult = null;
     const paneBusyCounter = { left: 0, right: 0 };
     let terminalDetached = false;
     let terminalDockHost = null;
@@ -3128,7 +3152,7 @@
     }
     window.addEventListener('DOMContentLoaded', initializeApp);
 
-    function buildPanePrimerText(briefing, lane) {
+    function buildPanePrimerText(briefing, lane, contextMode = 'auto') {
       const onboardingSteps = Array.isArray(briefing.onboarding_steps) ? briefing.onboarding_steps : [];
       const lagrangianCue = Array.isArray(briefing?.lagrangian_candidates) && briefing.lagrangian_candidates.length > 0
         ? briefing.lagrangian_candidates[0]
@@ -3149,7 +3173,11 @@
           : awarenessContent)
         : 'Project awareness index unavailable.';
       const structuralPrompt = briefing?.structural_context?.prompt_core || {};
-      const useStructuralCore = structuralPrompt.enabled === true && Boolean(structuralPrompt.content);
+      const useStructuralCore = contextMode === 'structural'
+        ? structuralPrompt.eligible === true && Boolean(structuralPrompt.content)
+        : contextMode === 'legacy'
+          ? false
+          : structuralPrompt.enabled === true && Boolean(structuralPrompt.content);
       const stableContextBlock = useStructuralCore
         ? ['Structural context core:', structuralPrompt.content]
         : ['Master axiom excerpt:', axiomExcerpt, 'Project awareness excerpt:', awarenessExcerpt];
@@ -3308,6 +3336,7 @@
 
       try {
         const briefing = JSON.parse(await invoke('compile_ai_briefing'));
+        latestBriefingContext = briefing;
         const leftPrompt = buildPanePrimerText(briefing, 'theory');
         const rightPrompt = buildPanePrimerText(briefing, 'critique');
 
@@ -4522,6 +4551,8 @@
         startupPrimerInjected = false;
         activeBriefingPacketPath = '';
         latestStructuralContext = null;
+        latestBriefingContext = null;
+        latestStructuralAbResult = null;
         probeAppendixCandidateCache.rootPath = '';
         probeAppendixCandidateCache.candidates = [];
         probeAppendixCandidateCache.loadedAt = 0;
@@ -6264,6 +6295,7 @@ async function restoreVersion() {
         if (latestStructuralContext?.exists) {
           const counts = latestStructuralContext.counts || {};
           const promptCore = latestStructuralContext.prompt_core || {};
+          const abSummary = summarizeStructuralAbHistory(latestStructuralContext.sha256, model);
           structuralLines = [
             `Schema: ${latestStructuralContext.schema_version || 'unavailable'} | model=${latestStructuralContext.model_id || 'unavailable'}`,
             `Path: ${latestStructuralContext.path || 'unavailable'}`,
@@ -6271,7 +6303,8 @@ async function restoreVersion() {
             `Sources=${counts.sources || 0} | Sections=${counts.sections || 0} | Axioms=${counts.axioms || 0} | Assumptions=${counts.assumptions || 0} | Definitions=${counts.definitions || 0}`,
             `Equations=${counts.equations || 0} | Symbols=${counts.symbols || 0} | Conditions=${(counts.initial_conditions || 0) + (counts.boundary_conditions || 0)} | Observables=${counts.observables || 0}`,
             `Tools=${counts.tools || 0} | Experiments=${counts.experiments || 0} | Predictions=${counts.predictions || 0} | Falsification=${counts.falsification_criteria || 0} | Open questions=${counts.open_questions || 0} | Relations=${counts.relations || 0}`,
-            `Prompt core: ${promptCore.enabled ? 'ENABLED' : promptCore.eligible ? 'BENCHMARK ELIGIBLE' : 'LEGACY FALLBACK'} | coverage=${promptCore.coverage_complete === true ? 'complete' : 'failed'} | core=~${promptCore.core_estimated_tokens ?? 'unavailable'} | legacy=~${promptCore.legacy_estimated_tokens ?? 'unavailable'} | reduction=${Number(promptCore.estimated_reduction_percent || 0).toFixed(1)}% | reason=${promptCore.reason || 'unavailable'}`
+            `Prompt core: ${promptCore.enabled ? 'ENABLED' : promptCore.eligible ? 'BENCHMARK ELIGIBLE' : 'LEGACY FALLBACK'} | coverage=${promptCore.coverage_complete === true ? 'complete' : 'failed'} | core=~${promptCore.core_estimated_tokens ?? 'unavailable'} | legacy=~${promptCore.legacy_estimated_tokens ?? 'unavailable'} | reduction=${Number(promptCore.estimated_reduction_percent || 0).toFixed(1)}% | reason=${promptCore.reason || 'unavailable'}`,
+            `Human A/B: ${abSummary.status} | runs=${abSummary.total} | equivalent=${abSummary.equivalent} | structural preferred=${abSummary.preferred} | structural worse=${abSummary.worse} | inconclusive=${abSummary.inconclusive}`
           ];
         }
         const sourceLines = Object.entries(usage.by_source || {})
@@ -6367,6 +6400,129 @@ async function restoreVersion() {
       } finally {
         button.disabled = false;
       }
+    }
+
+    async function runStructuralAbProbe() {
+      const pane = document.getElementById('request-inspector-pane')?.value === 'right' ? 'right' : 'left';
+      const question = (document.getElementById('structural-ab-question')?.value || '').trim();
+      const meta = document.getElementById('structural-ab-meta');
+      const responseA = document.getElementById('structural-ab-a');
+      const responseB = document.getElementById('structural-ab-b');
+      const judgments = document.getElementById('structural-ab-judgments');
+      const button = document.getElementById('structural-ab-run');
+      if (!meta || !responseA || !responseB || !judgments || !button) return;
+      if (!question) {
+        meta.textContent = 'Enter a project-specific A/B question.';
+        return;
+      }
+      const promptCore = latestBriefingContext?.structural_context?.prompt_core || {};
+      if (promptCore.eligible !== true || !promptCore.content) {
+        meta.textContent = `Structural core is not benchmark eligible: ${promptCore.reason || 'refresh AI context first'}.`;
+        return;
+      }
+
+      const confirmed = window.confirm(
+        'Run the blind structural A/B probe? This sends up to two OpenAI requests with bounded outputs and may incur usage charges.'
+      );
+      if (!confirmed) return;
+
+      const lane = pane === 'left' ? 'theory' : 'critique';
+      const legacyContext = buildPanePrimerText(latestBriefingContext, lane, 'legacy');
+      const structuralContext = buildPanePrimerText(latestBriefingContext, lane, 'structural');
+      const fingerprint = latestStructuralContext?.sha256 || '';
+      button.disabled = true;
+      responseA.value = '';
+      responseB.value = '';
+      judgments.style.display = 'none';
+      meta.textContent = 'Running blind A/B comparison...';
+
+      try {
+        const result = JSON.parse(await invoke('run_structural_ab_probe', {
+          pane,
+          question,
+          legacyContext,
+          structuralContext,
+          fingerprint
+        }));
+        latestStructuralAbResult = result;
+        responseA.value = result.variant_a?.content || '';
+        responseB.value = result.variant_b?.content || '';
+        const usageA = result.variant_a?.usage || {};
+        const usageB = result.variant_b?.usage || {};
+        meta.textContent = `Model: ${result.requested_model || 'unavailable'} | A: ${result.variant_a?.latency_ms ?? 'unavailable'} ms, ${usageA.input_tokens ?? 'unavailable'} in / ${usageA.output_tokens ?? 'unavailable'} out | B: ${result.variant_b?.latency_ms ?? 'unavailable'} ms, ${usageB.input_tokens ?? 'unavailable'} in / ${usageB.output_tokens ?? 'unavailable'} out`;
+        judgments.style.display = 'flex';
+      } catch (err) {
+        latestStructuralAbResult = null;
+        meta.textContent = `Structural A/B probe failed: ${err}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function getStructuralAbHistory() {
+      try {
+        const history = JSON.parse(localStorage.getItem(STRUCTURAL_AB_HISTORY_KEY) || '[]');
+        return Array.isArray(history) ? history : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function summarizeStructuralAbHistory(fingerprint, model) {
+      const matching = getStructuralAbHistory().filter((record) => (
+        record?.fingerprint === fingerprint && record?.model === model
+      ));
+      const summary = {
+        total: matching.length,
+        equivalent: matching.filter((record) => record.outcome === 'equivalent').length,
+        preferred: matching.filter((record) => record.outcome === 'structural_preferred').length,
+        worse: matching.filter((record) => record.outcome === 'structural_worse').length,
+        inconclusive: matching.filter((record) => record.outcome === 'inconclusive').length,
+        status: 'PENDING'
+      };
+      if (summary.worse > 0) {
+        summary.status = 'HUMAN REJECTED';
+      } else if (summary.equivalent + summary.preferred >= 3) {
+        summary.status = 'HUMAN APPROVED';
+      }
+      return summary;
+    }
+
+    function recordStructuralAbJudgment(judgment) {
+      const result = latestStructuralAbResult;
+      const meta = document.getElementById('structural-ab-meta');
+      const judgments = document.getElementById('structural-ab-judgments');
+      if (!result || !meta || !judgments) return;
+
+      const aKind = result.variant_a?.kind || 'unknown';
+      const bKind = result.variant_b?.kind || 'unknown';
+      let outcome = 'inconclusive';
+      if (judgment === 'equivalent') {
+        outcome = 'equivalent';
+      } else if (judgment === 'a_better') {
+        outcome = aKind === 'structural' ? 'structural_preferred' : 'structural_worse';
+      } else if (judgment === 'b_better') {
+        outcome = bKind === 'structural' ? 'structural_preferred' : 'structural_worse';
+      }
+
+      const history = getStructuralAbHistory();
+      const actualModel = result.actual_models?.[0] || result.requested_model;
+      history.push({
+        recorded_at: new Date().toISOString(),
+        fingerprint: result.fingerprint,
+        model: actualModel,
+        judgment,
+        outcome,
+        mapping: { a: aKind, b: bKind },
+        metrics: {
+          a: { latency_ms: result.variant_a?.latency_ms, usage: result.variant_a?.usage },
+          b: { latency_ms: result.variant_b?.latency_ms, usage: result.variant_b?.usage }
+        }
+      });
+      localStorage.setItem(STRUCTURAL_AB_HISTORY_KEY, JSON.stringify(history.slice(-100)));
+      const summary = summarizeStructuralAbHistory(result.fingerprint, actualModel);
+      meta.textContent = `Recorded: ${outcome} | A=${aKind}, B=${bKind} | ${summary.status} after ${summary.total} run(s). Compact mode remains disabled pending suite review.`;
+      judgments.style.display = 'none';
     }
 
     async function refreshBriefingPacketEditor() {

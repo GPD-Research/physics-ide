@@ -3167,6 +3167,22 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn structural_ab_order_is_deterministic_and_payloads_share_question() {
+        let fingerprint = "abc123";
+        let question = "Which equation defines the field?";
+        let first_order = structural_ab_structural_first(fingerprint, question);
+        let second_order = structural_ab_structural_first(fingerprint, question);
+        let legacy = build_structural_ab_messages("legacy context", question);
+        let structural = build_structural_ab_messages("@ctx-v1|structural context", question);
+
+        assert_eq!(first_order, second_order);
+        assert_eq!(legacy.last(), structural.last());
+        assert_ne!(legacy[1]["content"], structural[1]["content"]);
+        assert_eq!(legacy[0]["role"], "system");
+        assert_eq!(legacy[2]["role"], "user");
+    }
+
+    #[test]
     fn retries_gemini_auth_for_access_token_type_errors() {
         let response_text = r#"{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}"#;
 
@@ -3354,6 +3370,100 @@ async fn run_openai_cache_probe(
     })
     .await
     .map_err(|e| format!("OpenAI cache probe worker failed: {e}"))?
+}
+
+fn structural_ab_structural_first(fingerprint: &str, question: &str) -> bool {
+    let mut hasher = Sha256::new();
+    hasher.update(fingerprint.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(question.as_bytes());
+    hasher.finalize()[0] % 2 == 0
+}
+
+fn build_structural_ab_messages(context: &str, question: &str) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "role": "system",
+            "content": "Answer only from the supplied project context. Preserve qualified claims and equations. Cite exact source paths or stable IDs when available. If evidence is absent, say insufficient context."
+        }),
+        serde_json::json!({"role": "system", "content": context}),
+        serde_json::json!({"role": "user", "content": question}),
+    ]
+}
+
+fn structural_ab_variant(kind: &str, reply: ProviderReply, latency_ms: u64) -> serde_json::Value {
+    serde_json::json!({
+        "kind": kind,
+        "content": reply.content,
+        "latency_ms": latency_ms,
+        "usage": reply.usage
+    })
+}
+
+#[tauri::command]
+async fn run_structural_ab_probe(
+    pane: String,
+    question: String,
+    legacy_context: String,
+    structural_context: String,
+    fingerprint: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let question = question.trim().to_string();
+    let legacy_context = legacy_context.trim().to_string();
+    let structural_context = structural_context.trim().to_string();
+    if question.is_empty() || question.chars().count() > 2_000 {
+        return Err("A/B question must contain 1-2,000 characters.".to_string());
+    }
+    if legacy_context.is_empty() || legacy_context.chars().count() > 100_000 {
+        return Err("Legacy A/B context must contain 1-100,000 characters.".to_string());
+    }
+    if structural_context.matches("@ctx-v1|").count() != 1 || structural_context.chars().count() > 100_000 {
+        return Err("Structural A/B context must contain exactly one @ctx-v1 core and remain under 100,000 characters.".to_string());
+    }
+    if fingerprint.trim().is_empty() {
+        return Err("Structural A/B fingerprint is required.".to_string());
+    }
+
+    let config = get_app_config(&app)?;
+    let (provider, model) = provider_settings_for_pane(&config, &pane);
+    if !provider.eq_ignore_ascii_case("openai") {
+        return Err("Structural A/B probe currently requires the selected lane to use OpenAI.".to_string());
+    }
+
+    let structural_first = structural_ab_structural_first(&fingerprint, &question);
+    let (first_kind, first_context, second_kind, second_context) = if structural_first {
+        ("structural", structural_context, "legacy", legacy_context)
+    } else {
+        ("legacy", legacy_context, "structural", structural_context)
+    };
+    let first_messages = build_structural_ab_messages(&first_context, &question);
+    let second_messages = build_structural_ab_messages(&second_context, &question);
+    let api_key = normalize_api_key(&config.openai_api_key);
+    let requested_model = model.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let first_started = std::time::Instant::now();
+        let first = call_openai_with_options(&api_key, &model, &first_messages, Some(350), false)?;
+        let first_latency_ms = first_started.elapsed().as_millis() as u64;
+
+        let second_started = std::time::Instant::now();
+        let second = call_openai_with_options(&api_key, &model, &second_messages, Some(350), false)?;
+        let second_latency_ms = second_started.elapsed().as_millis() as u64;
+        let actual_models = [first.usage.model.clone(), second.usage.model.clone()];
+
+        Ok(serde_json::json!({
+            "status": "complete",
+            "network_requests": 2,
+            "requested_model": requested_model,
+            "actual_models": actual_models,
+            "fingerprint": fingerprint,
+            "variant_a": structural_ab_variant(first_kind, first, first_latency_ms),
+            "variant_b": structural_ab_variant(second_kind, second, second_latency_ms)
+        }).to_string())
+    })
+    .await
+    .map_err(|e| format!("Structural A/B worker failed: {e}"))?
 }
 
 fn get_app_config(app: &AppHandle) -> Result<AppConfig, String> {
@@ -7597,6 +7707,7 @@ pub fn run() {
             estimate_prompt_usage,
             get_llm_usage,
             run_openai_cache_probe,
+            run_structural_ab_probe,
             send_llm_prompt,
             compile_ai_briefing,
             validate_model_selection,
