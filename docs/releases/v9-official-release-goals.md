@@ -415,6 +415,8 @@ The Request Inspector can run a blind comparison between the current legacy lane
 
 Judgments are stored locally as metadata only: artifact fingerprint, model, outcome, latency, and provider usage. Questions and model responses are not persisted. Approval requires at least three `equivalent` or `structural_preferred` outcomes for the same fingerprint/model and zero `structural_worse` outcomes. A single `structural_worse` judgment marks that pair rejected. Approval remains advisory; compact mode must not activate automatically.
 
+Coverage-complete cores that are larger than the truncated legacy excerpt may run as `diagnostic-only` comparisons after an explicit cost warning. Their judgments are recorded for compiler analysis but do not count toward compact-mode approval. Cores with incomplete semantic coverage remain blocked with zero network requests. This distinction is expected for large projects until Sprint 5 retrieval selects a bounded structural subset instead of transporting the full compiled corpus.
+
 ### Sprint 5: Add local retrieval
 
 - [ ] Select and package the local embedding model and SQLite vector extension.

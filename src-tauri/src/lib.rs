@@ -3435,6 +3435,7 @@ async fn run_structural_ab_probe(
     legacy_context: String,
     structural_context: String,
     fingerprint: String,
+    benchmark_eligible: Option<bool>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let question = question.trim().to_string();
@@ -3486,6 +3487,7 @@ async fn run_structural_ab_probe(
             "requested_model": requested_model,
             "actual_models": actual_models,
             "fingerprint": fingerprint,
+            "benchmark_eligible": benchmark_eligible.unwrap_or(false),
             "variant_a": structural_ab_variant(first_kind, first, first_latency_ms),
             "variant_b": structural_ab_variant(second_kind, second, second_latency_ms)
         }).to_string())

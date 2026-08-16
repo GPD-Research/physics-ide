@@ -6411,18 +6411,26 @@ async function restoreVersion() {
       const judgments = document.getElementById('structural-ab-judgments');
       const button = document.getElementById('structural-ab-run');
       if (!meta || !responseA || !responseB || !judgments || !button) return;
+      responseA.value = '';
+      responseB.value = '';
+      judgments.style.display = 'none';
+      latestStructuralAbResult = null;
       if (!question) {
-        meta.textContent = 'Enter a project-specific A/B question.';
+        meta.textContent = 'Enter a project-specific A/B question. Network requests: 0.';
         return;
       }
       const promptCore = latestBriefingContext?.structural_context?.prompt_core || {};
-      if (promptCore.eligible !== true || !promptCore.content) {
-        meta.textContent = `Structural core is not benchmark eligible: ${promptCore.reason || 'refresh AI context first'}.`;
+      if (promptCore.coverage_complete !== true || !promptCore.content) {
+        meta.textContent = `Structural A/B blocked: ${promptCore.reason || 'refresh AI context first'}. Required semantic coverage is incomplete. Network requests: 0.`;
         return;
       }
+      const benchmarkEligible = promptCore.eligible === true;
+      const diagnosticNotice = benchmarkEligible
+        ? ''
+        : ` The structural core is larger than legacy (~${promptCore.core_estimated_tokens ?? 'unknown'} vs ~${promptCore.legacy_estimated_tokens ?? 'unknown'} estimated tokens), so this run is diagnostic and cannot count toward compact-mode approval.`;
 
       const confirmed = window.confirm(
-        'Run the blind structural A/B probe? This sends up to two OpenAI requests capped at 1,200 output tokens each and may incur usage charges.'
+        `Run the blind structural A/B probe? This sends up to two OpenAI requests capped at 1,200 output tokens each and may incur usage charges.${diagnosticNotice}`
       );
       if (!confirmed) return;
 
@@ -6431,10 +6439,9 @@ async function restoreVersion() {
       const structuralContext = buildPanePrimerText(latestBriefingContext, lane, 'structural');
       const fingerprint = latestStructuralContext?.sha256 || '';
       button.disabled = true;
-      responseA.value = '';
-      responseB.value = '';
-      judgments.style.display = 'none';
-      meta.textContent = 'Running blind A/B comparison...';
+      meta.textContent = benchmarkEligible
+        ? 'Running blind A/B comparison...'
+        : 'Running diagnostic blind A/B comparison; result cannot approve compact mode...';
 
       try {
         const result = JSON.parse(await invoke('run_structural_ab_probe', {
@@ -6442,7 +6449,8 @@ async function restoreVersion() {
           question,
           legacyContext,
           structuralContext,
-          fingerprint
+          fingerprint,
+          benchmarkEligible
         }));
         const contentA = String(result.variant_a?.content || '').trim();
         const contentB = String(result.variant_b?.content || '').trim();
@@ -6454,7 +6462,7 @@ async function restoreVersion() {
         responseB.value = contentB;
         const usageA = result.variant_a?.usage || {};
         const usageB = result.variant_b?.usage || {};
-        meta.textContent = `Model: ${result.requested_model || 'unavailable'} | A: ${result.variant_a?.latency_ms ?? 'unavailable'} ms, ${usageA.input_tokens ?? 'unavailable'} in / ${usageA.output_tokens ?? 'unavailable'} out | B: ${result.variant_b?.latency_ms ?? 'unavailable'} ms, ${usageB.input_tokens ?? 'unavailable'} in / ${usageB.output_tokens ?? 'unavailable'} out`;
+        meta.textContent = `${result.benchmark_eligible ? 'Approval-eligible' : 'Diagnostic-only'} | Model: ${result.requested_model || 'unavailable'} | A: ${result.variant_a?.latency_ms ?? 'unavailable'} ms, ${usageA.input_tokens ?? 'unavailable'} in / ${usageA.output_tokens ?? 'unavailable'} out | B: ${result.variant_b?.latency_ms ?? 'unavailable'} ms, ${usageB.input_tokens ?? 'unavailable'} in / ${usageB.output_tokens ?? 'unavailable'} out`;
         judgments.style.display = 'flex';
       } catch (err) {
         latestStructuralAbResult = null;
@@ -6475,7 +6483,7 @@ async function restoreVersion() {
 
     function summarizeStructuralAbHistory(fingerprint, model) {
       const matching = getStructuralAbHistory().filter((record) => (
-        record?.fingerprint === fingerprint && record?.model === model
+        record?.fingerprint === fingerprint && record?.model === model && record?.benchmark_eligible === true
       ));
       const summary = {
         total: matching.length,
@@ -6518,6 +6526,7 @@ async function restoreVersion() {
         model: actualModel,
         judgment,
         outcome,
+        benchmark_eligible: result.benchmark_eligible === true,
         mapping: { a: aKind, b: bKind },
         metrics: {
           a: { latency_ms: result.variant_a?.latency_ms, usage: result.variant_a?.usage },
@@ -6526,7 +6535,9 @@ async function restoreVersion() {
       });
       localStorage.setItem(STRUCTURAL_AB_HISTORY_KEY, JSON.stringify(history.slice(-100)));
       const summary = summarizeStructuralAbHistory(result.fingerprint, actualModel);
-      meta.textContent = `Recorded: ${outcome} | A=${aKind}, B=${bKind} | ${summary.status} after ${summary.total} run(s). Compact mode remains disabled pending suite review.`;
+      meta.textContent = result.benchmark_eligible
+        ? `Recorded: ${outcome} | A=${aKind}, B=${bKind} | ${summary.status} after ${summary.total} eligible run(s). Compact mode remains disabled pending suite review.`
+        : `Recorded diagnostic result: ${outcome} | A=${aKind}, B=${bKind}. It does not count toward approval because the structural core is not smaller than legacy.`;
       judgments.style.display = 'none';
     }
 
