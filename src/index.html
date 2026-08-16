@@ -3148,6 +3148,11 @@
           ? `${awarenessContent.slice(0, 2200)}\n\n[...truncated project awareness excerpt...]`
           : awarenessContent)
         : 'Project awareness index unavailable.';
+      const structuralPrompt = briefing?.structural_context?.prompt_core || {};
+      const useStructuralCore = structuralPrompt.enabled === true && Boolean(structuralPrompt.content);
+      const stableContextBlock = useStructuralCore
+        ? ['Structural context core:', structuralPrompt.content]
+        : ['Master axiom excerpt:', axiomExcerpt, 'Project awareness excerpt:', awarenessExcerpt];
       const retrievalContract = [
         'Retrieval contract:',
         '1. For file-location questions, return exact relative file path(s) present in project context.',
@@ -3201,10 +3206,7 @@
           diagnostics,
           `Source files: ${sourceNote || 'none'}`,
           retrievalContract,
-          'Master axiom excerpt:',
-          axiomExcerpt,
-          'Project awareness excerpt:',
-          awarenessExcerpt,
+          ...stableContextBlock,
           'Begin by clarifying today\'s goal and keeping assumptions explicit before opening new branches.'
         ].join('\n');
       }
@@ -3219,16 +3221,14 @@
         diagnostics,
         `Source files: ${sourceNote || 'none'}`,
         retrievalContract,
-        'Master axiom excerpt:',
-        axiomExcerpt,
-        'Project awareness excerpt:',
-        awarenessExcerpt,
+        ...stableContextBlock,
         'Begin by clarifying what evidence would constrain or falsify the active hypothesis in this session.'
       ].join('\n');
     }
 
     function buildPrimerContextParts(briefing, promptText) {
       const candidates = [
+        ['structural_context', String(briefing?.structural_context?.prompt_core?.content || '').trim()],
         ['master_axiom', (briefing?.master_axiom?.content || '').trim().slice(0, 1500)],
         ['project_awareness', (briefing?.project_awareness?.content || '').trim().slice(0, 2200)],
         ['session_summary', String(briefing?.summary || '').trim()],
@@ -3261,11 +3261,22 @@
       if (provenance.path) {
         systemMessage.context_path = provenance.path;
       }
+      if (provenance.slot) {
+        systemMessage.context_slot = provenance.slot;
+      }
       if (Array.isArray(provenance.parts) && provenance.parts.length > 0) {
         systemMessage.context_parts = provenance.parts;
       }
 
-      getPaneHistory(pane, index).push(systemMessage);
+      const history = getPaneHistory(pane, index);
+      if (provenance.slot) {
+        for (let historyIndex = history.length - 1; historyIndex >= 0; historyIndex -= 1) {
+          if (history[historyIndex]?.context_slot === provenance.slot) {
+            history.splice(historyIndex, 1);
+          }
+        }
+      }
+      history.push(systemMessage);
       appendChatBubble(pane, index, heading, promptText);
     }
 
@@ -3304,6 +3315,7 @@
           source: isStartup ? 'startup_primer' : 'briefing_refresh',
           trigger: isStartup ? 'application_start' : 'manual_sync',
           volatility: isStartup ? 'slowly_changing' : 'dynamic',
+          slot: 'baseline_context',
           path: briefing?.generated_files?.ai_briefing || '',
           parts: buildPrimerContextParts(briefing, promptText)
         });
@@ -3738,6 +3750,7 @@
           source: 'pane_reset_primer',
           trigger: 'pane_reset',
           volatility: 'slowly_changing',
+          slot: 'baseline_context',
           path: briefing?.generated_files?.ai_briefing || '',
           parts: buildPrimerContextParts(briefing, prompt)
         });
@@ -6250,6 +6263,7 @@ async function restoreVersion() {
         let structuralLines = ['Structural context artifact unavailable.'];
         if (latestStructuralContext?.exists) {
           const counts = latestStructuralContext.counts || {};
+          const promptCore = latestStructuralContext.prompt_core || {};
           structuralLines = [
             `Schema: ${latestStructuralContext.schema_version || 'unavailable'} | model=${latestStructuralContext.model_id || 'unavailable'}`,
             `Path: ${latestStructuralContext.path || 'unavailable'}`,
@@ -6257,7 +6271,7 @@ async function restoreVersion() {
             `Sources=${counts.sources || 0} | Sections=${counts.sections || 0} | Axioms=${counts.axioms || 0} | Assumptions=${counts.assumptions || 0} | Definitions=${counts.definitions || 0}`,
             `Equations=${counts.equations || 0} | Symbols=${counts.symbols || 0} | Conditions=${(counts.initial_conditions || 0) + (counts.boundary_conditions || 0)} | Observables=${counts.observables || 0}`,
             `Tools=${counts.tools || 0} | Experiments=${counts.experiments || 0} | Predictions=${counts.predictions || 0} | Falsification=${counts.falsification_criteria || 0} | Open questions=${counts.open_questions || 0} | Relations=${counts.relations || 0}`,
-            'Prompt status: not injected; benchmark equivalence pending.'
+            `Prompt core: ${promptCore.enabled ? 'ENABLED' : promptCore.eligible ? 'BENCHMARK ELIGIBLE' : 'LEGACY FALLBACK'} | coverage=${promptCore.coverage_complete === true ? 'complete' : 'failed'} | core=~${promptCore.core_estimated_tokens ?? 'unavailable'} | legacy=~${promptCore.legacy_estimated_tokens ?? 'unavailable'} | reduction=${Number(promptCore.estimated_reduction_percent || 0).toFixed(1)}% | reason=${promptCore.reason || 'unavailable'}`
           ];
         }
         const sourceLines = Object.entries(usage.by_source || {})
@@ -6444,6 +6458,7 @@ async function restoreVersion() {
         source: 'manual_primer_override',
         trigger: 'primer_editor_sync',
         volatility: 'dynamic',
+        slot: 'baseline_context',
         path: activeBriefingPacketPath
       };
       injectSystemPrimerMessage('left', leftIndex, 'Primer', leftPrompt, manualPrimerProvenance);

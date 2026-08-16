@@ -114,13 +114,13 @@ The relation graph should represent nodes and typed edges such as `defines`, `de
 - [x] Define a versioned structural-context schema that is theory-agnostic and serializes deterministically.
 - [ ] Compile the existing master axiom, project awareness, tools, experiments, and manuscript headings into that schema.
 - [ ] Replace greetings, workflow narration, repeated caveats, and conversational transitions with concise directives or typed fields.
-- [ ] Deduplicate definitions and assign stable IDs to symbols, axioms, equations, graph nodes, and sources.
+- [x] Deduplicate compiled records and assign stable IDs to symbols, axioms, equations, graph nodes, and sources.
 - [ ] Preserve mathematical notation, units, domains, assumptions, boundary conditions, and derivation links during compression.
 - [ ] Encode model relationships as typed nodes and edges rather than paragraphs that restate the same links.
-- [ ] Keep a human-readable inspector in the UI even when the canonical context artifact is machine-oriented.
+- [x] Keep a human-readable inspector in the UI even when the canonical context artifact is machine-oriented.
 - [ ] Emit a compact stable core for every request and allow retrieved extensions to attach by stable ID.
 - [ ] Measure tokens before and after compilation using the tokenizer appropriate to the selected provider/model when available.
-- [ ] Reject lossy compression when required definitions, provenance, or falsification criteria disappear.
+- [x] Reject lossy compression when required record IDs or provenance disappear, and require retrieval plus human equivalence approval before prompt activation.
 
 ### Verification
 
@@ -279,7 +279,7 @@ Color states:
 - [ ] Document every awareness source, owner, refresh trigger, size limit, volatility class, prompt position, and access-mode dependency.
 - [ ] Remove duplicate paths where the same manuscript, axiom, tree, recap, or summary reaches a request more than once.
 - [ ] Replace automatic recursive workspace-tree generation during briefing compilation with visible-tree scope or local retrieval.
-- [ ] Inventory every manual primer/context control and classify it as `retain`, `automate`, `merge`, `deprecate`, or `remove`.
+- [x] Inventory every manual primer/context control and classify it as `retain`, `automate`, `merge`, `deprecate`, or `remove`.
 - [ ] Separate permission state, index state, visible-tree state, primer state, and thread state in diagnostics.
 - [ ] Add a request inspector that shows ordered sections, estimated tokens, provenance, and exclusions without exposing API keys.
 - [ ] Verify that changing read-only to read/write does not rebuild awareness context unless project content or selected scope changed.
@@ -330,6 +330,20 @@ Decision rules:
 - `merge`: multiple controls express one intent and should become one action or inspector;
 - `deprecate`: automation supersedes the control, but users need a transition period and migration notice;
 - `remove`: the control is redundant, contradictory, unsafe, or permanently bypasses the canonical awareness pipeline.
+
+Sprint 4 review snapshot (proposal; no controls removed yet):
+
+| Control | Classification | Proposed direction |
+| --- | --- | --- |
+| `AI Request Inspector` | `retain` | Authoritative audit, provenance, token, cache, and structural benchmark surface. |
+| Pane reset-to-primer | `retain` | Recovery action; rebuild through the canonical assembler. |
+| `Export AI Project Map` | `retain` | Explicit human scope selection, never automatic provider transmission. |
+| Carry-over notes | `retain` | Unique human-authored dynamic context; keep outside the reusable prefix. |
+| `Sync AI Context Now` / briefing refresh | `merge` | One refresh-awareness action; replace the baseline context slot instead of appending duplicates. |
+| `View/Edit Primer`, `Save Packet`, `Sync To AI Threads` | `deprecate` | Replace with read-only awareness inspection plus an explicit dynamic override after structural equivalence passes. |
+| `Pass Into Primer` / idea-pad sync | `deprecate` | Preserve notes as dynamic session context rather than mutating stable primer content. |
+
+The canonical assembler and frontend now enforce a single `baseline_context` slot, so repeated refresh or manual override actions replace the prior baseline instead of stacking duplicate primers. Final deprecations remain blocked on structural retrieval benchmarks, human review, and recovery/export for unique notes.
 
 - [ ] Compare each manual action with the canonical assembler and local retrieval pipeline after Sprints 2, 4, and 5.
 - [ ] Measure whether each action improves benchmark awareness enough to justify its token and UX cost.
@@ -391,7 +405,7 @@ All tested models validate the canonical prefix ordering and native OpenAI cache
 - [ ] Compile existing awareness sources into deterministic structural records.
 - [x] Add initial scanned-candidate coverage, schema-validation, and golden serialization tests.
 - [ ] Replace duplicated prose primer sections after benchmark equivalence is established.
-- [ ] Run the first manual context-tool consolidation review against the canonical assembler.
+- [x] Run the first manual context-tool consolidation review against the canonical assembler.
 
 ### Sprint 5: Add local retrieval
 
@@ -429,4 +443,4 @@ These gates apply to every v9 feature track:
 
 ## Scope status
 
-Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 has started with deterministic `physics-ide.structural-context/v1` generation, validation, provenance, stable IDs, typed master-axiom sections, tool records, and an inspectable JSON artifact. Broader awareness and experiment compilation plus benchmark equivalence remain open before structural context can replace prose primer content. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.
+Goals 1-4 are defined and Sprints 1-3 are complete. Sprint 4 now generates deterministic `physics-ide.structural-context/v1`, renders a compact core, verifies ID/provenance coverage, and measures it against the legacy excerpt budget. Eligible cores remain disabled pending A/B retrieval probes and human equivalence review. The first manual-tool classification is documented, and duplicate baseline contexts are prevented; no controls have been removed. Broader awareness and experiment compilation remain open. Additional v9 product goals should be added as separate tracks without weakening the prompt-ordering contract, structural-context integrity, local-first retrieval boundary, token-budget standard, or official-release gates above.

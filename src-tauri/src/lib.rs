@@ -2971,6 +2971,37 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn canonical_assembler_keeps_only_latest_declared_context_slot() {
+        let history = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "Old primer",
+                "context_source": "startup_primer",
+                "context_slot": "baseline_context",
+                "context_volatility": "slowly_changing"
+            }),
+            serde_json::json!({
+                "role": "system",
+                "content": "Refreshed primer",
+                "context_source": "briefing_refresh",
+                "context_slot": "baseline_context",
+                "context_volatility": "slowly_changing"
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": "Question",
+                "context_source": "current_request",
+                "context_volatility": "dynamic"
+            }),
+        ];
+
+        let assembly = assemble_canonical_messages(&history);
+        let contents = assembly.messages.iter().map(|message| message["content"].as_str().unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(contents, vec!["Refreshed primer", "Question"]);
+    }
+
+    #[test]
     fn openai_request_body_keeps_canonical_message_roles() {
         let messages = vec![
             serde_json::json!({"role": "system", "content": "Contract"}),
@@ -3777,10 +3808,25 @@ fn canonical_tier(entry: &serde_json::Value, index: usize, last_index: usize) ->
 
 fn assemble_canonical_messages(history: &[serde_json::Value]) -> CanonicalAssembly {
     let last_index = history.len().saturating_sub(1);
+    let mut latest_slot_index = std::collections::BTreeMap::<String, usize>::new();
+    for (index, entry) in history.iter().enumerate() {
+        if let Some(slot) = entry
+            .get("context_slot")
+            .and_then(|value| value.as_str())
+            .filter(|slot| !slot.trim().is_empty())
+        {
+            latest_slot_index.insert(slot.to_string(), index);
+        }
+    }
     let mut entries = history
         .iter()
         .enumerate()
         .filter_map(|(index, entry)| {
+            if let Some(slot) = entry.get("context_slot").and_then(|value| value.as_str()) {
+                if latest_slot_index.get(slot).is_some_and(|latest| *latest != index) {
+                    return None;
+                }
+            }
             let content = history_entry_text(entry);
             if content.trim().is_empty() {
                 return None;
@@ -5422,6 +5468,133 @@ fn validate_structural_context(context: &StructuralContextV1) -> Result<(), Stri
     Ok(())
 }
 
+fn compact_context_field(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ").replace('|', "\\|")
+}
+
+fn render_structural_core(context: &StructuralContextV1) -> String {
+    let mut lines = vec![
+        format!(
+            "@ctx-v1|model={}|name={}|record=id,src,text|derived_from=src",
+            context.model_id,
+            compact_context_field(&context.model_name)
+        )
+    ];
+    for source in &context.sources {
+        lines.push(format!("S|{}|{}|{}", source.id, source.kind, compact_context_field(&source.path)));
+    }
+
+    let record_groups: [(&str, &Vec<StructuralRecord>); 13] = [
+        ("SEC", &context.sections),
+        ("AX", &context.axioms),
+        ("ASM", &context.assumptions),
+        ("DEF", &context.definitions),
+        ("EQ", &context.equations),
+        ("IC", &context.initial_conditions),
+        ("BC", &context.boundary_conditions),
+        ("OBS", &context.observables),
+        ("TOOL", &context.tools),
+        ("EXP", &context.experiments),
+        ("PRED", &context.predictions),
+        ("FALS", &context.falsification_criteria),
+        ("OPEN", &context.open_questions),
+    ];
+    for (code, records) in record_groups {
+        for record in records {
+            lines.push(format!(
+                "{}|{}|{}|{}",
+                code,
+                record.id,
+                record.source_id,
+                compact_context_field(&record.text)
+            ));
+        }
+    }
+    for symbol in &context.symbols {
+        lines.push(format!(
+            "SYM|{}|{}|{}",
+            symbol.id,
+            compact_context_field(&symbol.notation),
+            symbol.source_ids.join(",")
+        ));
+    }
+    lines.join("\n")
+}
+
+fn structural_core_has_coverage(context: &StructuralContextV1, core: &str) -> bool {
+    core.contains(&context.model_id)
+        && context.sources.iter().all(|record| core.contains(&record.id))
+        && context.sections.iter().all(|record| core.contains(&record.id))
+        && context.axioms.iter().all(|record| core.contains(&record.id))
+        && context.assumptions.iter().all(|record| core.contains(&record.id))
+        && context.definitions.iter().all(|record| core.contains(&record.id))
+        && context.equations.iter().all(|record| core.contains(&record.id))
+        && context.symbols.iter().all(|record| core.contains(&record.id))
+        && context.initial_conditions.iter().all(|record| core.contains(&record.id))
+        && context.boundary_conditions.iter().all(|record| core.contains(&record.id))
+        && context.observables.iter().all(|record| core.contains(&record.id))
+        && context.tools.iter().all(|record| core.contains(&record.id))
+        && context.experiments.iter().all(|record| core.contains(&record.id))
+        && context.predictions.iter().all(|record| core.contains(&record.id))
+        && context.falsification_criteria.iter().all(|record| core.contains(&record.id))
+        && context.open_questions.iter().all(|record| core.contains(&record.id))
+}
+
+fn legacy_context_excerpt(master_axiom: &str, awareness: &str) -> String {
+    fn excerpt(value: &str, max_chars: usize, label: &str) -> String {
+        if value.chars().count() <= max_chars {
+            return value.trim().to_string();
+        }
+        format!(
+            "{}\n\n[...truncated {} excerpt...]",
+            value.chars().take(max_chars).collect::<String>().trim(),
+            label
+        )
+    }
+
+    format!(
+        "Master axiom excerpt:\n{}\nProject awareness excerpt:\n{}",
+        excerpt(master_axiom, 1500, "master axiom"),
+        excerpt(awareness, 2200, "project awareness")
+    )
+}
+
+fn structural_prompt_decision(
+    context: &StructuralContextV1,
+    master_axiom: &str,
+    awareness: &str,
+) -> serde_json::Value {
+    let core = render_structural_core(context);
+    let legacy = legacy_context_excerpt(master_axiom, awareness);
+    let core_tokens = estimate_token_count(core.chars().count());
+    let legacy_tokens = estimate_token_count(legacy.chars().count());
+    let coverage_complete = structural_core_has_coverage(context, &core);
+    let eligible = coverage_complete && core_tokens < legacy_tokens;
+    let enabled = false;
+    let reduction_percent = if legacy_tokens == 0 {
+        0.0
+    } else {
+        ((legacy_tokens as f64 - core_tokens as f64) / legacy_tokens as f64) * 100.0
+    };
+
+    serde_json::json!({
+        "enabled": enabled,
+        "eligible": eligible,
+        "coverage_complete": coverage_complete,
+        "core_estimated_tokens": core_tokens,
+        "legacy_estimated_tokens": legacy_tokens,
+        "estimated_reduction_percent": reduction_percent,
+        "reason": if !coverage_complete {
+            "semantic_id_coverage_failed"
+        } else if core_tokens >= legacy_tokens {
+            "compact_core_not_smaller"
+        } else {
+            "awaiting_retrieval_and_human_equivalence_approval"
+        },
+        "content": core
+    })
+}
+
 fn detect_theory_style(scan: &serde_json::Value) -> &'static str {
     let combined = scan["headings"].as_array().map(|items| {
         items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
@@ -5784,6 +5957,12 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         .map_err(|e| format!("Failed to write structural context: {e}"))?;
     let mut structural_hasher = Sha256::new();
     structural_hasher.update(structural_context_file.as_bytes());
+    let master_axiom_content = fs::read_to_string(&master_axiom_path).unwrap_or_default();
+    let structural_prompt = structural_prompt_decision(
+        &structural_context,
+        &master_axiom_content,
+        &awareness_markdown,
+    );
     let structural_context_payload = serde_json::json!({
         "name": "structural_context",
         "path": structural_context_path.to_string_lossy().to_string(),
@@ -5792,6 +5971,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "model_id": structural_context.model_id,
         "bytes": structural_context_file.len(),
         "sha256": format!("{:x}", structural_hasher.finalize()),
+        "prompt_core": structural_prompt,
         "counts": {
             "sources": structural_context.sources.len(),
             "sections": structural_context.sections.len(),
@@ -6892,8 +7072,30 @@ mod tests {
         let second = compile_structural_context(&temp_dir, &theory_dir, &master_axiom_path, &tools_dir, &scan);
         let first_json = serde_json::to_string_pretty(&first).unwrap();
         let second_json = serde_json::to_string_pretty(&second).unwrap();
+        let awareness = build_project_awareness_markdown(
+            &temp_dir,
+            theory_dir.to_str().unwrap(),
+            &master_axiom_path,
+            tools_dir.to_str().unwrap(),
+            &scan,
+        );
+        let master_axiom = fs::read_to_string(&master_axiom_path).unwrap();
+        let first_core = render_structural_core(&first);
+        let second_core = render_structural_core(&second);
+        let prompt_decision = structural_prompt_decision(&first, &master_axiom, &awareness);
 
         assert_eq!(first_json, second_json);
+        assert_eq!(first_core, second_core);
+        assert!(structural_core_has_coverage(&first, &first_core));
+        assert!(!structural_core_has_coverage(&first, "@ctx-v1|incomplete"));
+        assert!(prompt_decision["coverage_complete"].as_bool().unwrap());
+        assert!(
+            prompt_decision["eligible"].as_bool().unwrap(),
+            "Structural core was not smaller: core={} legacy={}",
+            prompt_decision["core_estimated_tokens"],
+            prompt_decision["legacy_estimated_tokens"]
+        );
+        assert!(!prompt_decision["enabled"].as_bool().unwrap());
         assert_eq!(first.schema_version, "physics-ide.structural-context/v1");
         assert!(first.sources.iter().all(|source| !source.path.contains(temp_dir.to_string_lossy().as_ref())));
         assert!(first.symbols.iter().any(|symbol| symbol.notation == "\\mathcal{L}"));
