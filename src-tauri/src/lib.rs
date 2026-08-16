@@ -4977,6 +4977,7 @@ fn retrieval_index_path(app: &AppHandle, root: &Path) -> Result<PathBuf, String>
 const RETRIEVAL_EMBEDDING_MODEL_ID: &str = "Qdrant/all-MiniLM-L6-v2-onnx";
 const RETRIEVAL_EMBEDDING_MODEL_REVISION: &str = "5f1b8cd78bc4fb444dd171e59b18f3a3af89a079";
 const RETRIEVAL_EMBEDDING_DIMENSIONS: usize = 384;
+const RETRIEVAL_EMBEDDING_BATCH_SIZE: usize = 64;
 static REGISTER_SQLITE_VEC: Once = Once::new();
 
 struct EmbeddingAsset {
@@ -5208,6 +5209,129 @@ fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, Strin
         )
         .map_err(|e| format!("Failed to initialize retrieval index: {e}"))?;
     Ok(connection)
+}
+
+fn encode_embedding(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn sync_retrieval_vectors_value<F>(
+    index_path: &Path,
+    mut embed: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&[String]) -> Result<Vec<Vec<f32>>, String>,
+{
+    let mut connection = open_retrieval_index(index_path)?;
+    let model_fingerprint = format!("{}@{}", RETRIEVAL_EMBEDDING_MODEL_ID, RETRIEVAL_EMBEDDING_MODEL_REVISION);
+    let stale_rowids = {
+        let mut statement = connection
+            .prepare(
+                "SELECT records.vector_rowid
+                 FROM retrieval_vector_records AS records
+                 LEFT JOIN retrieval_chunks AS chunks ON chunks.chunk_id = records.chunk_id
+                 WHERE chunks.chunk_id IS NULL
+                    OR records.model_id != ?1
+                    OR records.dimensions != ?2
+                    OR records.content_hash != records.chunk_id",
+            )
+            .map_err(|e| format!("Failed to prepare stale vector query: {e}"))?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![model_fingerprint, RETRIEVAL_EMBEDDING_DIMENSIONS as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| format!("Failed to query stale vectors: {e}"))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        rows
+    };
+    let missing_chunks = {
+        let mut statement = connection
+            .prepare(
+                "SELECT chunks.chunk_id, chunks.content
+                 FROM retrieval_chunks AS chunks
+                 LEFT JOIN retrieval_vector_records AS records
+                   ON records.chunk_id = chunks.chunk_id
+                  AND records.model_id = ?1
+                  AND records.dimensions = ?2
+                  AND records.content_hash = chunks.chunk_id
+                 WHERE records.chunk_id IS NULL
+                 ORDER BY chunks.path ASC, chunks.chunk_index ASC",
+            )
+            .map_err(|e| format!("Failed to prepare missing vector query: {e}"))?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![model_fingerprint, RETRIEVAL_EMBEDDING_DIMENSIONS as i64],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|e| format!("Failed to query missing vectors: {e}"))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        rows.into_iter().collect::<std::collections::BTreeMap<_, _>>().into_iter().collect::<Vec<_>>()
+    };
+
+    let mut pending = Vec::with_capacity(missing_chunks.len());
+    for batch in missing_chunks.chunks(RETRIEVAL_EMBEDDING_BATCH_SIZE) {
+        let texts = batch.iter().map(|(_, content)| content.clone()).collect::<Vec<_>>();
+        let embeddings = embed(&texts)?;
+        if embeddings.len() != batch.len()
+            || embeddings.iter().any(|embedding| embedding.len() != RETRIEVAL_EMBEDDING_DIMENSIONS)
+        {
+            return Err("Local embedding model returned an unexpected vector batch shape.".to_string());
+        }
+        pending.extend(batch.iter().zip(embeddings).map(|((chunk_id, _), embedding)| {
+            (chunk_id.clone(), embedding)
+        }));
+    }
+
+    let transaction = connection
+        .transaction()
+        .map_err(|e| format!("Failed to start vector synchronization: {e}"))?;
+    for rowid in &stale_rowids {
+        transaction
+            .execute("DELETE FROM retrieval_vectors WHERE rowid = ?1", [rowid])
+            .map_err(|e| format!("Failed to delete stale vector: {e}"))?;
+        transaction
+            .execute("DELETE FROM retrieval_vector_records WHERE vector_rowid = ?1", [rowid])
+            .map_err(|e| format!("Failed to delete stale vector metadata: {e}"))?;
+    }
+    for (chunk_id, embedding) in &pending {
+        transaction
+            .execute(
+                "INSERT INTO retrieval_vector_records (chunk_id, model_id, dimensions, content_hash)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    chunk_id,
+                    model_fingerprint,
+                    RETRIEVAL_EMBEDDING_DIMENSIONS as i64,
+                    chunk_id
+                ],
+            )
+            .map_err(|e| format!("Failed to insert vector metadata: {e}"))?;
+        let rowid = transaction.last_insert_rowid();
+        transaction
+            .execute(
+                "INSERT INTO retrieval_vectors (rowid, embedding) VALUES (?1, ?2)",
+                rusqlite::params![rowid, encode_embedding(embedding)],
+            )
+            .map_err(|e| format!("Failed to insert retrieval vector: {e}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|e| format!("Failed to commit vector synchronization: {e}"))?;
+
+    Ok(serde_json::json!({
+        "status": "ready",
+        "embedded_chunks": pending.len(),
+        "removed_vectors": stale_rowids.len(),
+        "model": RETRIEVAL_EMBEDDING_MODEL_ID,
+        "model_revision": RETRIEVAL_EMBEDDING_MODEL_REVISION,
+        "dimensions": RETRIEVAL_EMBEDDING_DIMENSIONS
+    }))
 }
 
 fn file_modified_ns(metadata: &fs::Metadata) -> i64 {
@@ -5572,8 +5696,19 @@ fn refresh_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Res
     }
     let index_path = retrieval_index_path(&app, &root)?;
     let mut result = refresh_retrieval_index_value(&root, &index_path)?;
-    let model_status = embedding_model_status_value(&embedding_model_dir(&app)?);
+    let model_directory = embedding_model_dir(&app)?;
+    let model_status = embedding_model_status_value(&model_directory);
     result["embedding_status"] = model_status["status"].clone();
+    if model_status["status"] == "ready" {
+        let mut model = load_local_embedding_model(&model_directory)?;
+        let vector_sync = sync_retrieval_vectors_value(&index_path, |texts| {
+            model
+                .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
+                .map_err(|e| format!("Failed to embed retrieval chunks: {e}"))
+        })?;
+        result["vector_sync"] = vector_sync;
+        result["search_mode"] = serde_json::Value::String("fts5_lexical_with_neighbors_vector_index_ready".to_string());
+    }
     Ok(result.to_string())
 }
 
@@ -8141,12 +8276,114 @@ mod tests {
     }
 
     #[test]
+    fn synchronizes_only_missing_and_stale_retrieval_vectors() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_vector_sync_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let theory_path = temp_dir.join("theory.md");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            &theory_path,
+            "# Foundation\nA manifold defines the geometry.\n\n## Mechanism\nA coupling determines the effective mass.\n",
+        )
+        .unwrap();
+        refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+
+        let deterministic_embed = |texts: &[String]| {
+            Ok(texts
+                .iter()
+                .map(|text| {
+                    let mut embedding = vec![0.0f32; RETRIEVAL_EMBEDDING_DIMENSIONS];
+                    embedding[0] = 1.0;
+                    embedding[1] = text.len() as f32;
+                    embedding
+                })
+                .collect::<Vec<_>>())
+        };
+        let first = sync_retrieval_vectors_value(&index_path, deterministic_embed).unwrap();
+        assert_eq!(first["embedded_chunks"].as_u64().unwrap(), 2);
+        assert_eq!(first["removed_vectors"].as_u64().unwrap(), 0);
+
+        let second = sync_retrieval_vectors_value(&index_path, deterministic_embed).unwrap();
+        assert_eq!(second["embedded_chunks"].as_u64().unwrap(), 0);
+        assert_eq!(second["removed_vectors"].as_u64().unwrap(), 0);
+
+        fs::write(
+            &theory_path,
+            "# Foundation\nA manifold defines the geometry.\n\n## Mechanism\nA revised coupling determines the effective mass.\n",
+        )
+        .unwrap();
+        refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        let failed = sync_retrieval_vectors_value(&index_path, |_texts| {
+            Err("synthetic embedding failure".to_string())
+        });
+        assert!(failed.is_err());
+        let connection = open_retrieval_index(&index_path).unwrap();
+        let retained_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM retrieval_vector_records", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(retained_count, 2);
+        drop(connection);
+
+        let changed = sync_retrieval_vectors_value(&index_path, deterministic_embed).unwrap();
+        assert_eq!(changed["embedded_chunks"].as_u64().unwrap(), 1);
+        assert_eq!(changed["removed_vectors"].as_u64().unwrap(), 1);
+
+        fs::remove_file(&theory_path).unwrap();
+        refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        let deleted = sync_retrieval_vectors_value(&index_path, deterministic_embed).unwrap();
+        assert_eq!(deleted["embedded_chunks"].as_u64().unwrap(), 0);
+        assert_eq!(deleted["removed_vectors"].as_u64().unwrap(), 2);
+
+        let connection = open_retrieval_index(&index_path).unwrap();
+        let vector_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM retrieval_vector_records", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(vector_count, 0);
+        drop(connection);
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
     #[ignore = "requires PHYSICS_IDE_EMBEDDING_MODEL_DIR with the pinned local model assets"]
     fn embeds_with_verified_local_model_assets() {
         let directory = std::env::var("PHYSICS_IDE_EMBEDDING_MODEL_DIR").unwrap();
         let status = install_embedding_model_value(Path::new(&directory)).unwrap();
         assert_eq!(status["status"], "ready");
         assert_eq!(status["inference_status"], "ready");
+
+        let index_path = Path::new(&directory).join("integration-retrieval.sqlite3");
+        let _ = delete_retrieval_index_value(&index_path);
+        let connection = open_retrieval_index(&index_path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO retrieval_chunks (chunk_id, path, chunk_index, line_start, line_end, heading, content)
+                 VALUES (?1, ?2, 0, 1, 2, ?3, ?4)",
+                rusqlite::params![
+                    "chunk-integration-probe",
+                    "theory.md",
+                    "Boundary mechanism",
+                    "A manifold coupling determines the boundary response."
+                ],
+            )
+            .unwrap();
+        drop(connection);
+        let mut model = load_local_embedding_model(Path::new(&directory)).unwrap();
+        let sync = sync_retrieval_vectors_value(&index_path, |texts| {
+            model.embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE)).map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(sync["embedded_chunks"].as_u64().unwrap(), 1);
+        let connection = open_retrieval_index(&index_path).unwrap();
+        let vector_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM retrieval_vectors", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(vector_count, 1);
+        drop(connection);
+        delete_retrieval_index_value(&index_path).unwrap();
     }
 
     #[test]
