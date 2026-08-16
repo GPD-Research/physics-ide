@@ -5224,10 +5224,176 @@ fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, Strin
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_vectors USING vec0(
                  embedding float[384] distance_metric=cosine
+             );
+             CREATE TABLE IF NOT EXISTS retrieval_graph_edges (
+                 from_chunk_id TEXT NOT NULL,
+                 to_chunk_id TEXT NOT NULL,
+                 relation_type TEXT NOT NULL,
+                 evidence TEXT NOT NULL,
+                 PRIMARY KEY (from_chunk_id, to_chunk_id, relation_type)
              );",
         )
         .map_err(|e| format!("Failed to initialize retrieval index: {e}"))?;
     Ok(connection)
+}
+
+fn normalize_graph_phrase(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || character == '_' {
+                character.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn rebuild_retrieval_graph(connection: &mut rusqlite::Connection) -> Result<usize, String> {
+    let chunks = {
+        let mut statement = connection
+            .prepare(
+                "SELECT chunk_id, heading, content
+                 FROM retrieval_chunks
+                 ORDER BY path ASC, chunk_index ASC",
+            )
+            .map_err(|e| format!("Failed to prepare retrieval graph source query: {e}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| format!("Failed to query retrieval graph sources: {e}"))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        rows.into_iter()
+            .map(|(chunk_id, heading, content)| (chunk_id, (heading, content)))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let mut headings_by_first_word = std::collections::BTreeMap::<String, Vec<(String, String)>>::new();
+    for (chunk_id, (heading, _)) in &chunks {
+        let normalized = normalize_graph_phrase(heading);
+        if normalized.len() < 4 {
+            continue;
+        }
+        if let Some(first_word) = normalized.split_whitespace().next() {
+            headings_by_first_word
+                .entry(first_word.to_string())
+                .or_default()
+                .push((chunk_id.clone(), normalized));
+        }
+    }
+
+    let relation_cues = [
+        ("depends on", "depends_on"),
+        ("derived from", "derived_from"),
+        ("defines", "defines"),
+        ("constrains", "constrains"),
+        ("predicts", "predicts"),
+        ("measured by", "measured_by"),
+        ("contradicts", "contradicts"),
+        ("in conflict with", "contradicts"),
+    ];
+    let mut edges = std::collections::BTreeMap::<(String, String, String), String>::new();
+    for (from_chunk_id, (_, content)) in &chunks {
+        for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let normalized_line = normalize_graph_phrase(line);
+            let line_words = normalized_line
+                .split_whitespace()
+                .collect::<std::collections::BTreeSet<_>>();
+            for (cue, relation_type) in relation_cues {
+                if !normalized_line.contains(cue) {
+                    continue;
+                }
+                for word in &line_words {
+                    let Some(candidates) = headings_by_first_word.get(*word) else {
+                        continue;
+                    };
+                    for (to_chunk_id, heading) in candidates {
+                        if from_chunk_id == to_chunk_id || !normalized_line.contains(heading) {
+                            continue;
+                        }
+                        edges.insert(
+                            (
+                                from_chunk_id.clone(),
+                                to_chunk_id.clone(),
+                                relation_type.to_string(),
+                            ),
+                            line.chars().take(300).collect(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let transaction = connection
+        .transaction()
+        .map_err(|e| format!("Failed to start retrieval graph refresh: {e}"))?;
+    transaction
+        .execute("DELETE FROM retrieval_graph_edges", [])
+        .map_err(|e| format!("Failed to clear retrieval graph: {e}"))?;
+    for ((from_chunk_id, to_chunk_id, relation_type), evidence) in &edges {
+        transaction
+            .execute(
+                "INSERT INTO retrieval_graph_edges (from_chunk_id, to_chunk_id, relation_type, evidence)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![from_chunk_id, to_chunk_id, relation_type, evidence],
+            )
+            .map_err(|e| format!("Failed to insert retrieval graph edge: {e}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|e| format!("Failed to commit retrieval graph refresh: {e}"))?;
+    Ok(edges.len())
+}
+
+fn load_retrieval_graph_neighbors(
+    connection: &rusqlite::Connection,
+    chunk_id: &str,
+    limit: usize,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT edges.relation_type, 'outgoing', edges.to_chunk_id, edges.evidence,
+                    chunks.path, chunks.chunk_index, chunks.line_start, chunks.line_end, chunks.heading, chunks.content
+             FROM retrieval_graph_edges AS edges
+             JOIN retrieval_chunks AS chunks ON chunks.chunk_id = edges.to_chunk_id
+             WHERE edges.from_chunk_id = ?1
+             UNION ALL
+             SELECT edges.relation_type, 'incoming', edges.from_chunk_id, edges.evidence,
+                    chunks.path, chunks.chunk_index, chunks.line_start, chunks.line_end, chunks.heading, chunks.content
+             FROM retrieval_graph_edges AS edges
+             JOIN retrieval_chunks AS chunks ON chunks.chunk_id = edges.from_chunk_id
+             WHERE edges.to_chunk_id = ?1
+             ORDER BY 1 ASC, 2 ASC, 5 ASC, 6 ASC
+             LIMIT ?2",
+        )
+        .map_err(|e| format!("Failed to prepare retrieval graph expansion: {e}"))?;
+    let rows = statement
+        .query_map(rusqlite::params![chunk_id, limit.clamp(1, 8) as i64], |row| {
+            Ok(serde_json::json!({
+                "relation_type": row.get::<_, String>(0)?,
+                "direction": row.get::<_, String>(1)?,
+                "chunk_id": row.get::<_, String>(2)?,
+                "evidence": row.get::<_, String>(3)?,
+                "relative_path": row.get::<_, String>(4)?,
+                "chunk_index": row.get::<_, i64>(5)?,
+                "line_start": row.get::<_, i64>(6)?,
+                "line_end": row.get::<_, i64>(7)?,
+                "heading": row.get::<_, String>(8)?,
+                "content": row.get::<_, String>(9)?
+            }))
+        })
+        .map_err(|e| format!("Failed to load retrieval graph expansion: {e}"))?;
+    Ok(rows.filter_map(Result::ok).collect())
 }
 
 fn encode_embedding(values: &[f32]) -> Vec<u8> {
@@ -5578,6 +5744,7 @@ fn refresh_retrieval_index_value(root: &Path, index_path: &Path) -> Result<serde
             .map_err(|e| format!("Failed to delete stale retrieval metadata: {e}"))?;
     }
     transaction.commit().map_err(|e| format!("Failed to commit retrieval refresh: {e}"))?;
+    let graph_edges = rebuild_retrieval_graph(&mut connection)?;
 
     Ok(serde_json::json!({
         "status": "ok",
@@ -5586,6 +5753,7 @@ fn refresh_retrieval_index_value(root: &Path, index_path: &Path) -> Result<serde
         "unchanged_files": unchanged_files,
         "deleted_files": deleted.len(),
         "indexed_chunks": indexed_chunks,
+        "graph_edges": graph_edges,
         "embedding_status": "model_assets_required",
         "embedding_model": RETRIEVAL_EMBEDDING_MODEL_ID,
         "embedding_dimensions": RETRIEVAL_EMBEDDING_DIMENSIONS,
@@ -5753,6 +5921,7 @@ fn query_retrieval_index_hybrid_value(
             )
             .map_err(|e| format!("Failed to load retrieval neighbors: {e}"))?;
         neighbors.extend(neighbor_rows.filter_map(Result::ok));
+        let graph_neighbors = load_retrieval_graph_neighbors(&connection, &chunk_id, 4)?;
         results.push(serde_json::json!({
             "chunk_id": chunk_id,
             "relative_path": path,
@@ -5767,7 +5936,8 @@ fn query_retrieval_index_hybrid_value(
             "lexical_score": fusion.lexical_score,
             "vector_rank": fusion.vector_rank,
             "vector_distance": fusion.vector_distance,
-            "neighbors": neighbors
+            "neighbors": neighbors,
+            "graph_neighbors": graph_neighbors
         }));
     }
 
@@ -8552,6 +8722,48 @@ mod tests {
                 && row["lexical_rank"].is_null()
                 && row["vector_rank"].is_number()
         }));
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn expands_only_source_explicit_typed_graph_relations() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_graph_retrieval_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let theory_path = temp_dir.join("theory.md");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            &theory_path,
+            "# Boundary condition\nThe field vanishes at the outer surface.\n\n## Dynamics\nThe evolution depends on Boundary condition.\n",
+        )
+        .unwrap();
+
+        let refresh = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(refresh["graph_edges"].as_u64().unwrap(), 1);
+        let query = query_retrieval_index_value(&index_path, "evolution dynamics", 2).unwrap();
+        let dynamics = query["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["heading"] == "Dynamics")
+            .unwrap();
+        let graph_neighbors = dynamics["graph_neighbors"].as_array().unwrap();
+        assert_eq!(graph_neighbors.len(), 1);
+        assert_eq!(graph_neighbors[0]["relation_type"], "depends_on");
+        assert_eq!(graph_neighbors[0]["direction"], "outgoing");
+        assert_eq!(graph_neighbors[0]["heading"], "Boundary condition");
+
+        fs::write(
+            &theory_path,
+            "# Boundary condition\nThe field vanishes at the outer surface.\n\n## Dynamics\nThe evolution is evaluated independently.\n",
+        )
+        .unwrap();
+        let changed = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(changed["graph_edges"].as_u64().unwrap(), 0);
 
         fs::remove_dir_all(&temp_dir).unwrap();
     }

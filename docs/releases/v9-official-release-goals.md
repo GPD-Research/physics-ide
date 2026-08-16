@@ -168,7 +168,7 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 - [ ] Store source path, stable section ID, heading ancestry, content hash, embedding model/version, vector dimensions, and modification time with every record.
 - [x] Add incremental indexing so unchanged chunks retain their vectors and changed or deleted chunks update transactionally.
 - [x] Combine vector similarity with FTS5 or equivalent lexical search so exact mathematical symbols and rare terms are not lost.
-- [ ] Add graph-neighborhood expansion for directly related axioms, definitions, equations, experiments, and contradictions.
+- [x] Add graph-neighborhood expansion for directly related axioms, definitions, equations, experiments, and contradictions.
 - [ ] Enforce configurable retrieval and token budgets before provider dispatch.
 - [ ] Show retrieved sources, relevance scores, index freshness, and embedding model in diagnostics.
 - [ ] Provide `Build index`, `Refresh changed`, `Rebuild`, `Inspect`, and `Delete local index` controls.
@@ -441,7 +441,7 @@ This result rejects full-corpus structural-core activation for the tested BMI ar
 
 - [ ] Select and package the local embedding model and SQLite vector extension.
 - [ ] Implement incremental structural chunk indexing.
-- [ ] Add hybrid vector, lexical, and graph-neighbor retrieval.
+- [x] Add hybrid vector, lexical, and graph-neighbor retrieval.
 - [ ] Enforce retrieval budgets and expose source diagnostics.
 - [ ] Preserve explanatory neighbor text around retrieved equations and mechanisms; the BMI diagnostic showed that isolated structural records can underperform concise prose context.
 - [ ] Stop transporting full manuscripts after retrieval benchmarks pass.
@@ -479,7 +479,9 @@ Index refresh now backfills vectors for existing chunks, retains unchanged vecto
 
 Queries now embed locally and combine FTS5 and cosine-vector candidate ranks with symmetric reciprocal-rank fusion (`k=60`). Results expose fused score, lexical rank, vector rank, vector distance, and explanatory neighbors. No theory-family labels or consensus priors affect ranking. Missing model assets or vectors fall back to lexical retrieval, and the verified ONNX session is cached after first use to avoid repeated initialization.
 
-Release approval still requires packaged Linux tests, model-license attribution in release artifacts, typed graph-neighborhood expansion, and benchmark evidence across materially different theory families.
+Typed graph expansion is built only from explicit source statements that name another indexed heading with a supported relation cue: `defines`, `depends_on`, `constrains`, `predicts`, `measured_by`, `contradicts`, or `derived_from`. Edges are rebuilt deterministically after chunk refresh, removed when the source statement disappears, and expanded after hybrid ranking without altering rank. Graph evidence shares the existing strict provider-context character budget.
+
+Release approval still requires packaged Linux tests, model-license attribution in release artifacts, and benchmark evidence across materially different theory families.
 
 ### Sprint 6: Add directory cost guidance
 

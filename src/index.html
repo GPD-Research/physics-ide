@@ -2645,6 +2645,16 @@
               remainingCharacters -= snippet.length;
             }
           });
+          (row?.graph_neighbors || []).slice(0, 2).forEach((neighbor) => {
+            if (remainingCharacters <= 0) return;
+            const neighborContent = String(neighbor?.content || '').trim();
+            if (neighborContent) {
+              const relation = `${neighbor.direction || 'related'} ${neighbor.relation_type || 'relation'}`;
+              const snippet = `Graph ${relation} L${neighbor.line_start || '?'}-${neighbor.line_end || '?'}: ${neighborContent.slice(0, 450)}`.slice(0, remainingCharacters);
+              snippets.push(snippet);
+              remainingCharacters -= snippet.length;
+            }
+          });
           normalized.push({
             relative_path: row.relative_path,
             score: Math.max(1, 100 - index),
@@ -6466,7 +6476,7 @@ async function restoreVersion() {
         output.value = [
           `Status: ${String(result.status || 'unknown').toUpperCase()}`,
           `Changed files indexed: ${result.indexed_files ?? 0} | unchanged: ${result.unchanged_files ?? 0} | deleted: ${result.deleted_files ?? 0}`,
-          `Chunks replaced: ${result.indexed_chunks ?? 0}`,
+          `Chunks replaced: ${result.indexed_chunks ?? 0} | typed graph edges: ${result.graph_edges ?? 0}`,
           `Vectors embedded: ${vectorSync.embedded_chunks ?? 0} | removed: ${vectorSync.removed_vectors ?? 0}`,
           `Search mode: ${result.search_mode || 'unavailable'} | embeddings: ${result.embedding_status || 'unavailable'}`,
           `Vector runtime: ${result.vector_extension || 'unavailable'} | model: ${result.embedding_model || 'unavailable'} | dimensions: ${result.embedding_dimensions ?? 'unavailable'}`,
@@ -6503,7 +6513,10 @@ async function restoreVersion() {
           lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | score=${Number(row.fusion_score || row.rank || 0).toFixed(6)}`);
           lines.push(`   lexical rank=${row.lexical_rank ?? '-'} | vector rank=${row.vector_rank ?? '-'} | vector distance=${row.vector_distance == null ? '-' : Number(row.vector_distance).toFixed(6)}`);
           if (row.heading) lines.push(`   ${row.heading}`);
-          lines.push(`   neighbors=${(row.neighbors || []).length}`);
+          lines.push(`   adjacent neighbors=${(row.neighbors || []).length} | graph neighbors=${(row.graph_neighbors || []).length}`);
+          (row.graph_neighbors || []).forEach((neighbor) => {
+            lines.push(`   graph ${neighbor.direction || 'related'} ${neighbor.relation_type || 'relation'} -> ${neighbor.relative_path}:${neighbor.line_start}-${neighbor.line_end}`);
+          });
         });
         output.value = lines.join('\n');
       } catch (err) {
