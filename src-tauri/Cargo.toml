@@ -28,6 +28,8 @@ pbkdf2 = { version = "0.12", features = ["simple"] }
 rand = "0.8"
 sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1.9"
+fastembed = { version = "6.0.0", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }

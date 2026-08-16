@@ -6466,6 +6466,7 @@ async function restoreVersion() {
           `Changed files indexed: ${result.indexed_files ?? 0} | unchanged: ${result.unchanged_files ?? 0} | deleted: ${result.deleted_files ?? 0}`,
           `Chunks replaced: ${result.indexed_chunks ?? 0}`,
           `Search mode: ${result.search_mode || 'unavailable'} | embeddings: ${result.embedding_status || 'unavailable'}`,
+          `Vector runtime: ${result.vector_extension || 'unavailable'} | model: ${result.embedding_model || 'unavailable'} | dimensions: ${result.embedding_dimensions ?? 'unavailable'}`,
           `Index: ${result.index_path || 'unavailable'}`
         ].join('\n');
       } catch (err) {

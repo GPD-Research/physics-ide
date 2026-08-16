@@ -32,8 +32,9 @@ The project has moved from a simple desktop shell toward a more practical theory
 - added deterministic `physics-ide.structural-context/v1` compilation with stable IDs, typed scientific records, source provenance, validation, and compact-core benchmarking;
 - used blind A/B testing to reject full-corpus structural-core replacement for the BMI project when it was both larger and less useful than concise legacy context;
 - added a project-keyed local SQLite FTS5 retrieval index under Tauri application data, with incremental refresh, bounded Unicode-safe chunks, explanatory neighbors, generated-context exclusions, safe local deletion, and legacy evidence fallback;
+- validated the local vector foundation with statically linked `sqlite-vec`, a 384-dimensional cosine index, and FastEmbed model metadata without network-dependent tests;
 - limited indexed evidence sent to provider prompts to a global 6,000-character budget;
-- expanded the backend regression suite to 53 passing tests.
+- expanded the backend regression suite to 54 passing tests.
 
 ### Latest progress (2026-08-11)
 

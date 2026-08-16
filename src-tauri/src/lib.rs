@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 use tauri::{AppHandle, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -4972,10 +4973,23 @@ fn retrieval_index_path(app: &AppHandle, root: &Path) -> Result<PathBuf, String>
     Ok(path)
 }
 
+const RETRIEVAL_EMBEDDING_MODEL_ID: &str = "Qdrant/all-MiniLM-L6-v2-onnx";
+const RETRIEVAL_EMBEDDING_DIMENSIONS: usize = 384;
+static REGISTER_SQLITE_VEC: Once = Once::new();
+
+fn register_sqlite_vec() {
+    REGISTER_SQLITE_VEC.call_once(|| unsafe {
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
+
 fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, String> {
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create retrieval index directory: {e}"))?;
     }
+    register_sqlite_vec();
     let connection = rusqlite::Connection::open(&index_path)
         .map_err(|e| format!("Failed to open retrieval index: {e}"))?;
     connection
@@ -4998,6 +5012,16 @@ fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, Strin
                  heading,
                  content,
                  tokenize='unicode61'
+             );
+             CREATE TABLE IF NOT EXISTS retrieval_vector_records (
+                 vector_rowid INTEGER PRIMARY KEY,
+                 chunk_id TEXT UNIQUE NOT NULL,
+                 model_id TEXT NOT NULL,
+                 dimensions INTEGER NOT NULL,
+                 content_hash TEXT NOT NULL
+             );
+             CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_vectors USING vec0(
+                 embedding float[384] distance_metric=cosine
              );",
         )
         .map_err(|e| format!("Failed to initialize retrieval index: {e}"))?;
@@ -5237,7 +5261,10 @@ fn refresh_retrieval_index_value(root: &Path, index_path: &Path) -> Result<serde
         "unchanged_files": unchanged_files,
         "deleted_files": deleted.len(),
         "indexed_chunks": indexed_chunks,
-        "embedding_status": "not_configured",
+        "embedding_status": "model_assets_required",
+        "embedding_model": RETRIEVAL_EMBEDDING_MODEL_ID,
+        "embedding_dimensions": RETRIEVAL_EMBEDDING_DIMENSIONS,
+        "vector_extension": "sqlite-vec",
         "search_mode": "fts5_lexical_with_neighbors"
     }))
 }
@@ -7854,6 +7881,51 @@ mod tests {
         assert!(chunks.len() >= 4);
         assert!(chunks.iter().all(|chunk| chunk.content.chars().count() <= 4_000));
         assert!(chunks.iter().all(|chunk| chunk.line_start >= 1 && chunk.line_end >= chunk.line_start));
+    }
+
+    #[test]
+    fn loads_selected_embedding_metadata_and_sqlite_vector_search() {
+        let model = fastembed::TextEmbedding::get_model_info(
+            &fastembed::EmbeddingModel::AllMiniLML6V2,
+        )
+        .unwrap();
+        assert_eq!(model.model_code, RETRIEVAL_EMBEDDING_MODEL_ID);
+        assert_eq!(model.dim, RETRIEVAL_EMBEDDING_DIMENSIONS);
+
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_vector_test_{}", std::process::id()));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        let connection = open_retrieval_index(&index_path).unwrap();
+        let version: String = connection.query_row("SELECT vec_version()", [], |row| row.get(0)).unwrap();
+        assert!(!version.is_empty());
+
+        let encode = |values: &[f32]| {
+            values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>()
+        };
+        let mut first = vec![0.0f32; RETRIEVAL_EMBEDDING_DIMENSIONS];
+        let mut second = vec![0.0f32; RETRIEVAL_EMBEDDING_DIMENSIONS];
+        first[0] = 1.0;
+        second[1] = 1.0;
+        connection.execute(
+            "INSERT INTO retrieval_vectors(rowid, embedding) VALUES (?1, ?2)",
+            rusqlite::params![1, encode(&first)],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO retrieval_vectors(rowid, embedding) VALUES (?1, ?2)",
+            rusqlite::params![2, encode(&second)],
+        ).unwrap();
+
+        let nearest: i64 = connection.query_row(
+            "SELECT rowid FROM retrieval_vectors WHERE embedding MATCH ?1 AND k = 1 ORDER BY distance",
+            [encode(&first)],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(nearest, 1);
+        drop(connection);
+        fs::remove_dir_all(&temp_dir).unwrap();
     }
 
     #[test]

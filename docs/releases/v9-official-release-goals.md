@@ -461,7 +461,19 @@ The first Sprint 5 increment uses bundled SQLite with FTS5 before adding embeddi
 - Request Inspector refresh, query, and safe local-index deletion controls;
 - context-probe integration with fallback to the legacy recursive evidence scan.
 
-This is not yet vector retrieval. The embedding model and `sqlite-vec`/validated vector extension remain open, but will reuse the stable chunk IDs and incremental metadata contract established here.
+This is not yet active vector retrieval. The selected model and extension reuse the stable chunk IDs and incremental metadata contract established here, but indexing remains lexical-only until local model assets and incremental embedding generation are integrated.
+
+#### Vector compatibility decision
+
+The first vector compatibility gate is validated on x86_64 Ubuntu with bundled SQLite:
+
+- `sqlite-vec 0.1.9` is statically registered in each retrieval connection; the crate and extension are dual MIT/Apache-2.0 licensed;
+- `fastembed 6.0.0` supplies local ONNX inference under Apache-2.0, with image support and automatic Hugging Face model fetching disabled;
+- `Qdrant/all-MiniLM-L6-v2-onnx` is the selected general-purpose 384-dimensional baseline, corresponding to the Apache-2.0 `sentence-transformers/all-MiniLM-L6-v2` model;
+- the local index now provisions a cosine `vec0` store and stable chunk-to-vector metadata table alongside FTS5;
+- a no-network test verifies model metadata, extension loading, vector encoding, and nearest-neighbor ordering.
+
+Model artifacts are not bundled yet. Diagnostics report `model_assets_required`, and normal indexing remains lexical-only until the ONNX and tokenizer files are packaged as Tauri resources and loaded through FastEmbed's user-defined in-memory API. Release approval still requires packaged Linux tests, model-license attribution, incremental vector invalidation, and hybrid benchmark evidence across materially different theory families.
 
 ### Sprint 6: Add directory cost guidance
 
