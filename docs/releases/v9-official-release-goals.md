@@ -144,6 +144,12 @@ The full manuscript should be indexed locally instead of copied into every prime
 
 Embeddings are numeric search representations, not a substitute prompt language. Float arrays should remain local and should not be rendered into an OpenAI or Gemini prompt. The model should receive the compact equations, graph records, and source-grounded text selected by local similarity search.
 
+### Theory-agnostic vector-space contract
+
+The index must build its semantic space from the loaded project's own files, symbols, equations, definitions, relations, experiments, and terminology. It may use a general-purpose embedding model to locate semantic proximity, but it must not classify, reject, rewrite, or down-rank project records because they conflict with a preferred physical theory or external consensus ontology.
+
+Retrieved records must feed the token-dense structural backend so the AI receives a bounded, source-grounded representation of the theory's internal structure. The provider model may analyze closure, consistency, predictions, and empirical residuals when asked, but retrieval itself is evidence selection rather than theory adjudication. Distinct theory families must pass through the same indexing, ranking, provenance, and token-budget pipeline.
+
 ### Retrieval architecture
 
 1. Parse manuscript and axiom sources by semantic boundaries such as headings, definitions, equations, proofs, experiments, and citations.
@@ -158,6 +164,7 @@ Embeddings are numeric search representations, not a substitute prompt language.
 
 - [ ] Select and document the SQLite vector extension, Rust integration, license, supported Linux targets, and packaging strategy.
 - [ ] Select a local embedding model with documented dimensions, model version, license, hardware requirements, and offline behavior.
+- [ ] Derive indexed vocabulary and structural relations from project files without injecting theory-family labels or consensus-ranking priors.
 - [ ] Store source path, stable section ID, heading ancestry, content hash, embedding model/version, vector dimensions, and modification time with every record.
 - [ ] Add incremental indexing so unchanged chunks retain their vectors and changed or deleted chunks update transactionally.
 - [ ] Combine vector similarity with FTS5 or equivalent lexical search so exact mathematical symbols and rare terms are not lost.
@@ -175,6 +182,7 @@ Embeddings are numeric search representations, not a substitute prompt language.
 - [ ] Reopening a project reuses a valid index without recomputing unchanged embeddings.
 - [ ] Editing, renaming, or deleting a source invalidates only affected records.
 - [ ] Retrieval benchmarks cover equations, aliases, cross-chapter relations, experiments, contradictions, and uncommon symbols.
+- [ ] The same benchmark pipeline retrieves source-grounded evidence from materially different theory families without family-specific ranking rules.
 - [ ] Hybrid retrieval outperforms vector-only and lexical-only baselines on the v9 benchmark set.
 - [ ] Every retrieved record resolves to an existing project-relative source and stable section ID.
 - [ ] No embedding vectors, index files, or unrelated manuscript chunks appear in provider request captures.
@@ -192,6 +200,7 @@ Embeddings are numeric search representations, not a substitute prompt language.
 
 - Sending raw embedding arrays to an LLM as compressed manuscript content.
 - Treating vector similarity as proof that a retrieved claim is correct.
+- Using external consensus labels or a preferred physics ontology to suppress project-derived records.
 - Replacing canonical source files with an opaque database.
 - Requiring cloud embedding or vector-database services for normal operation.
 
