@@ -3183,6 +3183,34 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn parses_openai_visible_text_and_rejects_empty_output() {
+        let string_response = serde_json::json!({
+            "choices": [{"finish_reason": "stop", "message": {"content": "Visible answer"}}],
+            "usage": {"completion_tokens": 4}
+        });
+        let parts_response = serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"content": [{"type": "text", "text": "Part one"}, {"type": "text", "text": "Part two"}]}
+            }],
+            "usage": {"completion_tokens": 6}
+        });
+        let empty_response = serde_json::json!({
+            "choices": [{"finish_reason": "length", "message": {"content": ""}}],
+            "usage": {
+                "completion_tokens": 350,
+                "completion_tokens_details": {"reasoning_tokens": 350}
+            }
+        });
+
+        assert_eq!(parse_openai_visible_content(&string_response).unwrap(), "Visible answer");
+        assert_eq!(parse_openai_visible_content(&parts_response).unwrap(), "Part one\nPart two");
+        let error = parse_openai_visible_content(&empty_response).unwrap_err();
+        assert!(error.contains("finish_reason=length"));
+        assert!(error.contains("reasoning_tokens=350"));
+    }
+
+    #[test]
     fn retries_gemini_auth_for_access_token_type_errors() {
         let response_text = r#"{"error":{"code":401,"message":"Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.","status":"UNAUTHENTICATED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}"#;
 
@@ -3444,11 +3472,11 @@ async fn run_structural_ab_probe(
 
     tauri::async_runtime::spawn_blocking(move || {
         let first_started = std::time::Instant::now();
-        let first = call_openai_with_options(&api_key, &model, &first_messages, Some(350), false)?;
+        let first = call_openai_with_options(&api_key, &model, &first_messages, Some(1_200), false)?;
         let first_latency_ms = first_started.elapsed().as_millis() as u64;
 
         let second_started = std::time::Instant::now();
-        let second = call_openai_with_options(&api_key, &model, &second_messages, Some(350), false)?;
+        let second = call_openai_with_options(&api_key, &model, &second_messages, Some(1_200), false)?;
         let second_latency_ms = second_started.elapsed().as_millis() as u64;
         let actual_models = [first.usage.model.clone(), second.usage.model.clone()];
 
@@ -4151,6 +4179,50 @@ fn parse_openai_usage(response: &serde_json::Value, model: &str) -> ProviderUsag
     }
 }
 
+fn parse_openai_visible_content(response: &serde_json::Value) -> Result<String, String> {
+    let choice = response
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .ok_or_else(|| "OpenAI returned no response choice".to_string())?;
+    let content = choice
+        .get("message")
+        .and_then(|message| message.get("content"));
+    let visible = match content {
+        Some(serde_json::Value::String(text)) => text.trim().to_string(),
+        Some(serde_json::Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    };
+    if !visible.is_empty() {
+        return Ok(visible);
+    }
+
+    let finish_reason = choice.get("finish_reason").and_then(|value| value.as_str()).unwrap_or("unavailable");
+    let usage = response.get("usage").unwrap_or(&serde_json::Value::Null);
+    let completion_tokens = usage.get("completion_tokens").and_then(|value| value.as_u64());
+    let reasoning_tokens = usage
+        .get("completion_tokens_details")
+        .and_then(|details| details.get("reasoning_tokens"))
+        .and_then(|value| value.as_u64());
+    let refusal = choice
+        .get("message")
+        .and_then(|message| message.get("refusal"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty());
+
+    Err(format!(
+        "OpenAI returned no visible response content (finish_reason={finish_reason}, completion_tokens={}, reasoning_tokens={}, refusal={}). Increase the output budget or inspect the model response mode.",
+        completion_tokens.map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string()),
+        reasoning_tokens.map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string()),
+        refusal.unwrap_or("none")
+    ))
+}
+
 fn call_openai(api_key: &str, model: &str, messages: &[serde_json::Value]) -> Result<ProviderReply, String> {
     call_openai_with_options(api_key, model, messages, None, true)
 }
@@ -4250,14 +4322,7 @@ fn call_openai_with_options(
             let parsed: serde_json::Value = serde_json::from_str(&response_text)
                 .map_err(|e| format!("OpenAI response parsing failed: {e}"))?;
 
-            let content = parsed
-                .get("choices")
-                .and_then(|choices| choices.get(0))
-                .and_then(|choice| choice.get("message"))
-                .and_then(|message| message.get("content"))
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-                .ok_or_else(|| "OpenAI returned no response content".to_string())?;
+            let content = parse_openai_visible_content(&parsed)?;
             return Ok(ProviderReply {
                 content,
                 usage: parse_openai_usage(&parsed, &candidate_model),

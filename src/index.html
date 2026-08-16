@@ -6422,7 +6422,7 @@ async function restoreVersion() {
       }
 
       const confirmed = window.confirm(
-        'Run the blind structural A/B probe? This sends up to two OpenAI requests with bounded outputs and may incur usage charges.'
+        'Run the blind structural A/B probe? This sends up to two OpenAI requests capped at 1,200 output tokens each and may incur usage charges.'
       );
       if (!confirmed) return;
 
@@ -6444,9 +6444,14 @@ async function restoreVersion() {
           structuralContext,
           fingerprint
         }));
+        const contentA = String(result.variant_a?.content || '').trim();
+        const contentB = String(result.variant_b?.content || '').trim();
+        if (!contentA || !contentB) {
+          throw new Error('A/B probe returned an empty visible response. Judgment was disabled; inspect provider usage and retry after updating the app.');
+        }
         latestStructuralAbResult = result;
-        responseA.value = result.variant_a?.content || '';
-        responseB.value = result.variant_b?.content || '';
+        responseA.value = contentA;
+        responseB.value = contentB;
         const usageA = result.variant_a?.usage || {};
         const usageB = result.variant_b?.usage || {};
         meta.textContent = `Model: ${result.requested_model || 'unavailable'} | A: ${result.variant_a?.latency_ms ?? 'unavailable'} ms, ${usageA.input_tokens ?? 'unavailable'} in / ${usageA.output_tokens ?? 'unavailable'} out | B: ${result.variant_b?.latency_ms ?? 'unavailable'} ms, ${usageB.input_tokens ?? 'unavailable'} in / ${usageB.output_tokens ?? 'unavailable'} out`;
