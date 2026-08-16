@@ -2236,6 +2236,7 @@
     };
     let latestRetrievalDiagnostics = null;
     let latestRetrievalProviderText = '';
+    let embeddingInstallConfirmationPending = false;
     let theoryProfilesState = {
       activeProfile: '',
       profiles: [],
@@ -6365,6 +6366,11 @@ async function restoreVersion() {
 
     function closeRequestInspector() {
       document.getElementById('request-inspector-modal').style.display = 'none';
+      embeddingInstallConfirmationPending = false;
+      const installButton = document.getElementById('embedding-model-install');
+      if (installButton && !installButton.disabled && installButton.textContent === 'Confirm 91 MB Download') {
+        installButton.textContent = 'Install Vector Model';
+      }
     }
 
     async function refreshRequestInspector() {
@@ -6651,11 +6657,29 @@ async function restoreVersion() {
     async function installLocalEmbeddingModel() {
       const output = document.getElementById('retrieval-query-output');
       const button = document.getElementById('embedding-model-install');
-      if (!output || !button) return;
-      if (!confirm('Download and verify the 91 MB Apache-2.0 local vector model? It will be stored in application data and used offline after installation.')) return;
+      appendTerminalLog('Install Vector Model clicked.');
+      if (!button) {
+        appendTerminalLog('Vector model installer failed: install button was not found in the current document.');
+        return;
+      }
+      if (!output) {
+        appendTerminalLog('Vector model installer failed: retrieval diagnostics output was not found.');
+        button.textContent = 'Installer UI Error';
+        return;
+      }
+      if (!embeddingInstallConfirmationPending) {
+        embeddingInstallConfirmationPending = true;
+        button.textContent = 'Confirm 91 MB Download';
+        output.value = 'Click “Confirm 91 MB Download” to install the pinned Apache-2.0 vector model in local application data. No project files will be changed.';
+        appendTerminalLog('Vector model installation awaiting second-click confirmation.');
+        return;
+      }
 
+      embeddingInstallConfirmationPending = false;
       button.disabled = true;
+      button.textContent = 'Installing Model...';
       output.value = 'Installing and verifying local vector model...';
+      appendTerminalLog('Downloading and verifying the pinned local vector model...');
       try {
         const result = JSON.parse(await invoke('install_embedding_model'));
         output.value = [
@@ -6665,8 +6689,12 @@ async function restoreVersion() {
           `Assets: ${result.asset_count ?? 0} | bytes: ${result.total_bytes ?? 'unavailable'}`,
           `Local directory: ${result.directory || 'unavailable'}`
         ].join('\n');
+        button.textContent = 'Vector Model Ready';
+        appendTerminalLog(`Vector model installation complete: ${result.model || 'unknown model'} (${result.dimensions || 'unknown'} dimensions).`);
       } catch (err) {
         output.value = `Embedding model installation failed: ${err}`;
+        button.textContent = 'Retry Vector Model';
+        appendTerminalLog(`Vector model installation failed: ${err}`);
       } finally {
         button.disabled = false;
       }

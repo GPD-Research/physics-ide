@@ -10052,6 +10052,22 @@ mod tests {
     }
 
     #[test]
+    fn vector_model_installer_frontend_has_observable_two_step_wiring() {
+        let html = include_str!("../../src/index.html");
+        for required in [
+            "id=\"embedding-model-install\"",
+            "onclick=\"installLocalEmbeddingModel()\"",
+            "let embeddingInstallConfirmationPending = false;",
+            "Confirm 91 MB Download",
+            "Installing and verifying local vector model...",
+            "invoke('install_embedding_model')",
+            "Install Vector Model clicked.",
+        ] {
+            assert!(html.contains(required), "Missing installer UI contract: {required}");
+        }
+    }
+
+    #[test]
     fn extract_evidence_snippet_handles_multibyte_characters() {
         let content = "A short intro with ✅ emoji before the analysis topic and some more words to pad the excerpt.";
         let snippet = extract_evidence_snippet(content, &["analysis".to_string()], 120);
