@@ -5267,13 +5267,15 @@ fn register_sqlite_vec() {
     });
 }
 
-fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, String> {
-    if let Some(parent) = index_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create retrieval index directory: {e}"))?;
+fn initialize_retrieval_index(connection: &rusqlite::Connection) -> Result<(), String> {
+    let existing_version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to read retrieval schema version: {e}"))?;
+    if existing_version > 1 {
+        return Err(format!(
+            "Retrieval schema version {existing_version} is newer than supported version 1."
+        ));
     }
-    register_sqlite_vec();
-    let connection = rusqlite::Connection::open(&index_path)
-        .map_err(|e| format!("Failed to open retrieval index: {e}"))?;
     connection
         .execute_batch(
             "PRAGMA journal_mode=WAL;
@@ -5311,10 +5313,100 @@ fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, Strin
                  relation_type TEXT NOT NULL,
                  evidence TEXT NOT NULL,
                  PRIMARY KEY (from_chunk_id, to_chunk_id, relation_type)
-             );",
+             );
+             PRAGMA user_version=1;",
         )
-        .map_err(|e| format!("Failed to initialize retrieval index: {e}"))?;
-    Ok(connection)
+        .map_err(|e| format!("Failed to initialize retrieval index: {e}"))
+}
+
+fn validate_retrieval_index_schema(connection: &rusqlite::Connection) -> Result<(), String> {
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to read retrieval schema version: {e}"))?;
+    if version != 1 {
+        return Err(format!("Unsupported retrieval schema version: {version}"));
+    }
+    for query in [
+        "SELECT path, size_bytes, modified_ns, content_hash, chunk_count FROM retrieval_files LIMIT 0",
+        "SELECT chunk_id, path, chunk_index, line_start, line_end, heading, content FROM retrieval_chunks LIMIT 0",
+        "SELECT vector_rowid, chunk_id, model_id, dimensions, content_hash FROM retrieval_vector_records LIMIT 0",
+        "SELECT from_chunk_id, to_chunk_id, relation_type, evidence FROM retrieval_graph_edges LIMIT 0",
+    ] {
+        connection
+            .prepare(query)
+            .map_err(|e| format!("Retrieval index schema is incompatible: {e}"))?;
+    }
+    Ok(())
+}
+
+fn validate_retrieval_index_integrity(connection: &rusqlite::Connection) -> Result<(), String> {
+    let integrity: String = connection
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to check retrieval index integrity: {e}"))?;
+    if integrity != "ok" {
+        return Err(format!("Retrieval index integrity check failed: {integrity}"));
+    }
+    validate_retrieval_index_schema(connection)
+}
+
+fn retrieval_index_sidecars(index_path: &Path) -> [PathBuf; 3] {
+    [
+        index_path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", index_path.to_string_lossy())),
+        PathBuf::from(format!("{}-shm", index_path.to_string_lossy())),
+    ]
+}
+
+fn quarantine_retrieval_index(index_path: &Path) -> Result<Vec<String>, String> {
+    let parent = index_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut suffix = 0usize;
+    let quarantine_dir = loop {
+        let candidate = parent.join(if suffix == 0 {
+            "corrupt-index".to_string()
+        } else {
+            format!("corrupt-index-{suffix}")
+        });
+        if !candidate.exists() {
+            break candidate;
+        }
+        suffix += 1;
+    };
+    fs::create_dir_all(&quarantine_dir)
+        .map_err(|e| format!("Failed to create retrieval quarantine directory: {e}"))?;
+    let mut quarantined = Vec::new();
+    for path in retrieval_index_sidecars(index_path) {
+        if !path.exists() {
+            continue;
+        }
+        let file_name = path.file_name().unwrap_or_default();
+        let target = quarantine_dir.join(file_name);
+        fs::rename(&path, &target).map_err(|e| {
+            format!("Failed to quarantine retrieval index {}: {e}", path.display())
+        })?;
+        quarantined.push(target.to_string_lossy().to_string());
+    }
+    Ok(quarantined)
+}
+
+fn open_retrieval_index(index_path: &Path) -> Result<rusqlite::Connection, String> {
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create retrieval index directory: {e}"))?;
+    }
+    register_sqlite_vec();
+    let connection = rusqlite::Connection::open(index_path)
+        .map_err(|e| format!("Failed to open retrieval index: {e}"))?;
+    if initialize_retrieval_index(&connection).is_ok()
+        && validate_retrieval_index_integrity(&connection).is_ok()
+    {
+        return Ok(connection);
+    }
+    drop(connection);
+    quarantine_retrieval_index(index_path)?;
+    let recovered = rusqlite::Connection::open(index_path)
+        .map_err(|e| format!("Failed to create recovered retrieval index: {e}"))?;
+    initialize_retrieval_index(&recovered)?;
+    validate_retrieval_index_integrity(&recovered)?;
+    Ok(recovered)
 }
 
 fn normalize_graph_phrase(value: &str) -> String {
@@ -6560,13 +6652,8 @@ where
 }
 
 fn delete_retrieval_index_value(index_path: &Path) -> Result<serde_json::Value, String> {
-    let sidecar_paths = [
-        index_path.to_path_buf(),
-        PathBuf::from(format!("{}-wal", index_path.to_string_lossy())),
-        PathBuf::from(format!("{}-shm", index_path.to_string_lossy())),
-    ];
     let mut deleted_files = 0usize;
-    for path in sidecar_paths {
+    for path in retrieval_index_sidecars(index_path) {
         if path.exists() {
             fs::remove_file(&path)
                 .map_err(|e| format!("Failed to delete local retrieval index {}: {e}", path.display()))?;
@@ -6584,6 +6671,106 @@ fn delete_retrieval_index_value(index_path: &Path) -> Result<serde_json::Value, 
     }))
 }
 
+fn inspect_retrieval_index_value(index_path: &Path) -> serde_json::Value {
+    let quarantine_count = index_path
+        .parent()
+        .and_then(|parent| fs::read_dir(parent).ok())
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("corrupt-index"))
+                .count()
+        })
+        .unwrap_or(0);
+    if !index_path.exists() {
+        return serde_json::json!({
+            "status": "not_built",
+            "index_path": index_path.to_string_lossy().to_string(),
+            "quarantined_indexes": quarantine_count
+        });
+    }
+
+    register_sqlite_vec();
+    let connection = match rusqlite::Connection::open_with_flags(
+        index_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) {
+        Ok(connection) => connection,
+        Err(error) => {
+            return serde_json::json!({
+                "status": "corrupt",
+                "index_path": index_path.to_string_lossy().to_string(),
+                "error": error.to_string(),
+                "quarantined_indexes": quarantine_count
+            });
+        }
+    };
+    let integrity = connection
+        .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+        .unwrap_or_else(|error| format!("error:{error}"));
+    if integrity != "ok" {
+        return serde_json::json!({
+            "status": "corrupt",
+            "index_path": index_path.to_string_lossy().to_string(),
+            "integrity": integrity,
+            "quarantined_indexes": quarantine_count
+        });
+    }
+    if let Err(error) = validate_retrieval_index_schema(&connection) {
+        return serde_json::json!({
+            "status": "incompatible",
+            "index_path": index_path.to_string_lossy().to_string(),
+            "integrity": integrity,
+            "error": error,
+            "quarantined_indexes": quarantine_count
+        });
+    }
+    match retrieval_index_diagnostics(&connection) {
+        Ok(diagnostics) => serde_json::json!({
+            "status": "ready",
+            "index_path": index_path.to_string_lossy().to_string(),
+            "database_bytes": fs::metadata(index_path).map(|metadata| metadata.len()).unwrap_or(0),
+            "integrity": integrity,
+            "quarantined_indexes": quarantine_count,
+            "index": diagnostics
+        }),
+        Err(error) => serde_json::json!({
+            "status": "incompatible",
+            "index_path": index_path.to_string_lossy().to_string(),
+            "integrity": integrity,
+            "error": error,
+            "quarantined_indexes": quarantine_count
+        }),
+    }
+}
+
+fn refresh_retrieval_index_command_value(
+    root: &Path,
+    index_path: &Path,
+    model_directory: &Path,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let mut result = refresh_retrieval_index_value(root, index_path)?;
+    let model_status = embedding_model_status_value(model_directory);
+    result["embedding_status"] = model_status["status"].clone();
+    if model_status["status"] == "ready" {
+        let vector_sync = with_local_embedding_model(state, model_directory, |model| {
+            sync_retrieval_vectors_value(index_path, |texts| {
+                model
+                    .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
+                    .map_err(|e| format!("Failed to embed retrieval chunks: {e}"))
+            })
+        })?;
+        result["vector_sync"] = vector_sync;
+        result["search_mode"] = serde_json::Value::String(
+            "fts5_lexical_with_neighbors_vector_index_ready".to_string(),
+        );
+    }
+    result["inspection"] = inspect_retrieval_index_value(index_path);
+    Ok(result)
+}
+
 #[tauri::command]
 fn refresh_retrieval_index(
     workspace_path: String,
@@ -6595,22 +6782,45 @@ fn refresh_retrieval_index(
         return Err("Workspace path is missing or invalid for retrieval indexing.".to_string());
     }
     let index_path = retrieval_index_path(&app, &root)?;
-    let mut result = refresh_retrieval_index_value(&root, &index_path)?;
     let model_directory = embedding_model_dir(&app)?;
-    let model_status = embedding_model_status_value(&model_directory);
-    result["embedding_status"] = model_status["status"].clone();
-    if model_status["status"] == "ready" {
-        let vector_sync = with_local_embedding_model(&state, &model_directory, |model| {
-            sync_retrieval_vectors_value(&index_path, |texts| {
-                model
-                    .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
-                    .map_err(|e| format!("Failed to embed retrieval chunks: {e}"))
-            })
-        })?;
-        result["vector_sync"] = vector_sync;
-        result["search_mode"] = serde_json::Value::String("fts5_lexical_with_neighbors_vector_index_ready".to_string());
+    Ok(refresh_retrieval_index_command_value(&root, &index_path, &model_directory, &state)?.to_string())
+}
+
+#[tauri::command]
+fn inspect_retrieval_index(
+    workspace_path: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let root = PathBuf::from(workspace_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err("Workspace path is missing or invalid for retrieval inspection.".to_string());
     }
-    Ok(result.to_string())
+    Ok(inspect_retrieval_index_value(&retrieval_index_path(&app, &root)?).to_string())
+}
+
+#[tauri::command]
+fn rebuild_retrieval_index(
+    workspace_path: String,
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let root = PathBuf::from(workspace_path.trim());
+    if !root.exists() || !root.is_dir() {
+        return Err("Workspace path is missing or invalid for retrieval rebuild.".to_string());
+    }
+    let index_path = retrieval_index_path(&app, &root)?;
+    let deleted = delete_retrieval_index_value(&index_path)?;
+    let mut rebuilt = refresh_retrieval_index_command_value(
+        &root,
+        &index_path,
+        &embedding_model_dir(&app)?,
+        &state,
+    )?;
+    rebuilt["rebuild"] = serde_json::json!({
+        "deleted_database_files": deleted["deleted_files"],
+        "status": "rebuilt"
+    });
+    Ok(rebuilt.to_string())
 }
 
 #[tauri::command]
@@ -9220,6 +9430,103 @@ mod tests {
     }
 
     #[test]
+    fn inspects_and_recovers_corrupt_retrieval_indexes_locally() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_corrupt_retrieval_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let absent = inspect_retrieval_index_value(&index_path);
+        assert_eq!(absent["status"], "not_built");
+
+        fs::write(&index_path, "not a sqlite database").unwrap();
+        let corrupt = inspect_retrieval_index_value(&index_path);
+        assert_eq!(corrupt["status"], "corrupt");
+
+        let connection = open_retrieval_index(&index_path).unwrap();
+        drop(connection);
+        let recovered = inspect_retrieval_index_value(&index_path);
+        assert_eq!(recovered["status"], "ready");
+        assert_eq!(recovered["integrity"], "ok");
+        assert_eq!(recovered["quarantined_indexes"].as_u64().unwrap(), 1);
+        let quarantined = temp_dir.join("corrupt-index").join("retrieval.sqlite3");
+        assert_eq!(fs::read_to_string(quarantined).unwrap(), "not a sqlite database");
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn quarantines_incompatible_future_retrieval_schema_without_mutating_it() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_future_retrieval_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let future = rusqlite::Connection::open(&index_path).unwrap();
+        future.execute_batch("PRAGMA user_version=2; CREATE TABLE future_records(id INTEGER);").unwrap();
+        drop(future);
+
+        let incompatible = inspect_retrieval_index_value(&index_path);
+        assert_eq!(incompatible["status"], "incompatible");
+        let recovered = open_retrieval_index(&index_path).unwrap();
+        let active_version: i64 = recovered.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(active_version, 1);
+        drop(recovered);
+
+        let quarantined_path = temp_dir.join("corrupt-index").join("retrieval.sqlite3");
+        let quarantined = rusqlite::Connection::open_with_flags(
+            quarantined_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let quarantined_version: i64 = quarantined.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(quarantined_version, 2);
+        drop(quarantined);
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn retrieval_refresh_invalidates_renamed_sources_only() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_retrieval_rename_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let old_path = temp_dir.join("old-name.md");
+        let new_path = temp_dir.join("new-name.md");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(&old_path, "# Renamed source\nA stable mechanism remains unchanged.\n").unwrap();
+
+        let first = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(first["indexed_files"].as_u64().unwrap(), 1);
+        fs::rename(&old_path, &new_path).unwrap();
+        let renamed = refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        assert_eq!(renamed["indexed_files"].as_u64().unwrap(), 1);
+        assert_eq!(renamed["deleted_files"].as_u64().unwrap(), 1);
+
+        let connection = open_retrieval_index(&index_path).unwrap();
+        let paths = {
+            let mut statement = connection
+                .prepare("SELECT path FROM retrieval_files ORDER BY path")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths, vec!["new-name.md"]);
+        drop(connection);
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
     fn loads_selected_embedding_metadata_and_sqlite_vector_search() {
         let model = fastembed::TextEmbedding::get_model_info(
             &fastembed::EmbeddingModel::AllMiniLML6V2,
@@ -10080,6 +10387,8 @@ pub fn run() {
             list_markdown_files,
             collect_probe_evidence,
             refresh_retrieval_index,
+            inspect_retrieval_index,
+            rebuild_retrieval_index,
             query_retrieval_index,
             delete_retrieval_index,
             get_embedding_model_status,

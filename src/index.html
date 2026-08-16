@@ -2062,7 +2062,9 @@
           <option value="right">Right</option>
         </select>
         <button onclick="refreshRequestInspector()" title="Recalculate request ordering and token estimates">Refresh</button>
-        <button id="retrieval-index-refresh" onclick="refreshLocalRetrievalIndex()" title="Incrementally index changed Markdown files for local retrieval">Refresh Local Index</button>
+        <button id="retrieval-index-refresh" onclick="refreshLocalRetrievalIndex()" title="Build the local index or incrementally refresh changed Markdown files">Build / Refresh Changed</button>
+        <button id="retrieval-index-inspect" onclick="inspectLocalRetrievalIndex()" title="Inspect local index integrity, freshness, counts, and model compatibility">Inspect Index</button>
+        <button id="retrieval-index-rebuild" onclick="rebuildLocalRetrievalIndex()" title="Delete and rebuild the active local index from project sources">Rebuild Index</button>
         <button id="embedding-model-install" onclick="installLocalEmbeddingModel()" title="Download and verify the local embedding model for offline vector indexing">Install Vector Model</button>
         <button id="retrieval-benchmark-run" onclick="runLocalRetrievalBenchmark()" title="Compare local hybrid, lexical-only, and vector-only retrieval across the built-in cross-theory fixture">Run Retrieval Benchmark</button>
         <button id="retrieval-index-delete" onclick="deleteLocalRetrievalIndex()" title="Delete the project-scoped local retrieval index">Delete Local Index</button>
@@ -6535,6 +6537,70 @@ async function restoreVersion() {
         ].join('\n');
       } catch (err) {
         output.value = `Local retrieval refresh failed: ${err}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function formatRetrievalInspection(result) {
+      const index = result.index || {};
+      return [
+        `Index status: ${String(result.status || 'unknown').toUpperCase()} | integrity=${result.integrity || 'unavailable'} | database bytes=${result.database_bytes ?? 0}`,
+        `Files=${index.indexed_files ?? 0} | chunks=${index.indexed_chunks ?? 0} | vectors=${index.indexed_vectors ?? 0} | graph edges=${index.graph_edges ?? 0}`,
+        `Freshness=${index.freshness_status || 'unavailable'} | stale vectors=${index.stale_vectors ?? 0} | latest source modified ns=${index.latest_source_modified_ns ?? 'unavailable'}`,
+        `Model=${index.active_model || 'unavailable'}@${index.active_model_revision || 'unavailable'} | dimensions=${index.embedding_dimensions ?? 'unavailable'}`,
+        `Quarantined indexes=${result.quarantined_indexes ?? 0} | path=${result.index_path || 'unavailable'}`,
+        result.error ? `Error: ${result.error}` : ''
+      ].filter(Boolean).join('\n');
+    }
+
+    async function inspectLocalRetrievalIndex() {
+      const output = document.getElementById('retrieval-query-output');
+      const button = document.getElementById('retrieval-index-inspect');
+      if (!output || !button) return;
+      if (!currentWorkspacePath) {
+        output.value = 'Load a workspace before inspecting its local retrieval index.';
+        return;
+      }
+      button.disabled = true;
+      output.value = 'Inspecting local retrieval index...';
+      try {
+        const result = JSON.parse(await invoke('inspect_retrieval_index', {
+          workspacePath: currentWorkspacePath
+        }));
+        output.value = formatRetrievalInspection(result);
+      } catch (err) {
+        output.value = `Local retrieval inspection failed: ${err}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function rebuildLocalRetrievalIndex() {
+      const output = document.getElementById('retrieval-query-output');
+      const button = document.getElementById('retrieval-index-rebuild');
+      if (!output || !button) return;
+      if (!currentWorkspacePath) {
+        output.value = 'Load a workspace before rebuilding its local retrieval index.';
+        return;
+      }
+      if (!confirm('Rebuild this workspace\'s local retrieval index from source files? Project files will not be changed.')) return;
+      button.disabled = true;
+      output.value = 'Rebuilding local retrieval index...';
+      try {
+        const result = JSON.parse(await invoke('rebuild_retrieval_index', {
+          workspacePath: currentWorkspacePath
+        }));
+        const inspection = result.inspection || {};
+        output.value = [
+          `Rebuild: ${String(result.rebuild?.status || 'unknown').toUpperCase()} | removed database files=${result.rebuild?.deleted_database_files ?? 0}`,
+          `Indexed files=${result.indexed_files ?? 0} | chunks=${result.indexed_chunks ?? 0} | graph edges=${result.graph_edges ?? 0}`,
+          `Vectors embedded=${result.vector_sync?.embedded_chunks ?? 0} | model status=${result.embedding_status || 'unavailable'}`,
+          formatRetrievalInspection(inspection)
+        ].join('\n');
+        probeEvidenceCache.loadedAt = 0;
+      } catch (err) {
+        output.value = `Local retrieval rebuild failed: ${err}`;
       } finally {
         button.disabled = false;
       }

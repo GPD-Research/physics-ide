@@ -171,7 +171,7 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 - [x] Add graph-neighborhood expansion for directly related axioms, definitions, equations, experiments, and contradictions.
 - [x] Enforce configurable retrieval and token budgets before provider dispatch.
 - [x] Show retrieved sources, relevance scores, index freshness, and embedding model in diagnostics.
-- [ ] Provide `Build index`, `Refresh changed`, `Rebuild`, `Inspect`, and `Delete local index` controls.
+- [x] Provide `Build index`, `Refresh changed`, `Rebuild`, `Inspect`, and `Delete local index` controls.
 - [ ] Keep index files local by default and exclude them from Git, manuscript export, and provider payloads.
 - [x] Fall back safely to lexical retrieval or a compact core primer when the vector extension/model is unavailable.
 - [x] Stop sending the full master manuscript or axiom file by default once retrieval quality passes the release benchmark.
@@ -179,14 +179,14 @@ Retrieved records must feed the token-dense structural backend so the AI receive
 ### Verification
 
 - [ ] Indexing and retrieval work without network access after required local assets are installed.
-- [ ] Reopening a project reuses a valid index without recomputing unchanged embeddings.
-- [ ] Editing, renaming, or deleting a source invalidates only affected records.
+- [x] Reopening a project reuses a valid index without recomputing unchanged embeddings.
+- [x] Editing, renaming, or deleting a source invalidates only affected records.
 - [x] Retrieval benchmarks cover equations, aliases, cross-chapter relations, experiments, contradictions, and uncommon symbols.
 - [x] The same benchmark pipeline retrieves source-grounded evidence from materially different theory families without family-specific ranking rules.
 - [ ] Hybrid retrieval outperforms vector-only and lexical-only baselines on the v9 benchmark set.
 - [ ] Every retrieved record resolves to an existing project-relative source and stable section ID.
 - [ ] No embedding vectors, index files, or unrelated manuscript chunks appear in provider request captures.
-- [ ] Corrupt, incompatible, or stale indexes are detected and rebuilt without damaging source files.
+- [x] Corrupt, incompatible, or stale indexes are detected and rebuilt without damaging source files.
 - [ ] Packaged Linux builds load the selected vector extension on every supported architecture.
 
 ### Success measures
@@ -494,6 +494,12 @@ Hybrid remains tied with the saturated vector baseline, so strict superiority re
 Provider-eligible retrieval evidence is assembled only by the backend under a configurable `500–24,000` character budget, defaulting to `6,000` characters (approximately `1,500` tokens by the labeled four-characters-per-token estimate). The packet reports included and excluded rows, snippets, sources, truncations, remaining budget, rank provenance, index counts, freshness, active model revision, and stale-vector count. Packet failure omits provider evidence rather than falling back to an unbudgeted recursive scan.
 
 Automatic lane primers no longer transport master-axiom or project-awareness corpus excerpts by default. They retain stable role and retrieval contracts, while explicit legacy mode remains available for recovery and structural A/B comparison. Retrieval evidence is recorded as its own canonical prompt source so the Request Inspector shows its estimated token contribution separately.
+
+#### Index lifecycle and recovery
+
+The Request Inspector now provides `Build / Refresh Changed`, `Inspect Index`, `Rebuild Index`, and `Delete Local Index`. Inspection is non-mutating and reports database size, integrity, schema compatibility, file/chunk/vector/graph counts, source modification time, active model revision, stale vectors, and quarantined-copy count.
+
+Retrieval schema version 1 is validated at open time. Corrupt databases and unsupported future schemas are moved with their SQLite sidecars into a local `corrupt-index[-N]` quarantine directory before a clean index is created; project sources are never modified. Tests cover unchanged reuse, edits, renames, deletions, corruption, and incompatible-schema preservation.
 
 Release approval still requires packaged Linux tests and model-license attribution in release artifacts. Strict hybrid superiority remains a separate open research gate because the selected vector baseline is saturated on benchmark v2.
 
