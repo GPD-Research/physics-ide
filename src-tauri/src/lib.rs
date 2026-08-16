@@ -3183,6 +3183,14 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn structural_ab_requires_exactly_one_embedded_core() {
+        assert!(structural_ab_context_is_valid("Primer\n@ctx-v1|core\nEnd"));
+        assert!(!structural_ab_context_is_valid("Primer without core"));
+        assert!(!structural_ab_context_is_valid("@ctx-v1|one\n@ctx-v1|two"));
+        assert!(!structural_ab_context_is_valid(&format!("@ctx-v1|{}", "x".repeat(100_001))));
+    }
+
+    #[test]
     fn parses_openai_visible_text_and_rejects_empty_output() {
         let string_response = serde_json::json!({
             "choices": [{"finish_reason": "stop", "message": {"content": "Visible answer"}}],
@@ -3419,6 +3427,10 @@ fn build_structural_ab_messages(context: &str, question: &str) -> Vec<serde_json
     ]
 }
 
+fn structural_ab_context_is_valid(context: &str) -> bool {
+    context.matches("@ctx-v1|").count() == 1 && context.chars().count() <= 100_000
+}
+
 fn structural_ab_variant(kind: &str, reply: ProviderReply, latency_ms: u64) -> serde_json::Value {
     serde_json::json!({
         "kind": kind,
@@ -3447,7 +3459,7 @@ async fn run_structural_ab_probe(
     if legacy_context.is_empty() || legacy_context.chars().count() > 100_000 {
         return Err("Legacy A/B context must contain 1-100,000 characters.".to_string());
     }
-    if structural_context.matches("@ctx-v1|").count() != 1 || structural_context.chars().count() > 100_000 {
+    if !structural_ab_context_is_valid(&structural_context) {
         return Err("Structural A/B context must contain exactly one @ctx-v1 core and remain under 100,000 characters.".to_string());
     }
     if fingerprint.trim().is_empty() {

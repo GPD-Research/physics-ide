@@ -3174,7 +3174,7 @@
         : 'Project awareness index unavailable.';
       const structuralPrompt = briefing?.structural_context?.prompt_core || {};
       const useStructuralCore = contextMode === 'structural'
-        ? structuralPrompt.eligible === true && Boolean(structuralPrompt.content)
+        ? structuralPrompt.coverage_complete === true && Boolean(structuralPrompt.content)
         : contextMode === 'legacy'
           ? false
           : structuralPrompt.enabled === true && Boolean(structuralPrompt.content);
@@ -6437,6 +6437,11 @@ async function restoreVersion() {
       const lane = pane === 'left' ? 'theory' : 'critique';
       const legacyContext = buildPanePrimerText(latestBriefingContext, lane, 'legacy');
       const structuralContext = buildPanePrimerText(latestBriefingContext, lane, 'structural');
+      const structuralMarkerCount = structuralContext.split('@ctx-v1|').length - 1;
+      if (structuralMarkerCount !== 1) {
+        meta.textContent = `Structural A/B blocked: generated structural primer contains ${structuralMarkerCount} @ctx-v1 markers; expected exactly 1. Network requests: 0.`;
+        return;
+      }
       const fingerprint = latestStructuralContext?.sha256 || '';
       button.disabled = true;
       meta.textContent = benchmarkEligible
