@@ -23,6 +23,18 @@ The version 8 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-08-16)
+
+- completed v9 prompt assembly work with deterministic stable-to-dynamic ordering, preserved provider roles, source provenance, per-thread token estimates, and provider-reported usage diagnostics;
+- validated native OpenAI prompt caching on `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4o-2024-08-06`, each reporting 1,024 cached tokens and an 81% cache-hit ratio for the tested shared prefix;
+- added the AI Request Inspector for prompt ordering, stable-prefix fingerprints, source contributions, cache probes, and provider usage totals;
+- replaced recursive briefing-time workspace scans with compact visible-tree export and root-only fallback behavior;
+- added deterministic `physics-ide.structural-context/v1` compilation with stable IDs, typed scientific records, source provenance, validation, and compact-core benchmarking;
+- used blind A/B testing to reject full-corpus structural-core replacement for the BMI project when it was both larger and less useful than concise legacy context;
+- added a project-keyed local SQLite FTS5 retrieval index under Tauri application data, with incremental refresh, bounded Unicode-safe chunks, explanatory neighbors, generated-context exclusions, and legacy evidence fallback;
+- limited indexed evidence sent to provider prompts to a global 6,000-character budget;
+- expanded the backend regression suite to 52 passing tests.
+
 ### Latest progress (2026-08-11)
 
 - added an AI file-access permission layer that limits file creation and modification to the active project root unless the user explicitly changes that root in Customize;
@@ -76,10 +88,11 @@ The project has moved from a simple desktop shell toward a more practical theory
 
 ### Current focus
 
-- reducing manual primer setup by letting the AI infer project context from configured roots and the user’s idea-pad note;
-- refining workflow consolidation so desktop tools feel more native and less configuration-heavy;
-- improving manuscript and theory augmentation workflows to remain optional but polished;
-- continuing to broaden project-aware AI capability without sacrificing the project-root safety model.
+- add a local embedding model and SQLite vector extension over the existing stable chunk/index contract;
+- combine vector similarity, FTS5 lexical matching, and structural graph neighbors within explicit retrieval budgets;
+- benchmark retrieval-selected structural context against concise prose before replacing any primer content;
+- consolidate or deprecate manual primer controls only after automated awareness proves equivalent and preserves user-authored notes;
+- implement lazy directory token-cost guidance and complete the v9 production release audit.
 
 ## Version 8 Implementation Order
 
@@ -142,6 +155,8 @@ This repository is under active development. The current implementation is inten
 
 - Desktop stabilization toward v6.0.0 is tracked in docs/releases/v6-desktop-checklist.md.
 - UI-to-function mapping coverage is tracked in docs/releases/v6-control-map.md.
+- The v8 release-candidate plan is tracked in docs/releases/v8-model-flexibility-plan.md.
+- The v9 first-official-release goals and execution roadmap are tracked in docs/releases/v9-official-release-goals.md.
 
 ## API Key Transparency
 
