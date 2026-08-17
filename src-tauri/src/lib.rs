@@ -10284,6 +10284,23 @@ mod tests {
     }
 
     #[test]
+    fn request_inspector_sanitizes_lone_surrogates_before_tauri_invoke() {
+        let html = include_str!("../../src/index.html");
+        for required in [
+            "function sanitizeUnicodeString(value)",
+            "function sanitizeInvokeValue(value)",
+            "function sanitizeHistoryForInvoke(history)",
+            "output += '\\uFFFD';",
+            "history: sanitizedHistory",
+            "history: sanitizeHistoryForInvoke(history)",
+            "function truncateUnicode(value, maximumCharacters)",
+            "const truncatedTree = truncateUnicode(visibleTree, treeBudget);",
+        ] {
+            assert!(html.contains(required), "Missing Unicode history safety contract: {required}");
+        }
+    }
+
+    #[test]
     fn heavy_retrieval_commands_dispatch_to_blocking_workers() {
         let source = include_str!("lib.rs");
         for signature in [

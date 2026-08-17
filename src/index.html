@@ -2193,6 +2193,52 @@
 
   <script>
     const { invoke } = window.__TAURI__.core;
+
+    function sanitizeUnicodeString(value) {
+      const input = String(value ?? '');
+      let output = '';
+      for (let index = 0; index < input.length; index += 1) {
+        const code = input.charCodeAt(index);
+        if (code >= 0xD800 && code <= 0xDBFF) {
+          const next = input.charCodeAt(index + 1);
+          if (next >= 0xDC00 && next <= 0xDFFF) {
+            output += input[index] + input[index + 1];
+            index += 1;
+          } else {
+            output += '\uFFFD';
+          }
+        } else if (code >= 0xDC00 && code <= 0xDFFF) {
+          output += '\uFFFD';
+        } else {
+          output += input[index];
+        }
+      }
+      return output;
+    }
+
+    function sanitizeInvokeValue(value) {
+      if (typeof value === 'string') return sanitizeUnicodeString(value);
+      if (Array.isArray(value)) return value.map(sanitizeInvokeValue);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeInvokeValue(item)]));
+      }
+      return value;
+    }
+
+    function sanitizeHistoryForInvoke(history) {
+      const sanitized = sanitizeInvokeValue(Array.isArray(history) ? history : []);
+      if (Array.isArray(history)) {
+        history.splice(0, history.length, ...sanitized);
+      }
+      return sanitized;
+    }
+
+    function truncateUnicode(value, maximumCharacters) {
+      const characters = Array.from(String(value ?? ''));
+      return characters.length > maximumCharacters
+        ? characters.slice(0, maximumCharacters).join('')
+        : characters.join('');
+    }
     const SECURITY_NOTE_DISMISSED_KEY = 'physics-ide-security-note-dismissed-v1';
     const PROJECT_TITLE_KEY = 'physics-ide-project-title';
     const CONTEXT_PROBE_HISTORY_KEY = 'physics-ide-context-probe-history-v1';
@@ -3577,11 +3623,12 @@
       });
 
       chatHistories[pane][index].push(messagePayload);
+      const sanitizedHistory = sanitizeHistoryForInvoke(chatHistories[pane][index]);
       appendChatBubble(pane, index, senderLabel, text);
       appendTerminalLog(`Dispatching payload via active connection string to [${provider}]...`);
       try {
         const usage = JSON.parse(await invoke('estimate_prompt_usage', {
-          history: chatHistories[pane][index]
+          history: sanitizedHistory
         }));
         const sourceSummary = Object.entries(usage.by_source || {})
           .sort((left, right) => right[1].estimated_tokens - left[1].estimated_tokens)
@@ -3598,7 +3645,7 @@
       try {
         const reply = await invoke('send_llm_prompt', {
           pane: pane,
-          history: chatHistories[pane][index],
+          history: sanitizedHistory,
           threadId: String(index)
         });
 
@@ -6427,7 +6474,8 @@ async function restoreVersion() {
       output.value = '';
 
       try {
-        const usage = JSON.parse(await invoke('estimate_prompt_usage', { history }));
+        const sanitizedHistory = sanitizeHistoryForInvoke(history);
+        const usage = JSON.parse(await invoke('estimate_prompt_usage', { history: sanitizedHistory }));
         const reported = JSON.parse(await invoke('get_llm_usage', {
           pane,
           threadId: String(index)
@@ -6524,7 +6572,10 @@ async function restoreVersion() {
       button.disabled = true;
       output.value = 'Checking prefix eligibility...';
       try {
-        const result = JSON.parse(await invoke('run_openai_cache_probe', { pane, history }));
+        const result = JSON.parse(await invoke('run_openai_cache_probe', {
+          pane,
+          history: sanitizeHistoryForInvoke(history)
+        }));
         if (result.status === 'ineligible_prefix') {
           output.value = [
             'Status: INELIGIBLE PREFIX',
@@ -7679,9 +7730,10 @@ async function restoreVersion() {
       if (includeTree) {
         const visibleTree = buildVisibleProjectTreeMarkdown();
         const treeBudget = 12000;
-        const treeContent = visibleTree.length > treeBudget
-          ? `${visibleTree.slice(0, treeBudget)}\n[visible tree truncated at ${treeBudget} characters]`
-          : visibleTree;
+        const truncatedTree = truncateUnicode(visibleTree, treeBudget);
+        const treeContent = Array.from(visibleTree).length > treeBudget
+          ? `${truncatedTree}\n[visible tree truncated at ${treeBudget} characters]`
+          : truncatedTree;
         contextParts.push({ source: 'visible_tree', content: treeContent });
         promptParts.push(`Visible project scope:\n${treeContent}`);
       }

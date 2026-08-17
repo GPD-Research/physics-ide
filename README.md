@@ -47,7 +47,8 @@ The project has moved from a simple desktop shell toward a more practical theory
 - improved natural-language mechanism retrieval with generic derivation terms, duplicate-copy collapse, direct-source preference, and heading-level multi-hit manuscript search;
 - fixed a fatal UTF-8 manuscript-search crash caused by byte slicing across multibyte punctuation and added result content previews;
 - added theory-neutral governing-mechanism reranking and Previous/Next section navigation for manuscript search results;
-- expanded the backend regression suite to 72 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
+- fixed request-inspector/provider serialization failures from lone UTF-16 surrogates while preserving valid emoji and code-point-safe tree truncation;
+- expanded the backend regression suite to 73 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
 
 ### Latest progress (2026-08-11)
 

@@ -506,6 +506,8 @@ Follow-up BMI testing showed that high-frequency proposal/roadmap text could out
 
 Markdown search results now have an explicit cursor with `Previous` / `Next`, active-result position, highlighting, and automatic scrolling to the matched heading in the document preview.
 
+Idea-pad visible-tree testing exposed a WebView serialization failure when fixed-length JavaScript slicing split an emoji surrogate pair, producing `lone leading surrogate in hex escape` before the Request Inspector reached Rust. Visible-tree truncation is now code-point safe, and every chat-history payload is recursively sanitized before estimate, provider dispatch, and cache-probe invokes; malformed lone surrogates become the Unicode replacement character while valid emoji pairs are preserved.
+
 #### Index lifecycle and recovery
 
 The Request Inspector now provides `Build / Refresh Changed`, `Inspect Index`, `Rebuild Index`, and `Delete Local Index`. Inspection is non-mutating and reports database size, integrity, schema compatibility, file/chunk/vector/graph counts, source modification time, active model revision, stale vectors, and quarantined-copy count.
