@@ -496,6 +496,10 @@ Provider-eligible retrieval evidence is assembled only by the backend under a co
 
 Automatic lane primers no longer transport master-axiom or project-awareness corpus excerpts by default. They retain stable role and retrieval contracts, while explicit legacy mode remains available for recovery and structural A/B comparison. Retrieval evidence is recorded as its own canonical prompt source so the Request Inspector shows its estimated token contribution separately.
 
+Ubuntu BMI project testing exposed two retrieval usability gaps after the benchmark fixture passed: compiled manuscript copies could consume multiple result slots, and a natural-language neutrino question did not surface the general geometric mass law because the source described `effective rest mass`, a harmonic mode, and metric equilibrium before applying it to the `n=0` state. Retrieval now expands generic mass/derivation terminology, collapses normalized duplicate chunks with direct-source preference, and has a regression requiring the geometric law to rank in the top three without hard-coded theory conclusions.
+
+Markdown Documents search now returns heading-level matches with line ranges, allowing multiple hits from one manuscript instead of reducing each file to a single abstract-level result.
+
 #### Index lifecycle and recovery
 
 The Request Inspector now provides `Build / Refresh Changed`, `Inspect Index`, `Rebuild Index`, and `Delete Local Index`. Inspection is non-mutating and reports database size, integrity, schema compatibility, file/chunk/vector/graph counts, source modification time, active model revision, stale vectors, and quarantined-copy count.

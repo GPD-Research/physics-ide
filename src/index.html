@@ -5715,12 +5715,13 @@ async function restoreVersion() {
         const encoded = escapeForInlineSingleQuotedJs(row?.path || '');
         const title = escapeHelpHtml(row?.title || row?.relative_path || 'Markdown Document');
         const relative = escapeHelpHtml(row?.relative_path || row?.path || '');
+        const lineRange = row?.line_start ? `:${row.line_start}-${row.line_end || row.line_start}` : '';
         const score = Number(row?.score || 0);
         const snippet = escapeHelpHtml(row?.snippet || '');
         return [
           `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.02); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')" title="Open search result document">`,
           `<div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:4px;"><strong>${title}</strong><span style="font-size:0.75rem; color:var(--text-muted);">score ${score}</span></div>`,
-          `<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">${relative}</div>`,
+          `<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">${relative}${lineRange}</div>`,
           `<div style="font-size:0.8rem; color:var(--text);">${snippet}</div>`,
           `</button>`
         ].join('');

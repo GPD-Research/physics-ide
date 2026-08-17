@@ -1805,38 +1805,37 @@ fn search_markdown_documents(directory_path: String, query: String) -> Result<St
             .to_string_lossy()
             .to_string();
 
-        let title = content
-            .lines()
-            .find_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.starts_with('#') {
-                    Some(trimmed.trim_start_matches('#').trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| relative.clone());
-
-        let score = compute_markdown_doc_score(&title, &content, &tokens);
-        if score <= 0 {
-            continue;
+        for chunk in chunk_markdown(&relative, &content) {
+            let title = if chunk.heading.trim().is_empty() {
+                relative.clone()
+            } else {
+                chunk.heading.clone()
+            };
+            let score = compute_markdown_doc_score(&title, &chunk.content, &tokens);
+            if score <= 0 {
+                continue;
+            }
+            results.push(serde_json::json!({
+                "title": title,
+                "path": path.to_string_lossy().to_string(),
+                "relative_path": relative,
+                "line_start": chunk.line_start,
+                "line_end": chunk.line_end,
+                "score": score,
+                "snippet": build_markdown_doc_snippet(&chunk.content, &tokens)
+            }));
         }
-
-        results.push(serde_json::json!({
-            "title": title,
-            "path": path.to_string_lossy().to_string(),
-            "relative_path": relative,
-            "score": score,
-            "snippet": build_markdown_doc_snippet(&content, &tokens)
-        }));
     }
 
     results.sort_by(|a, b| {
         let score_a = a.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
         let score_b = b.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-        score_b.cmp(&score_a)
+        score_b
+            .cmp(&score_a)
+            .then_with(|| a["relative_path"].as_str().cmp(&b["relative_path"].as_str()))
+            .then_with(|| a["line_start"].as_u64().cmp(&b["line_start"].as_u64()))
     });
+    results.truncate(200);
 
     Ok(serde_json::json!({
         "query": query,
@@ -4973,6 +4972,19 @@ fn build_probe_terms(query: &str) -> Vec<String> {
         push_term("appendix");
     }
 
+    if lower.contains("mass") {
+        push_term("effective mass");
+        push_term("rest mass");
+        push_term("effective");
+    }
+
+    if lower.contains("determin") || lower.contains("deriv") || lower.contains("calculat") {
+        push_term("function");
+        push_term("equation");
+        push_term("relation");
+        push_term("derived");
+    }
+
     terms
 }
 
@@ -6027,6 +6039,23 @@ struct RetrievalFusionCandidate {
     vector_distance: Option<f64>,
 }
 
+fn retrieval_content_fingerprint(heading: &str, content: &str) -> String {
+    let normalized = format!(
+        "{}\n{}",
+        heading.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase(),
+        content.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase()
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn retrieval_source_copy_penalty(path: &str) -> usize {
+    let lower = path.to_ascii_lowercase();
+    usize::from(lower.contains("master_manuscript") || lower.contains("master_bmi_manuscript")) * 2
+        + usize::from(lower.contains("manuscript/md/"))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RetrievalQueryMode {
     Lexical,
@@ -6124,6 +6153,42 @@ fn query_retrieval_index_hybrid_value(
     }
 
     let mut ranked = candidates.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|(left_id, left), (right_id, right)| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left_id.cmp(right_id))
+    });
+    let mut deduplicated = Vec::<(String, RetrievalFusionCandidate)>::new();
+    let mut fingerprint_positions = std::collections::BTreeMap::<String, usize>::new();
+    for (chunk_id, candidate) in ranked {
+        let metadata = connection.query_row(
+            "SELECT path, heading, content FROM retrieval_chunks WHERE chunk_id = ?1 ORDER BY path ASC LIMIT 1",
+            [&chunk_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        );
+        let Ok((path, heading, content)) = metadata else {
+            continue;
+        };
+        let fingerprint = retrieval_content_fingerprint(&heading, &content);
+        if let Some(position) = fingerprint_positions.get(&fingerprint).copied() {
+            let existing_id = &deduplicated[position].0;
+            let existing_path = connection
+                .query_row(
+                    "SELECT path FROM retrieval_chunks WHERE chunk_id = ?1 ORDER BY path ASC LIMIT 1",
+                    [existing_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_default();
+            if retrieval_source_copy_penalty(&path) < retrieval_source_copy_penalty(&existing_path) {
+                deduplicated[position] = (chunk_id, candidate);
+            }
+            continue;
+        }
+        fingerprint_positions.insert(fingerprint, deduplicated.len());
+        deduplicated.push((chunk_id, candidate));
+    }
+    let mut ranked = deduplicated;
     ranked.sort_by(|(left_id, left), (right_id, right)| {
         right
             .score
@@ -9416,6 +9481,71 @@ mod tests {
         assert_eq!(deleted["deleted_files"].as_u64().unwrap(), 1);
         let empty = query_retrieval_index_value(&index_path, "neutrino mass", 4).unwrap();
         assert!(empty["results"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn retrieves_general_geometric_mass_law_for_neutrino_question_and_deduplicates_copies() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_bmi_mass_retrieval_test_{}",
+            std::process::id()
+        ));
+        let index_path = temp_dir.join("retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("manuscript/md")).unwrap();
+        let mechanism = "# 2.2 Geometric Mass Law\nThe effective rest mass M_n at any cosmological epoch is a function of harmonic mode, base frequency, and local metric equilibrium Xi. M_n(t) = n * omega_0 * (1 + Delta_psi(n)) * f(Xi(t)). The neutrino uses the n=0 state at the minimal non-zero manifestation limit.\n";
+        fs::write(temp_dir.join("chapter_2.md"), mechanism).unwrap();
+        fs::write(temp_dir.join("manuscript/md/master_manuscript.md"), mechanism).unwrap();
+        fs::write(
+            temp_dir.join("experimental proposals.md"),
+            "# Neutrino proposal\nNeutrino mass measurement proposal. Neutrino mass detectors test neutrino topology.\n\n## Neutrino objective\nMeasure neutrino events and mass signatures.\n",
+        )
+        .unwrap();
+        refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+
+        let query = query_retrieval_index_value(
+            &index_path,
+            "How is neutrino mass determined in BMI theory?",
+            6,
+        )
+        .unwrap();
+        let rows = query["results"].as_array().unwrap();
+        let mechanism_rows = rows
+            .iter()
+            .filter(|row| row["heading"] == "2.2 Geometric Mass Law")
+            .collect::<Vec<_>>();
+        assert_eq!(mechanism_rows.len(), 1, "{query}");
+        assert_eq!(mechanism_rows[0]["relative_path"], "chapter_2.md");
+        assert!(rows.iter().take(3).any(|row| row["heading"] == "2.2 Geometric Mass Law"), "{query}");
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn markdown_search_returns_multiple_heading_level_hits_per_document() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "physics_ide_markdown_section_search_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            temp_dir.join("theory.md"),
+            "# Abstract\nNeutrino mass is introduced.\n\n## 2.2 Geometric Mass Law\nEffective rest mass is a function of harmonic mode.\n\n## Experiment\nA neutrino mass experiment tests the relation.\n",
+        )
+        .unwrap();
+
+        let result = search_markdown_documents(
+            temp_dir.to_string_lossy().to_string(),
+            "neutrino mass".to_string(),
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let rows = payload["results"].as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| row["line_start"].is_number()));
+        assert!(rows.iter().any(|row| row["title"] == "2.2 Geometric Mass Law"));
+
+        fs::remove_dir_all(&temp_dir).unwrap();
     }
 
     #[test]
