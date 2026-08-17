@@ -3077,6 +3077,26 @@ mod llm_prompt_tests {
     }
 
     #[test]
+    fn refreshed_awareness_remains_in_reusable_prefix() {
+        let history = vec![serde_json::json!({
+            "role": "system",
+            "content": "Retrieval-first awareness",
+            "context_slot": "baseline_context",
+            "context_source": "awareness_refresh",
+            "context_volatility": "slowly_changing"
+        })];
+        let assembly = assemble_canonical_messages(&history);
+        assert_eq!(assembly.stable_prefix["message_count"].as_u64().unwrap(), 1);
+        assert_eq!(assembly.sections[0]["tier"], "slowly_changing");
+
+        let html = include_str!("../../src/index.html");
+        assert!(html.contains("source: isStartup ? 'startup_awareness' : 'awareness_refresh'"));
+        assert!(html.contains("volatility: 'slowly_changing'"));
+        assert!(html.contains("id=\"idea-pad-sync-button\""));
+        assert!(html.contains("Notes Synced (${note.length})"));
+    }
+
+    #[test]
     fn openai_request_body_keeps_canonical_message_roles() {
         let messages = vec![
             serde_json::json!({"role": "system", "content": "Contract"}),

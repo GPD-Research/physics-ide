@@ -1397,7 +1397,7 @@
               <button class="btn-large" onclick="passScratchpadIntoAnalysisPlan()" title="Insert scratchpad goals into the editable empirical analysis plan">Pass Into Analysis Plan</button>
             </div>
             <div class="btn-group" style="margin-top: 8px; align-items: center; justify-content: space-between; gap: 8px;">
-              <button style="flex: 1; min-width: 0;" onclick="syncIdeaPadContext()" title="Sync the current idea pad note and, optionally, the visible project tree into the AI context">🔄 Sync AI Context</button>
+              <button id="idea-pad-sync-button" style="flex: 1; min-width: 0;" onclick="syncIdeaPadContext()" title="Sync the current idea pad note and, optionally, the visible project tree into the AI context">Sync Session Notes</button>
               <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;">
                 <input id="idea-pad-include-file-tree" type="checkbox" checked>
                 Include file tree
@@ -3458,7 +3458,7 @@
         const primerProvenance = (promptText) => ({
           source: isStartup ? 'startup_awareness' : 'awareness_refresh',
           trigger: isStartup ? 'application_start' : 'manual_sync',
-          volatility: isStartup ? 'slowly_changing' : 'dynamic',
+          volatility: 'slowly_changing',
           slot: 'baseline_context',
           path: briefing?.generated_files?.ai_briefing || '',
           parts: buildPrimerContextParts(briefing, promptText)
@@ -7714,11 +7714,18 @@ async function restoreVersion() {
     }
 
     async function syncIdeaPadContext() {
+      const button = document.getElementById('idea-pad-sync-button');
       const note = document.getElementById('scratchpad-content')?.innerText?.trim() || '';
       const includeTree = document.getElementById('idea-pad-include-file-tree')?.checked === true;
       if (!note && !includeTree) {
         appendTerminalLog('Idea pad sync skipped: note is empty and visible tree inclusion is off.');
+        if (button) button.textContent = 'Nothing to Sync';
         return;
+      }
+
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Syncing Notes...';
       }
 
       const contextParts = [];
@@ -7747,8 +7754,17 @@ async function restoreVersion() {
       };
       injectSystemPrimerMessage('left', leftIndex, 'Session Notes', prompt, provenance);
       injectSystemPrimerMessage('right', rightIndex, 'Session Notes', prompt, provenance);
+      document.getElementById('briefing-indicator').innerText = 'Session Notes Synced';
       appendTerminalLog(`Dynamic idea-pad context synced to both lanes (${note.length} note characters${includeTree ? ', visible tree included' : ''}).`);
-      await refreshRequestInspector();
+      if (button) {
+        button.disabled = false;
+        button.textContent = `Notes Synced (${note.length})`;
+      }
+      try {
+        await refreshRequestInspector();
+      } catch (err) {
+        appendTerminalLog(`Idea-pad inspector refresh warning: ${err}`);
+      }
     }
 
     function passScratchpadIntoAnalysisPlan() {

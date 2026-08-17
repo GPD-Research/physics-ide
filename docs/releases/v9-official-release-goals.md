@@ -508,6 +508,8 @@ Markdown search results now have an explicit cursor with `Previous` / `Next`, ac
 
 Idea-pad visible-tree testing exposed a WebView serialization failure when fixed-length JavaScript slicing split an emoji surrogate pair, producing `lone leading surrogate in hex escape` before the Request Inspector reached Rust. Visible-tree truncation is now code-point safe, and every chat-history payload is recursively sanitized before estimate, provider dispatch, and cache-probe invokes; malformed lone surrogates become the Unicode replacement character while valid emoji pairs are preserved.
 
+Request Inspector testing also showed that manual awareness refresh had been marked dynamic, which removed the baseline from the reusable prefix. Refreshed awareness is now consistently `slowly_changing`, while idea-pad notes remain in the independent dynamic `session_notes` slot. Idea-pad sync now provides visible progress/completion feedback so a missing note contribution cannot fail silently.
+
 #### Index lifecycle and recovery
 
 The Request Inspector now provides `Build / Refresh Changed`, `Inspect Index`, `Rebuild Index`, and `Delete Local Index`. Inspection is non-mutating and reports database size, integrity, schema compatibility, file/chunk/vector/graph counts, source modification time, active model revision, stale vectors, and quarantined-copy count.
