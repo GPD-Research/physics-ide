@@ -6017,10 +6017,57 @@ fn fts_query(query: &str) -> String {
 #[derive(Default)]
 struct RetrievalFusionCandidate {
     score: f64,
+    intent_adjustment: f64,
     lexical_rank: Option<usize>,
     lexical_score: Option<f64>,
     vector_rank: Option<usize>,
     vector_distance: Option<f64>,
+}
+
+fn retrieval_intent_adjustment(query: &str, path: &str, heading: &str, content: &str) -> f64 {
+    let query_lower = query.to_ascii_lowercase();
+    let mechanism_intent = ["how", "determin", "deriv", "calculat", "govern", "establish"]
+        .iter()
+        .any(|cue| query_lower.contains(cue));
+    if !mechanism_intent {
+        return 0.0;
+    }
+    let heading_lower = heading.to_ascii_lowercase();
+    let content_lower = content.to_ascii_lowercase();
+    let query_terms = build_probe_terms(query);
+    let topic_overlap = query_terms.iter().any(|term| {
+        heading_lower.contains(term) || content_lower.contains(term)
+    });
+    if !topic_overlap {
+        return 0.0;
+    }
+
+    let mut adjustment = 0.0;
+    if [" law", "equation", "definition", "representation", "foundation", "mechanism"]
+        .iter()
+        .any(|cue| heading_lower.contains(cue.trim()))
+    {
+        adjustment += 0.010;
+    }
+    if content.contains('=')
+        || content.contains(":=")
+        || content.contains("$$")
+        || content.contains("\\frac")
+        || ["function of", "governing relation", "mass relation", "derived from"]
+            .iter()
+            .any(|cue| content_lower.contains(cue))
+    {
+        adjustment += 0.014;
+    }
+    let noise = format!("{} {}", path.to_ascii_lowercase(), heading_lower);
+    if ["proposal", "roadmap", "readme", "session summary", "conclusion", "illustration"]
+        .iter()
+        .any(|cue| noise.contains(cue))
+    {
+        adjustment -= 0.008;
+    }
+    adjustment -= retrieval_source_copy_penalty(path) as f64 * 0.002;
+    adjustment
 }
 
 fn retrieval_content_fingerprint(heading: &str, content: &str) -> String {
@@ -6137,6 +6184,16 @@ fn query_retrieval_index_hybrid_value(
     }
 
     let mut ranked = candidates.into_iter().collect::<Vec<_>>();
+    for (chunk_id, candidate) in &mut ranked {
+        if let Ok((path, heading, content)) = connection.query_row(
+            "SELECT path, heading, content FROM retrieval_chunks WHERE chunk_id = ?1 ORDER BY path ASC LIMIT 1",
+            [chunk_id.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        ) {
+            candidate.intent_adjustment = retrieval_intent_adjustment(query, &path, &heading, &content);
+            candidate.score += candidate.intent_adjustment;
+        }
+    }
     ranked.sort_by(|(left_id, left), (right_id, right)| {
         right
             .score
@@ -6263,6 +6320,7 @@ fn query_retrieval_index_hybrid_value(
             "content": content,
             "rank": fusion.score,
             "fusion_score": fusion.score,
+            "intent_adjustment": fusion.intent_adjustment,
             "lexical_rank": fusion.lexical_rank,
             "lexical_score": fusion.lexical_score,
             "vector_rank": fusion.vector_rank,
@@ -9499,7 +9557,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(mechanism_rows.len(), 1, "{query}");
         assert_eq!(mechanism_rows[0]["relative_path"], "chapter_2.md");
-        assert!(rows.iter().take(3).any(|row| row["heading"] == "2.2 Geometric Mass Law"), "{query}");
+        assert_eq!(rows[0]["heading"], "2.2 Geometric Mass Law", "{query}");
+        assert!(rows[0]["intent_adjustment"].as_f64().unwrap() > 0.0);
 
         fs::remove_dir_all(&temp_dir).unwrap();
     }
@@ -10205,6 +10264,22 @@ mod tests {
             "Install Vector Model clicked.",
         ] {
             assert!(html.contains(required), "Missing installer UI contract: {required}");
+        }
+    }
+
+    #[test]
+    fn markdown_search_frontend_supports_result_cursor_navigation() {
+        let html = include_str!("../../src/index.html");
+        for required in [
+            "id=\"markdown-search-previous\"",
+            "id=\"markdown-search-next\"",
+            "id=\"markdown-search-position\"",
+            "function navigateMarkdownSearchResult(step)",
+            "async function selectMarkdownSearchResult(index)",
+            "activeSearchIndex",
+            "scrollIntoView({ block: 'start' })",
+        ] {
+            assert!(html.contains(required), "Missing Markdown search navigation contract: {required}");
         }
     }
 

@@ -502,6 +502,10 @@ Markdown Documents search now returns heading-level matches with line ranges, al
 
 Ubuntu field testing then exposed a fatal UTF-8 slicing bug when a search snippet window crossed an em dash. Help and Markdown snippets now share a character-indexed Unicode-safe window implementation, with the exact em-dash case covered by regression testing. Retrieval diagnostics also show a short content preview so relevance can be evaluated without opening each candidate blindly.
 
+Follow-up BMI testing showed that high-frequency proposal/roadmap text could outrank a governing mass equation even after terminology expansion. Mechanism questions now receive a theory-neutral intent adjustment based on equation, function, law, definition, representation, and derivation evidence, with noise penalties for proposals, roadmaps, session summaries, conclusions, illustrations, and compiled manuscript copies. The cross-theory benchmark remains green, and the BMI geometric-law regression now requires the governing section to rank first.
+
+Markdown search results now have an explicit cursor with `Previous` / `Next`, active-result position, highlighting, and automatic scrolling to the matched heading in the document preview.
+
 #### Index lifecycle and recovery
 
 The Request Inspector now provides `Build / Refresh Changed`, `Inspect Index`, `Rebuild Index`, and `Delete Local Index`. Inspection is non-mutating and reports database size, integrity, schema compatibility, file/chunk/vector/graph counts, source modification time, active model revision, stale vectors, and quarantined-copy count.

@@ -2154,6 +2154,9 @@
       <div style="display: flex; gap: 8px; margin-bottom: 8px;">
         <input id="markdown-docs-search-input" type="text" placeholder="Search markdown docs (e.g., workspaces)" title="Type a markdown query. Press Enter to search." onkeydown="if(event.key==='Enter'){searchMarkdownDocuments();}">
         <button type="button" onclick="searchMarkdownDocuments()" title="Search loaded markdown files (Enter)">Search</button>
+        <button id="markdown-search-previous" type="button" onclick="navigateMarkdownSearchResult(-1)" title="Open previous search match" disabled>Previous</button>
+        <span id="markdown-search-position" style="min-width:72px; align-self:center; text-align:center; font-size:0.75rem; color:var(--text-muted);">0 / 0</span>
+        <button id="markdown-search-next" type="button" onclick="navigateMarkdownSearchResult(1)" title="Open next search match" disabled>Next</button>
       </div>
 
       <div id="markdown-docs-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
@@ -2250,7 +2253,8 @@
       directory: '',
       documents: [],
       selectedPath: '',
-      searchResults: []
+      searchResults: [],
+      activeSearchIndex: -1
     };
     const providerModelCatalog = {
       openai: [],
@@ -5707,25 +5711,61 @@ async function restoreVersion() {
       if (!Array.isArray(markdownDocsState.searchResults) || markdownDocsState.searchResults.length === 0) {
         container.style.display = 'none';
         container.innerHTML = '';
+        updateMarkdownSearchNavigation();
         return;
       }
 
       container.style.display = 'block';
-      container.innerHTML = markdownDocsState.searchResults.map((row) => {
-        const encoded = escapeForInlineSingleQuotedJs(row?.path || '');
+      container.innerHTML = markdownDocsState.searchResults.map((row, index) => {
         const title = escapeHelpHtml(row?.title || row?.relative_path || 'Markdown Document');
         const relative = escapeHelpHtml(row?.relative_path || row?.path || '');
         const lineRange = row?.line_start ? `:${row.line_start}-${row.line_end || row.line_start}` : '';
         const score = Number(row?.score || 0);
         const snippet = escapeHelpHtml(row?.snippet || '');
+        const active = index === markdownDocsState.activeSearchIndex;
         return [
-          `<button type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid var(--border-color); border-radius:4px; padding:8px; background:rgba(255,255,255,0.02); color:var(--text);" onclick="selectMarkdownDocumentFromEncoded('${encoded}')" title="Open search result document">`,
+          `<button id="markdown-search-result-${index}" type="button" style="width:100%; text-align:left; margin-bottom:6px; border:1px solid ${active ? 'var(--accent)' : 'var(--border-color)'}; border-radius:4px; padding:8px; background:${active ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)'}; color:var(--text);" onclick="selectMarkdownSearchResult(${index})" title="Open matched section">`,
           `<div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:4px;"><strong>${title}</strong><span style="font-size:0.75rem; color:var(--text-muted);">score ${score}</span></div>`,
           `<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">${relative}${lineRange}</div>`,
           `<div style="font-size:0.8rem; color:var(--text);">${snippet}</div>`,
           `</button>`
         ].join('');
       }).join('');
+      updateMarkdownSearchNavigation();
+    }
+
+    function updateMarkdownSearchNavigation() {
+      const count = Array.isArray(markdownDocsState.searchResults) ? markdownDocsState.searchResults.length : 0;
+      const index = markdownDocsState.activeSearchIndex;
+      const position = document.getElementById('markdown-search-position');
+      const previous = document.getElementById('markdown-search-previous');
+      const next = document.getElementById('markdown-search-next');
+      if (position) position.textContent = count > 0 && index >= 0 ? `${index + 1} / ${count}` : `0 / ${count}`;
+      if (previous) previous.disabled = count === 0 || index <= 0;
+      if (next) next.disabled = count === 0 || index < 0 || index >= count - 1;
+    }
+
+    async function selectMarkdownSearchResult(index) {
+      const results = markdownDocsState.searchResults || [];
+      if (!Number.isInteger(index) || index < 0 || index >= results.length) return;
+      markdownDocsState.activeSearchIndex = index;
+      renderMarkdownSearchResults();
+      const row = results[index];
+      await selectMarkdownDocument(row.path);
+      const content = document.getElementById('markdown-docs-content');
+      const expected = String(row.title || '').trim().toLowerCase();
+      const heading = Array.from(content?.querySelectorAll('h1,h2,h3,h4,h5,h6') || [])
+        .find((element) => String(element.textContent || '').trim().toLowerCase() === expected);
+      heading?.scrollIntoView({ block: 'start' });
+      document.getElementById(`markdown-search-result-${index}`)?.scrollIntoView({ block: 'nearest' });
+      setMarkdownDocsMeta(`Search match ${index + 1} of ${results.length}: ${row.title || row.relative_path} (${row.relative_path}:${row.line_start}-${row.line_end})`);
+    }
+
+    function navigateMarkdownSearchResult(step) {
+      const count = markdownDocsState.searchResults?.length || 0;
+      if (count === 0) return;
+      const nextIndex = Math.max(0, Math.min(count - 1, markdownDocsState.activeSearchIndex + step));
+      selectMarkdownSearchResult(nextIndex);
     }
 
     async function openMarkdownDocumentsModal() {
@@ -5921,6 +5961,7 @@ async function restoreVersion() {
 
       if (!query) {
         markdownDocsState.searchResults = [];
+        markdownDocsState.activeSearchIndex = -1;
         renderMarkdownSearchResults();
         setMarkdownDocsMeta(`Showing files from ${directory}.`);
         return;
@@ -5935,6 +5976,7 @@ async function restoreVersion() {
         });
         const payload = typeof response === 'string' ? JSON.parse(response) : response;
         markdownDocsState.searchResults = Array.isArray(payload?.results) ? payload.results : [];
+        markdownDocsState.activeSearchIndex = markdownDocsState.searchResults.length > 0 ? 0 : -1;
         renderMarkdownSearchResults();
 
         if (markdownDocsState.searchResults.length === 0) {
@@ -5943,12 +5985,11 @@ async function restoreVersion() {
         }
 
         const top = markdownDocsState.searchResults[0];
-        setMarkdownDocsMeta(`Found ${markdownDocsState.searchResults.length} match(es). Top result: ${top?.title || top?.relative_path || 'unknown'}.`);
-        if (top?.path) {
-          await selectMarkdownDocument(top.path);
-        }
+        setMarkdownDocsMeta(`Found ${markdownDocsState.searchResults.length} match(es). Use Previous/Next to review matched sections.`);
+        if (top?.path) await selectMarkdownSearchResult(0);
       } catch (err) {
         markdownDocsState.searchResults = [];
+        markdownDocsState.activeSearchIndex = -1;
         renderMarkdownSearchResults();
         setMarkdownDocsMeta(`Markdown search failed: ${err}`);
         appendTerminalLog(`Markdown Documents search error: ${err}`);
@@ -6642,7 +6683,7 @@ async function restoreVersion() {
         ];
         (result.results || []).forEach((row, index) => {
           lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | score=${Number(row.fusion_score || row.rank || 0).toFixed(6)}`);
-          lines.push(`   lexical rank=${row.lexical_rank ?? '-'} | vector rank=${row.vector_rank ?? '-'} | vector distance=${row.vector_distance == null ? '-' : Number(row.vector_distance).toFixed(6)}`);
+          lines.push(`   lexical rank=${row.lexical_rank ?? '-'} | vector rank=${row.vector_rank ?? '-'} | vector distance=${row.vector_distance == null ? '-' : Number(row.vector_distance).toFixed(6)} | intent adjustment=${Number(row.intent_adjustment || 0).toFixed(6)}`);
           if (row.heading) lines.push(`   ${row.heading}`);
           const preview = String(row.content || '').replace(/\s+/g, ' ').trim().slice(0, 260);
           if (preview) lines.push(`   ${preview}${String(row.content || '').length > 260 ? '...' : ''}`);
