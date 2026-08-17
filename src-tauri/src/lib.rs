@@ -6807,18 +6807,22 @@ fn refresh_retrieval_index_command_value(
 }
 
 #[tauri::command]
-fn refresh_retrieval_index(
+async fn refresh_retrieval_index(
     workspace_path: String,
-    state: tauri::State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let root = PathBuf::from(workspace_path.trim());
-    if !root.exists() || !root.is_dir() {
-        return Err("Workspace path is missing or invalid for retrieval indexing.".to_string());
-    }
-    let index_path = retrieval_index_path(&app, &root)?;
-    let model_directory = embedding_model_dir(&app)?;
-    Ok(refresh_retrieval_index_command_value(&root, &index_path, &model_directory, &state)?.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = PathBuf::from(workspace_path.trim());
+        if !root.exists() || !root.is_dir() {
+            return Err("Workspace path is missing or invalid for retrieval indexing.".to_string());
+        }
+        let index_path = retrieval_index_path(&app, &root)?;
+        let model_directory = embedding_model_dir(&app)?;
+        let state = app.state::<AppState>();
+        Ok(refresh_retrieval_index_command_value(&root, &index_path, &model_directory, &state)?.to_string())
+    })
+    .await
+    .map_err(|e| format!("Retrieval refresh worker failed: {e}"))?
 }
 
 #[tauri::command]
@@ -6834,66 +6838,74 @@ fn inspect_retrieval_index(
 }
 
 #[tauri::command]
-fn rebuild_retrieval_index(
+async fn rebuild_retrieval_index(
     workspace_path: String,
-    state: tauri::State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let root = PathBuf::from(workspace_path.trim());
-    if !root.exists() || !root.is_dir() {
-        return Err("Workspace path is missing or invalid for retrieval rebuild.".to_string());
-    }
-    let index_path = retrieval_index_path(&app, &root)?;
-    let deleted = delete_retrieval_index_value(&index_path)?;
-    let mut rebuilt = refresh_retrieval_index_command_value(
-        &root,
-        &index_path,
-        &embedding_model_dir(&app)?,
-        &state,
-    )?;
-    rebuilt["rebuild"] = serde_json::json!({
-        "deleted_database_files": deleted["deleted_files"],
-        "status": "rebuilt"
-    });
-    Ok(rebuilt.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = PathBuf::from(workspace_path.trim());
+        if !root.exists() || !root.is_dir() {
+            return Err("Workspace path is missing or invalid for retrieval rebuild.".to_string());
+        }
+        let index_path = retrieval_index_path(&app, &root)?;
+        let deleted = delete_retrieval_index_value(&index_path)?;
+        let state = app.state::<AppState>();
+        let mut rebuilt = refresh_retrieval_index_command_value(
+            &root,
+            &index_path,
+            &embedding_model_dir(&app)?,
+            &state,
+        )?;
+        rebuilt["rebuild"] = serde_json::json!({
+            "deleted_database_files": deleted["deleted_files"],
+            "status": "rebuilt"
+        });
+        Ok(rebuilt.to_string())
+    })
+    .await
+    .map_err(|e| format!("Retrieval rebuild worker failed: {e}"))?
 }
 
 #[tauri::command]
-fn query_retrieval_index(
+async fn query_retrieval_index(
     workspace_path: String,
     query: String,
     limit: Option<usize>,
     evidence_budget_characters: Option<usize>,
-    state: tauri::State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let root = PathBuf::from(workspace_path.trim());
-    if !root.exists() || !root.is_dir() {
-        return Err("Workspace path is missing or invalid for retrieval query.".to_string());
-    }
-    let index_path = retrieval_index_path(&app, &root)?;
-    let model_directory = embedding_model_dir(&app)?;
-    let query_embedding = with_local_embedding_model(&state, &model_directory, |model| {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = PathBuf::from(workspace_path.trim());
+        if !root.exists() || !root.is_dir() {
+            return Err("Workspace path is missing or invalid for retrieval query.".to_string());
+        }
+        let index_path = retrieval_index_path(&app, &root)?;
+        let model_directory = embedding_model_dir(&app)?;
+        let state = app.state::<AppState>();
+        let query_embedding = with_local_embedding_model(&state, &model_directory, |model| {
             model
                 .embed(vec![query.as_str()], Some(1))
                 .map_err(|e| format!("Failed to embed retrieval query: {e}"))
         })
         .ok()
         .and_then(|mut embeddings| embeddings.pop());
-    let result = if let Some(embedding) = query_embedding.as_deref() {
-        query_retrieval_index_hybrid_value(
-            &index_path,
-            &query,
-            limit.unwrap_or(8),
-            Some(embedding),
-            RetrievalQueryMode::Hybrid,
-        )?
-    } else {
-        query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?
-    };
-    let mut result = result;
-    result["evidence_packet"] = build_retrieval_evidence_packet(&result, evidence_budget_characters);
-    Ok(result.to_string())
+        let result = if let Some(embedding) = query_embedding.as_deref() {
+            query_retrieval_index_hybrid_value(
+                &index_path,
+                &query,
+                limit.unwrap_or(8),
+                Some(embedding),
+                RetrievalQueryMode::Hybrid,
+            )?
+        } else {
+            query_retrieval_index_value(&index_path, &query, limit.unwrap_or(8))?
+        };
+        let mut result = result;
+        result["evidence_packet"] = build_retrieval_evidence_packet(&result, evidence_budget_characters);
+        Ok(result.to_string())
+    })
+    .await
+    .map_err(|e| format!("Retrieval query worker failed: {e}"))?
 }
 
 #[tauri::command]
@@ -6912,38 +6924,42 @@ fn get_embedding_model_status(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn install_embedding_model(
-    state: tauri::State<AppState>,
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    let result = install_embedding_model_value(&embedding_model_dir(&app)?)?;
-    *state
-        .embedding_model
-        .lock()
-        .map_err(|_| "Local embedding model cache is unavailable.".to_string())? = None;
-    Ok(result.to_string())
+async fn install_embedding_model(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = install_embedding_model_value(&embedding_model_dir(&app)?)?;
+        let state = app.state::<AppState>();
+        *state
+            .embedding_model
+            .lock()
+            .map_err(|_| "Local embedding model cache is unavailable.".to_string())? = None;
+        Ok(result.to_string())
+    })
+    .await
+    .map_err(|e| format!("Embedding model installer worker failed: {e}"))?
 }
 
 #[tauri::command]
-fn run_retrieval_benchmark(
-    state: tauri::State<AppState>,
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    let model_directory = embedding_model_dir(&app)?;
-    let benchmark_root = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("retrieval-benchmarks")
-        .join("v1");
-    let result = with_local_embedding_model(&state, &model_directory, |model| {
-        run_retrieval_benchmark_value(&benchmark_root, |texts| {
-            model
-                .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
-                .map_err(|e| format!("Failed to embed retrieval benchmark text: {e}"))
-        })
-    })?;
-    Ok(result.to_string())
+async fn run_retrieval_benchmark(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let model_directory = embedding_model_dir(&app)?;
+        let benchmark_root = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("retrieval-benchmarks")
+            .join("v1");
+        let state = app.state::<AppState>();
+        let result = with_local_embedding_model(&state, &model_directory, |model| {
+            run_retrieval_benchmark_value(&benchmark_root, |texts| {
+                model
+                    .embed(texts, Some(RETRIEVAL_EMBEDDING_BATCH_SIZE))
+                    .map_err(|e| format!("Failed to embed retrieval benchmark text: {e}"))
+            })
+        })?;
+        Ok(result.to_string())
+    })
+    .await
+    .map_err(|e| format!("Retrieval benchmark worker failed: {e}"))?
 }
 
 fn render_manuscript_content(
@@ -10064,6 +10080,29 @@ mod tests {
             "Install Vector Model clicked.",
         ] {
             assert!(html.contains(required), "Missing installer UI contract: {required}");
+        }
+    }
+
+    #[test]
+    fn heavy_retrieval_commands_dispatch_to_blocking_workers() {
+        let source = include_str!("lib.rs");
+        for signature in [
+            "async fn refresh_retrieval_index(",
+            "async fn rebuild_retrieval_index(",
+            "async fn query_retrieval_index(",
+            "async fn install_embedding_model(",
+            "async fn run_retrieval_benchmark(",
+        ] {
+            assert!(source.contains(signature), "Heavy command is not async: {signature}");
+        }
+        for worker_error in [
+            "Retrieval refresh worker failed",
+            "Retrieval rebuild worker failed",
+            "Retrieval query worker failed",
+            "Embedding model installer worker failed",
+            "Retrieval benchmark worker failed",
+        ] {
+            assert!(source.contains(worker_error), "Heavy command is missing worker dispatch: {worker_error}");
         }
     }
 
