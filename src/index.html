@@ -6644,6 +6644,8 @@ async function restoreVersion() {
           lines.push(`${index + 1}. ${row.relative_path}:${row.line_start}-${row.line_end} | ${row.chunk_id} | score=${Number(row.fusion_score || row.rank || 0).toFixed(6)}`);
           lines.push(`   lexical rank=${row.lexical_rank ?? '-'} | vector rank=${row.vector_rank ?? '-'} | vector distance=${row.vector_distance == null ? '-' : Number(row.vector_distance).toFixed(6)}`);
           if (row.heading) lines.push(`   ${row.heading}`);
+          const preview = String(row.content || '').replace(/\s+/g, ' ').trim().slice(0, 260);
+          if (preview) lines.push(`   ${preview}${String(row.content || '').length > 260 ? '...' : ''}`);
           lines.push(`   adjacent neighbors=${(row.neighbors || []).length} | graph neighbors=${(row.graph_neighbors || []).length}`);
           (row.graph_neighbors || []).forEach((neighbor) => {
             lines.push(`   graph ${neighbor.direction || 'related'} ${neighbor.relation_type || 'relation'} -> ${neighbor.relative_path}:${neighbor.line_start}-${neighbor.line_end}`);

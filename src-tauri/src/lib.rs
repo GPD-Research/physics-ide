@@ -1417,66 +1417,50 @@ fn compute_help_doc_score(doc: &HelpDocRecord, tokens: &[String]) -> i32 {
     score
 }
 
-fn build_help_doc_snippet(content: &str, tokens: &[String]) -> String {
+fn build_unicode_search_snippet(content: &str, tokens: &[String]) -> String {
     let lowered = content.replace('\n', " ").to_lowercase();
-
-    let mut hit_index = 0usize;
+    let mut hit = None;
     for token in tokens {
         if let Some(index) = lowered.find(token) {
-            hit_index = index;
+            hit = Some((index, token.len()));
             break;
         }
         if token.ends_with('s') && token.len() > 2 {
             let singular = &token[..token.len() - 1];
             if let Some(index) = lowered.find(singular) {
-                hit_index = index;
+                hit = Some((index, singular.len()));
                 break;
             }
         }
     }
-
-    let start = hit_index.saturating_sub(80);
-    let end = (hit_index + 160).min(lowered.len());
-    let mut snippet = lowered[start..end].trim().to_string();
-
+    let total_characters = lowered.chars().count();
+    let (hit_character, needle_characters) = hit
+        .map(|(byte_index, byte_length)| {
+            (
+                lowered[..byte_index].chars().count(),
+                lowered[byte_index..byte_index + byte_length].chars().count(),
+            )
+        })
+        .unwrap_or((0, 0));
+    let start = hit_character.saturating_sub(80);
+    let take = (needle_characters + 160).min(total_characters.saturating_sub(start));
+    let mut snippet = lowered.chars().skip(start).take(take).collect::<String>();
+    snippet = snippet.trim().to_string();
     if start > 0 {
-        snippet = format!("...{}", snippet);
+        snippet = format!("...{snippet}");
     }
-    if end < lowered.len() {
+    if start + take < total_characters {
         snippet.push_str("...");
     }
     snippet
 }
 
+fn build_help_doc_snippet(content: &str, tokens: &[String]) -> String {
+    build_unicode_search_snippet(content, tokens)
+}
+
 fn build_markdown_doc_snippet(content: &str, tokens: &[String]) -> String {
-    let lowered = content.replace('\n', " ").to_lowercase();
-
-    let mut hit_index = 0usize;
-    for token in tokens {
-        if let Some(index) = lowered.find(token) {
-            hit_index = index;
-            break;
-        }
-        if token.ends_with('s') && token.len() > 2 {
-            let singular = &token[..token.len() - 1];
-            if let Some(index) = lowered.find(singular) {
-                hit_index = index;
-                break;
-            }
-        }
-    }
-
-    let start = hit_index.saturating_sub(80);
-    let end = (hit_index + 160).min(lowered.len());
-    let mut snippet = lowered[start..end].trim().to_string();
-
-    if start > 0 {
-        snippet = format!("...{}", snippet);
-    }
-    if end < lowered.len() {
-        snippet.push_str("...");
-    }
-    snippet
+    build_unicode_search_snippet(content, tokens)
 }
 
 fn collect_markdown_files_recursive(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -9546,6 +9530,17 @@ mod tests {
         assert!(rows.iter().any(|row| row["title"] == "2.2 Geometric Mass Law"));
 
         fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn markdown_search_snippet_handles_em_dash_before_match() {
+        let content = format!("{}— neutrino mass appears after an em dash", "prefix ".repeat(90));
+        let snippet = build_markdown_doc_snippet(
+            &content,
+            &["neutrino".to_string(), "mass".to_string()],
+        );
+        assert!(snippet.contains("neutrino mass"));
+        assert!(snippet.starts_with("..."));
     }
 
     #[test]

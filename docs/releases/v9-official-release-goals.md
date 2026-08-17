@@ -500,6 +500,8 @@ Ubuntu BMI project testing exposed two retrieval usability gaps after the benchm
 
 Markdown Documents search now returns heading-level matches with line ranges, allowing multiple hits from one manuscript instead of reducing each file to a single abstract-level result.
 
+Ubuntu field testing then exposed a fatal UTF-8 slicing bug when a search snippet window crossed an em dash. Help and Markdown snippets now share a character-indexed Unicode-safe window implementation, with the exact em-dash case covered by regression testing. Retrieval diagnostics also show a short content preview so relevance can be evaluated without opening each candidate blindly.
+
 #### Index lifecycle and recovery
 
 The Request Inspector now provides `Build / Refresh Changed`, `Inspect Index`, `Rebuild Index`, and `Delete Local Index`. Inspection is non-mutating and reports database size, integrity, schema compatibility, file/chunk/vector/graph counts, source modification time, active model revision, stale vectors, and quarantined-copy count.

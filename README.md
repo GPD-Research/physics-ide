@@ -45,7 +45,8 @@ The project has moved from a simple desktop shell toward a more practical theory
 - restored idea-pad sync as an independent dynamic session-notes slot with visible-tree provenance while retaining Save/Save As recovery for user notes;
 - moved model installation, indexing, rebuild, query, and benchmarks to blocking workers so large local projects remain responsive;
 - improved natural-language mechanism retrieval with generic derivation terms, duplicate-copy collapse, direct-source preference, and heading-level multi-hit manuscript search;
-- expanded the backend regression suite to 70 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
+- fixed a fatal UTF-8 manuscript-search crash caused by byte slicing across multibyte punctuation and added result content previews;
+- expanded the backend regression suite to 71 passing tests plus an explicit model-install, real-vector persistence, hybrid-query, and real-model benchmark probe.
 
 ### Latest progress (2026-08-11)
 
