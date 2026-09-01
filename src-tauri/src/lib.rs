@@ -7972,6 +7972,143 @@ fn detect_theory_style(scan: &serde_json::Value) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct ChapterEquationEntry {
+    label: String,
+    equation: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct ChapterEquations {
+    chapter_title: String,
+    source_path: String,
+    entries: Vec<ChapterEquationEntry>,
+}
+
+fn is_equation_line(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("$$")
+        || lower.contains("\\begin{")
+        || lower.contains("\\frac")
+        || lower.contains("\\partial")
+        || lower.contains("\\mathcal")
+        || lower.contains("\\nabla")
+        || lower.contains("\\sum")
+        || lower.contains("\\int")
+        || lower.contains("\\sqrt")
+}
+
+fn derive_chapter_title(path: &Path, content: &str) -> String {
+    if let Some(heading) = content.lines().find(|line| line.trim_start().starts_with('#')) {
+        let title = heading.trim().trim_start_matches('#').trim();
+        if !title.is_empty() {
+            return title.to_string();
+        }
+    }
+    path.file_stem()
+        .map(|stem| stem.to_string_lossy().replace(['_', '-'], " "))
+        .unwrap_or_else(|| "Untitled Chapter".to_string())
+}
+
+// Scans a master manuscript or chapter markdown tree and pulls, per chapter file,
+// the chapter title plus each equation together with the nearest preceding text
+// line to use as its descriptive label.
+fn extract_equations_by_chapter(theory_dir: &str) -> Vec<ChapterEquations> {
+    let mut files = Vec::new();
+    let theory_path = Path::new(theory_dir);
+    if theory_path.exists() {
+        let _ = recursive_markdown_scan(theory_path, &mut files);
+    }
+    files.sort();
+
+    let mut chapters = Vec::new();
+
+    for path in &files {
+        let Ok(content) = fs::read_to_string(path) else { continue };
+        let relative_path = path
+            .strip_prefix(theory_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        let chapter_title = derive_chapter_title(path, &content);
+
+        let mut entries: Vec<ChapterEquationEntry> = Vec::new();
+        let mut last_label: Option<String> = None;
+        let mut block: Option<Vec<String>> = None;
+
+        for raw_line in content.lines() {
+            let line = raw_line.trim();
+
+            if let Some(open_lines) = block.as_mut() {
+                if line == "$$" {
+                    let equation = open_lines.join(" ").trim().to_string();
+                    let label = last_label
+                        .clone()
+                        .unwrap_or_else(|| format!("Equation from {}", chapter_title));
+                    entries.push(ChapterEquationEntry { label, equation });
+                    block = None;
+                } else if !line.is_empty() {
+                    open_lines.push(line.to_string());
+                }
+                continue;
+            }
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if line.starts_with('#') {
+                last_label = None;
+                continue;
+            }
+
+            if line == "$$" {
+                block = Some(Vec::new());
+                continue;
+            }
+
+            if is_equation_line(line) {
+                let equation = line.trim_matches('$').trim().to_string();
+                let label = last_label
+                    .clone()
+                    .unwrap_or_else(|| format!("Equation from {}", chapter_title));
+                entries.push(ChapterEquationEntry { label, equation });
+                continue;
+            }
+
+            last_label = Some(line.to_string());
+        }
+
+        if !entries.is_empty() {
+            chapters.push(ChapterEquations {
+                chapter_title,
+                source_path: relative_path,
+                entries,
+            });
+        }
+    }
+
+    chapters
+}
+
+fn render_governing_equations_section(chapters: &[ChapterEquations]) -> String {
+    if chapters.is_empty() {
+        return "## Governing Equations\nNo equations were detected in the scanned theory corpus yet. Import or write chapter markdown files containing equations to populate this section automatically.\n".to_string();
+    }
+
+    let mut section = String::from("## Governing Equations\n");
+    for chapter in chapters {
+        section.push_str(&format!(
+            "\n### {}\n_Source: {}_\n\n",
+            chapter.chapter_title, chapter.source_path
+        ));
+        for entry in &chapter.entries {
+            section.push_str(&format!("- **{}**\n  $$ {} $$\n", entry.label, entry.equation));
+        }
+    }
+    section
+}
+
 fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: &serde_json::Value) -> String {
     let theory_label = scan["headings"]
         .as_array()
@@ -8007,9 +8144,13 @@ fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: 
         )
     };
 
+    let chapters = extract_equations_by_chapter(theory_dir);
+    let governing_equations_section = render_governing_equations_section(&chapters);
+
     let mut template = format!(
-        "# Master Axiom\n\n## Core Axiom\nThe {} framework is treated here as a structured model candidate rather than as an assumed truth. Its purpose is to define a coherent internal rule set that can be tested against empirical data and compared against alternative formulations.\n\n{}\n\n",
+        "# Master Axiom\n\n## Core Axiom\nThe {} framework is treated here as a structured model candidate rather than as an assumed truth. Its purpose is to define a coherent internal rule set that can be tested against empirical data and compared against alternative formulations.\n\n{}\n\n{}\n\n",
         theory_label,
+        governing_equations_section,
         structure_section
     );
 
@@ -8068,7 +8209,7 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
         .unwrap_or("No hypothesis detected");
 
     let prompt = format!(
-        "You are helping produce a scientific master axiom file for a cosmological theory repository.\n\nTheory directory: {}\n\nDetected heading: {}\nDetected Lagrangian/action: {}\nDetected hypothesis/axiom candidate: {}\n\nWrite a polished markdown master axiom document with sections: Core Axiom, Assumptions, Hypothesis, Predictions, Observational Consequences, Testable Criteria, and Lagrangian / Action. Keep it concise, scientific, and suitable for a researcher to refine.\n\nIf the evidence is sparse, preserve the human-in-the-loop placeholders rather than inventing unsupported details.\n\nFallback template:\n{}",
+        "You are helping produce a scientific master axiom file for a cosmological theory repository.\n\nTheory directory: {}\n\nDetected heading: {}\nDetected Lagrangian/action: {}\nDetected hypothesis/axiom candidate: {}\n\nWrite a polished markdown master axiom document with sections: Core Axiom, Governing Equations, Assumptions, Hypothesis, Predictions, Observational Consequences, Testable Criteria, and Lagrangian / Action. Keep it concise, scientific, and suitable for a researcher to refine.\n\nThe fallback template's '## Governing Equations' section was extracted directly from the manuscript's chapters, with each equation paired with the descriptive label found near it in the source text. Reproduce that section's chapter headings, equations, and labels verbatim without inventing, omitting, or reordering entries. Only the narrative sections around it may be rewritten for clarity.\n\nIf the evidence is sparse, preserve the human-in-the-loop placeholders rather than inventing unsupported details.\n\nFallback template:\n{}",
         theory_dir, heading_summary, lagrangian_summary, hypothesis_summary, fallback_template
     );
 
@@ -9374,6 +9515,44 @@ mod tests {
         assert!(template.contains("## Hypothesis"));
         assert!(template.contains("## Predictions"));
         assert!(template.contains("## Observational Consequences"));
+    }
+
+    #[test]
+    fn master_axiom_lists_equations_grouped_by_chapter_with_nearby_labels() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_chapter_equations_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(
+            temp_dir.join("chapter1.md"),
+            "# Field Foundations\n\nThe scalar field obeys the following Lagrangian density:\n\n$$\\mathcal{L} = \\frac{1}{2}\\partial_\\mu \\phi \\partial^\\mu \\phi - V(\\phi)$$\n\nThe equation of motion follows from the Euler-Lagrange condition:\n\n$$\\partial_\\mu \\partial^\\mu \\phi + V'(\\phi) = 0$$\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("chapter2.md"),
+            "# Cosmological Expansion\n\nThe expansion rate is governed by the Friedmann relation:\n\n$$H^2 = \\frac{8\\pi G}{3}\\rho$$\n",
+        )
+        .unwrap();
+
+        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap());
+        assert_eq!(chapters.len(), 2);
+        assert_eq!(chapters[0].chapter_title, "Field Foundations");
+        assert_eq!(chapters[0].entries.len(), 2);
+        assert_eq!(
+            chapters[0].entries[0].label,
+            "The scalar field obeys the following Lagrangian density:"
+        );
+        assert!(chapters[0].entries[0].equation.contains("\\mathcal{L}"));
+        assert_eq!(chapters[1].chapter_title, "Cosmological Expansion");
+        assert_eq!(chapters[1].entries[0].label, "The expansion rate is governed by the Friedmann relation:");
+
+        let scan = scan_markdown_theory(temp_dir.to_str().unwrap());
+        let template = build_master_axiom_template(temp_dir.to_str().unwrap(), "", &scan);
+        assert!(template.contains("## Governing Equations"));
+        assert!(template.contains("### Field Foundations"));
+        assert!(template.contains("### Cosmological Expansion"));
+        assert!(template.contains("The scalar field obeys the following Lagrangian density:"));
+        assert!(template.contains("The expansion rate is governed by the Friedmann relation:"));
     }
 
     #[test]
