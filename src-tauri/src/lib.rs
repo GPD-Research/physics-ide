@@ -7976,6 +7976,7 @@ fn detect_theory_style(scan: &serde_json::Value) -> &'static str {
 struct ChapterEquationEntry {
     label: String,
     equation: String,
+    term_definitions: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -7998,6 +7999,42 @@ fn is_equation_line(line: &str) -> bool {
         || lower.contains("\\sqrt")
 }
 
+fn contains_where_clause(line: &str) -> bool {
+    line.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| word == "where")
+}
+
+// Looks at the two sentences (lines) following an equation for a "where ..."
+// clause defining its terms/variables, stopping early at the next heading or equation.
+fn collect_term_definitions(lines: &[&str], mut index: usize) -> Option<String> {
+    let mut collected = Vec::new();
+    let mut sentences_checked = 0;
+
+    while index < lines.len() && sentences_checked < 2 {
+        let line = lines[index];
+        index += 1;
+
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('#') || line == "$$" || is_equation_line(line) {
+            break;
+        }
+
+        sentences_checked += 1;
+        if contains_where_clause(line) {
+            collected.push(line.to_string());
+        }
+    }
+
+    if collected.is_empty() {
+        None
+    } else {
+        Some(collected.join(" "))
+    }
+}
+
 fn derive_chapter_title(path: &Path, content: &str) -> String {
     if let Some(heading) = content.lines().find(|line| line.trim_start().starts_with('#')) {
         let title = heading.trim().trim_start_matches('#').trim();
@@ -8012,7 +8049,8 @@ fn derive_chapter_title(path: &Path, content: &str) -> String {
 
 // Scans a master manuscript or chapter markdown tree and pulls, per chapter file,
 // the chapter title plus each equation together with the nearest preceding text
-// line to use as its descriptive label.
+// line to use as its descriptive label and any "where"-clause term definitions
+// found in the two sentences following it.
 fn extract_equations_by_chapter(theory_dir: &str) -> Vec<ChapterEquations> {
     let mut files = Vec::new();
     let theory_path = Path::new(theory_dir);
@@ -8032,38 +8070,41 @@ fn extract_equations_by_chapter(theory_dir: &str) -> Vec<ChapterEquations> {
             .to_string();
         let chapter_title = derive_chapter_title(path, &content);
 
+        let lines: Vec<&str> = content.lines().map(|line| line.trim()).collect();
         let mut entries: Vec<ChapterEquationEntry> = Vec::new();
         let mut last_label: Option<String> = None;
-        let mut block: Option<Vec<String>> = None;
+        let mut index = 0usize;
 
-        for raw_line in content.lines() {
-            let line = raw_line.trim();
-
-            if let Some(open_lines) = block.as_mut() {
-                if line == "$$" {
-                    let equation = open_lines.join(" ").trim().to_string();
-                    let label = last_label
-                        .clone()
-                        .unwrap_or_else(|| format!("Equation from {}", chapter_title));
-                    entries.push(ChapterEquationEntry { label, equation });
-                    block = None;
-                } else if !line.is_empty() {
-                    open_lines.push(line.to_string());
-                }
-                continue;
-            }
+        while index < lines.len() {
+            let line = lines[index];
 
             if line.is_empty() {
+                index += 1;
                 continue;
             }
 
             if line.starts_with('#') {
                 last_label = None;
+                index += 1;
                 continue;
             }
 
             if line == "$$" {
-                block = Some(Vec::new());
+                let mut block_lines = Vec::new();
+                let mut end_index = index + 1;
+                while end_index < lines.len() && lines[end_index] != "$$" {
+                    if !lines[end_index].is_empty() {
+                        block_lines.push(lines[end_index].to_string());
+                    }
+                    end_index += 1;
+                }
+                let equation = block_lines.join(" ").trim().to_string();
+                let label = last_label
+                    .clone()
+                    .unwrap_or_else(|| format!("Equation from {}", chapter_title));
+                let term_definitions = collect_term_definitions(&lines, end_index + 1);
+                entries.push(ChapterEquationEntry { label, equation, term_definitions });
+                index = end_index + 1;
                 continue;
             }
 
@@ -8072,11 +8113,14 @@ fn extract_equations_by_chapter(theory_dir: &str) -> Vec<ChapterEquations> {
                 let label = last_label
                     .clone()
                     .unwrap_or_else(|| format!("Equation from {}", chapter_title));
-                entries.push(ChapterEquationEntry { label, equation });
+                let term_definitions = collect_term_definitions(&lines, index + 1);
+                entries.push(ChapterEquationEntry { label, equation, term_definitions });
+                index += 1;
                 continue;
             }
 
             last_label = Some(line.to_string());
+            index += 1;
         }
 
         if !entries.is_empty() {
@@ -8104,6 +8148,9 @@ fn render_governing_equations_section(chapters: &[ChapterEquations]) -> String {
         ));
         for entry in &chapter.entries {
             section.push_str(&format!("- **{}**\n  $$ {} $$\n", entry.label, entry.equation));
+            if let Some(term_definitions) = &entry.term_definitions {
+                section.push_str(&format!("  - Terms: {}\n", term_definitions));
+            }
         }
     }
     section
@@ -9530,7 +9577,7 @@ mod tests {
         .unwrap();
         fs::write(
             temp_dir.join("chapter2.md"),
-            "# Cosmological Expansion\n\nThe expansion rate is governed by the Friedmann relation:\n\n$$H^2 = \\frac{8\\pi G}{3}\\rho$$\n",
+            "# Cosmological Expansion\n\nThe expansion rate is governed by the Friedmann relation:\n\n$$H^2 = \\frac{8\\pi G}{3}\\rho$$\n\nwhere $H$ is the Hubble parameter, $G$ is Newton's constant, and $\\rho$ is the energy density.\n",
         )
         .unwrap();
 
@@ -9543,8 +9590,13 @@ mod tests {
             "The scalar field obeys the following Lagrangian density:"
         );
         assert!(chapters[0].entries[0].equation.contains("\\mathcal{L}"));
+        assert!(chapters[0].entries[0].term_definitions.is_none());
         assert_eq!(chapters[1].chapter_title, "Cosmological Expansion");
         assert_eq!(chapters[1].entries[0].label, "The expansion rate is governed by the Friedmann relation:");
+        assert_eq!(
+            chapters[1].entries[0].term_definitions.as_deref(),
+            Some("where $H$ is the Hubble parameter, $G$ is Newton's constant, and $\\rho$ is the energy density.")
+        );
 
         let scan = scan_markdown_theory(temp_dir.to_str().unwrap());
         let template = build_master_axiom_template(temp_dir.to_str().unwrap(), "", &scan);
@@ -9553,6 +9605,26 @@ mod tests {
         assert!(template.contains("### Cosmological Expansion"));
         assert!(template.contains("The scalar field obeys the following Lagrangian density:"));
         assert!(template.contains("The expansion rate is governed by the Friedmann relation:"));
+        assert!(template.contains("- Terms: where $H$ is the Hubble parameter"));
+    }
+
+    #[test]
+    fn term_definitions_only_look_at_two_sentences_after_an_equation_and_stop_at_next_equation() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_term_definitions_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(
+            temp_dir.join("chapter1.md"),
+            "# Field Foundations\n\nThe field equation is:\n\n$$\\partial_\\mu \\partial^\\mu \\phi = 0$$\n\nFirst filler sentence.\n\nSecond filler sentence.\n\nwhere $\\phi$ is the scalar field, defined too late to count.\n\n$$\\mathcal{L} = V(\\phi)$$\n",
+        )
+        .unwrap();
+
+        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap());
+        assert_eq!(chapters[0].entries.len(), 2);
+        // The "where" clause is the third sentence after the first equation, beyond the two-sentence window.
+        assert!(chapters[0].entries[0].term_definitions.is_none());
+        assert!(chapters[0].entries[1].term_definitions.is_none());
     }
 
     #[test]
