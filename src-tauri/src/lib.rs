@@ -8156,6 +8156,77 @@ fn render_governing_equations_section(chapters: &[ChapterEquations]) -> String {
     section
 }
 
+fn governing_equations_preserved(content: &str, chapters: &[ChapterEquations]) -> bool {
+    chapters.iter().all(|chapter| {
+        chapter.entries.iter().all(|entry| {
+            content.contains(entry.equation.as_str())
+                && entry
+                    .term_definitions
+                    .as_deref()
+                    .map_or(true, |terms| content.contains(terms))
+        })
+    })
+}
+
+// Replaces (or inserts) the `## Governing Equations` section of `content` with the
+// deterministic rendering so AI rewrites can never drop or alter extracted
+// equations and their term definitions.
+fn enforce_governing_equations_section(content: &str, chapters: &[ChapterEquations]) -> String {
+    if governing_equations_preserved(content, chapters) {
+        return content.to_string();
+    }
+
+    let rendered = render_governing_equations_section(chapters);
+    let lines: Vec<&str> = content.lines().collect();
+    let is_h2 = |line: &str| line.trim_start().starts_with("## ");
+    let start = lines
+        .iter()
+        .position(|line| is_h2(line) && line.to_lowercase().contains("governing equation"));
+
+    let mut output = String::new();
+    match start {
+        Some(start) => {
+            let end = lines[start + 1..]
+                .iter()
+                .position(|line| is_h2(line))
+                .map(|offset| start + 1 + offset)
+                .unwrap_or(lines.len());
+            for line in &lines[..start] {
+                output.push_str(line);
+                output.push('\n');
+            }
+            output.push_str(rendered.trim_end());
+            output.push_str("\n\n");
+            for line in &lines[end..] {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+        None => {
+            let insert_at = lines
+                .iter()
+                .enumerate()
+                .skip_while(|(_, line)| !(is_h2(line) && line.to_lowercase().contains("core axiom")))
+                .skip(1)
+                .find(|(_, line)| is_h2(line))
+                .map(|(index, _)| index)
+                .unwrap_or(lines.len());
+            for line in &lines[..insert_at] {
+                output.push_str(line);
+                output.push('\n');
+            }
+            output.push('\n');
+            output.push_str(rendered.trim_end());
+            output.push_str("\n\n");
+            for line in &lines[insert_at..] {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+    }
+    output
+}
+
 fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: &serde_json::Value) -> String {
     let theory_label = scan["headings"]
         .as_array()
@@ -8256,7 +8327,7 @@ fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::
         .unwrap_or("No hypothesis detected");
 
     let prompt = format!(
-        "You are helping produce a scientific master axiom file for a cosmological theory repository.\n\nTheory directory: {}\n\nDetected heading: {}\nDetected Lagrangian/action: {}\nDetected hypothesis/axiom candidate: {}\n\nWrite a polished markdown master axiom document with sections: Core Axiom, Governing Equations, Assumptions, Hypothesis, Predictions, Observational Consequences, Testable Criteria, and Lagrangian / Action. Keep it concise, scientific, and suitable for a researcher to refine.\n\nThe fallback template's '## Governing Equations' section was extracted directly from the manuscript's chapters, with each equation paired with the descriptive label found near it in the source text. Reproduce that section's chapter headings, equations, and labels verbatim without inventing, omitting, or reordering entries. Only the narrative sections around it may be rewritten for clarity.\n\nIf the evidence is sparse, preserve the human-in-the-loop placeholders rather than inventing unsupported details.\n\nFallback template:\n{}",
+        "You are helping produce a scientific master axiom file for a cosmological theory repository.\n\nTheory directory: {}\n\nDetected heading: {}\nDetected Lagrangian/action: {}\nDetected hypothesis/axiom candidate: {}\n\nWrite a polished markdown master axiom document with sections: Core Axiom, Governing Equations, Assumptions, Hypothesis, Predictions, Observational Consequences, Testable Criteria, and Lagrangian / Action. Keep it concise, scientific, and suitable for a researcher to refine.\n\nThe fallback template's '## Governing Equations' section was extracted directly from the manuscript's chapters, with each equation paired with the descriptive label found near it in the source text and, where present, a 'Terms:' line holding the where-clause definitions of its variables. Reproduce that section's chapter headings, source paths, equations, labels, and 'Terms:' definition lines verbatim without inventing, omitting, or reordering entries. Only the narrative sections around it may be rewritten for clarity.\n\nIf the evidence is sparse, preserve the human-in-the-loop placeholders rather than inventing unsupported details.\n\nFallback template:\n{}",
         theory_dir, heading_summary, lagrangian_summary, hypothesis_summary, fallback_template
     );
 
@@ -8777,8 +8848,14 @@ fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: Stri
     let mut status = "Generated locally from scanned markdown".to_string();
 
     if let Some(ai_content) = try_generate_with_gemini(&config.gemini_api_key, &effective_theory_dir, &scan, &fallback_template) {
-        final_content = ai_content;
-        status = "Generated with Gemini".to_string();
+        let chapters = extract_equations_by_chapter(&effective_theory_dir);
+        if governing_equations_preserved(&ai_content, &chapters) {
+            final_content = ai_content;
+            status = "Generated with Gemini".to_string();
+        } else {
+            final_content = enforce_governing_equations_section(&ai_content, &chapters);
+            status = "Generated with Gemini; Governing Equations restored from manuscript scan".to_string();
+        }
     }
 
     let output_path = PathBuf::from(&effective_output_path);
@@ -9606,6 +9683,41 @@ mod tests {
         assert!(template.contains("The scalar field obeys the following Lagrangian density:"));
         assert!(template.contains("The expansion rate is governed by the Friedmann relation:"));
         assert!(template.contains("- Terms: where $H$ is the Hubble parameter"));
+    }
+
+    #[test]
+    fn enforce_governing_equations_restores_dropped_equations_and_term_definitions() {
+        let chapters = vec![ChapterEquations {
+            chapter_title: "Cosmological Expansion".to_string(),
+            source_path: "chapter2.md".to_string(),
+            entries: vec![ChapterEquationEntry {
+                label: "The expansion rate is governed by the Friedmann relation:".to_string(),
+                equation: "H^2 = \\frac{8\\pi G}{3}\\rho".to_string(),
+                term_definitions: Some("where $H$ is the Hubble parameter and $\\rho$ is the energy density.".to_string()),
+            }],
+        }];
+
+        let faithful = "# Master Axiom\n\n## Core Axiom\nText.\n\n## Governing Equations\n- **The expansion rate is governed by the Friedmann relation:**\n  $$ H^2 = \\frac{8\\pi G}{3}\\rho $$\n  - Terms: where $H$ is the Hubble parameter and $\\rho$ is the energy density.\n\n## Hypothesis\nH.\n";
+        assert!(governing_equations_preserved(faithful, &chapters));
+        assert_eq!(enforce_governing_equations_section(faithful, &chapters), faithful);
+
+        let dropped_terms = "# Master Axiom\n\n## Core Axiom\nText.\n\n## Governing Equations\n- **Friedmann relation**\n  $$ H^2 = \\frac{8\\pi G}{3}\\rho $$\n\n## Hypothesis\nH.\n";
+        assert!(!governing_equations_preserved(dropped_terms, &chapters));
+        let restored = enforce_governing_equations_section(dropped_terms, &chapters);
+        assert!(restored.contains("### Cosmological Expansion"));
+        assert!(restored.contains("- Terms: where $H$ is the Hubble parameter"));
+        assert!(!restored.contains("- **Friedmann relation**"));
+        assert!(restored.contains("## Core Axiom\nText."));
+        assert!(restored.contains("## Hypothesis\nH."));
+        assert_eq!(restored.matches("## Governing Equations").count(), 1);
+
+        let missing_section = "# Master Axiom\n\n## Core Axiom\nText.\n\n## Hypothesis\nH.\n";
+        let inserted = enforce_governing_equations_section(missing_section, &chapters);
+        let core = inserted.find("## Core Axiom").unwrap();
+        let governing = inserted.find("## Governing Equations").unwrap();
+        let hypothesis = inserted.find("## Hypothesis").unwrap();
+        assert!(core < governing && governing < hypothesis);
+        assert!(inserted.contains("$$ H^2 = \\frac{8\\pi G}{3}\\rho $$"));
     }
 
     #[test]
