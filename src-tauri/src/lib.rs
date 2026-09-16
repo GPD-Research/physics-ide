@@ -1071,10 +1071,24 @@ fn build_project_awareness_markdown(
     )
 }
 
+const AI_FILE_BLOCK_OPEN: &str = "<<<FILE";
+const AI_FILE_BLOCK_CLOSE: &str = "<<<END FILE>>>";
+
+fn ai_file_write_protocol_instructions() -> String {
+    format!(
+        "To create or overwrite a file inside the project root, emit exactly this block in your reply (the app writes it to disk and reports the result back to you):\n  {open} path=\"relative/path/from/project/root.py\">>>\n  <complete file contents>\n  {close}\n  Rules: one block per file; paths are relative to the project root and may not leave it; always give the complete file contents (no diffs or ellipses); do not wrap the block in a markdown code fence.",
+        open = AI_FILE_BLOCK_OPEN,
+        close = AI_FILE_BLOCK_CLOSE
+    )
+}
+
 fn describe_ai_file_access_mode(mode: &str) -> String {
     let normalized = mode.trim().to_ascii_lowercase();
     match normalized.as_str() {
-        "read_write" => "AI file access status: enabled for read/write access within the active workspace root only.".to_string(),
+        "read_write" => format!(
+            "AI file access status: enabled for read/write access within the active workspace root only. {}",
+            ai_file_write_protocol_instructions()
+        ),
         "read" | "read_only" => "AI file access status: enabled for read-only access within the active workspace root only.".to_string(),
         _ => "AI file access status: disabled. The AI may reason over project context but cannot read or edit workspace files unless access is enabled in Settings.".to_string(),
     }
@@ -1533,6 +1547,42 @@ fn is_path_within_root(path: &Path, root: &Path) -> bool {
     }
 }
 
+// Resolves `target` against `root` (relative paths are joined onto the root), canonicalizes the
+// deepest existing ancestor so symlinks cannot escape, and lexically collapses `.`/`..` in the
+// not-yet-existing remainder so new files are checked against their real destination.
+fn normalize_path_for_scope_check(target: &Path, root: &Path) -> PathBuf {
+    let absolute = if target.is_absolute() { target.to_path_buf() } else { root.join(target) };
+
+    let mut lexical = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                lexical.pop();
+            }
+            other => lexical.push(other.as_os_str()),
+        }
+    }
+
+    let mut existing = lexical.clone();
+    let mut missing_tail: Vec<std::ffi::OsString> = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                missing_tail.push(name.to_os_string());
+                existing = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+
+    let mut normalized = existing.canonicalize().unwrap_or(existing);
+    for name in missing_tail.iter().rev() {
+        normalized.push(name);
+    }
+    normalized
+}
+
 fn ensure_ai_file_access(config: &AppConfig, action: &str, target_path: &Path, workspace_root: &Path) -> Result<(), String> {
     let requested_mode = config.ai_file_access_mode.trim().to_ascii_lowercase();
     let allow_write = requested_mode == "read_write";
@@ -1548,13 +1598,8 @@ fn ensure_ai_file_access(config: &AppConfig, action: &str, target_path: &Path, w
         _ => {}
     }
 
-    let target_exists = target_path.exists();
-    let normalized_target = if target_exists {
-        target_path.canonicalize().unwrap_or_else(|_| target_path.to_path_buf())
-    } else {
-        target_path.to_path_buf()
-    };
     let normalized_root = workspace_root.canonicalize().unwrap_or_else(|_| workspace_root.to_path_buf());
+    let normalized_target = normalize_path_for_scope_check(target_path, &normalized_root);
 
     if !normalized_target.starts_with(&normalized_root) {
         return Err(format!("AI {} operation is blocked because the target is outside the active workspace.", action));
@@ -3380,7 +3425,7 @@ async fn send_llm_prompt(
     validate_retrieval_context_budgets(&history)?;
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
-    let canonical_messages = assemble_canonical_messages(&history).messages;
+    let canonical_messages = with_file_write_protocol(assemble_canonical_messages(&history).messages, &config);
 
     let provider_name = provider.to_ascii_lowercase();
     let openai_api_key = normalize_api_key(&config.openai_api_key);
@@ -4089,6 +4134,20 @@ fn canonical_tier(entry: &serde_json::Value, index: usize, last_index: usize) ->
         _ if index == last_index && matches!(source, "current_request" | "context_probe") => (3, "current_request"),
         _ => (2, "thread_history"),
     }
+}
+
+fn with_file_write_protocol(mut messages: Vec<serde_json::Value>, config: &AppConfig) -> Vec<serde_json::Value> {
+    if config.ai_file_access_mode.trim().to_ascii_lowercase() != "read_write" {
+        return messages;
+    }
+    let already_present = messages
+        .iter()
+        .any(|message| message.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.contains(AI_FILE_BLOCK_OPEN)));
+    if already_present {
+        return messages;
+    }
+    messages.insert(0, serde_json::json!({"role": "system", "content": describe_ai_file_access_mode("read_write")}));
+    messages
 }
 
 fn assemble_canonical_messages(history: &[serde_json::Value]) -> CanonicalAssembly {
@@ -9359,6 +9418,50 @@ fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle)
     Ok(format!("Scratchpad saved successfully to {}", path))
 }
 
+#[tauri::command]
+fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+    let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let project_root = config.project_root_dir.trim();
+    if project_root.is_empty() {
+        return Err("AI file write blocked: no project root is configured. Set the project root in Customize first.".to_string());
+    }
+    let workspace_path = PathBuf::from(project_root);
+    if !workspace_path.is_dir() {
+        return Err(format!("AI file write blocked: project root does not exist: {}", project_root));
+    }
+
+    let requested = path.trim();
+    if requested.is_empty() {
+        return Err("AI file write blocked: empty file path.".to_string());
+    }
+
+    let target_path = normalize_path_for_scope_check(Path::new(requested), &workspace_path);
+    ensure_ai_file_access(&config, "write", &target_path, &workspace_path)?;
+    if target_path.is_dir() {
+        return Err(format!("AI file write blocked: {} is a directory.", target_path.to_string_lossy()));
+    }
+
+    let existed = target_path.exists();
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+    }
+    fs::write(&target_path, content.as_bytes()).map_err(|e| format!("Failed to write {}: {e}", target_path.to_string_lossy()))?;
+
+    let relative_path = target_path
+        .strip_prefix(workspace_path.canonicalize().unwrap_or(workspace_path.clone()))
+        .unwrap_or(&target_path)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "relative_path": relative_path,
+        "bytes": content.len(),
+        "action": if existed { "overwritten" } else { "created" },
+    })
+    .to_string())
+}
+
 fn build_empirical_analysis_primer(request: &EmpiricalAnalysisRequest) -> String {
     let dataset = if request.dataset_path.trim().is_empty() {
         "unspecified dataset".to_string()
@@ -9509,6 +9612,53 @@ mod tests {
 
         assert!(blocked_by_mode.is_err());
         assert!(blocked_by_scope.is_err());
+    }
+
+    #[test]
+    fn scope_check_resolves_new_relative_paths_and_rejects_parent_escapes() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_ai_scope_check_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let workspace_root = temp_dir.join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let config = AppConfig { ai_file_access_mode: "read_write".to_string(), ..AppConfig::default() };
+
+        let new_nested = normalize_path_for_scope_check(Path::new("tools/analysis/new_script.py"), &workspace_root);
+        assert!(new_nested.starts_with(workspace_root.canonicalize().unwrap()));
+        assert!(ensure_ai_file_access(&config, "write", &new_nested, &workspace_root).is_ok());
+
+        let dotted = normalize_path_for_scope_check(Path::new("./tools/../notes/new.md"), &workspace_root);
+        assert_eq!(dotted, workspace_root.canonicalize().unwrap().join("notes").join("new.md"));
+
+        let escape = normalize_path_for_scope_check(Path::new("../outside.py"), &workspace_root);
+        assert!(ensure_ai_file_access(&config, "write", &escape, &workspace_root).is_err());
+
+        let escape_via_missing_dir = normalize_path_for_scope_check(Path::new("missing/../../outside.py"), &workspace_root);
+        assert!(ensure_ai_file_access(&config, "write", &escape_via_missing_dir, &workspace_root).is_err());
+    }
+
+    #[test]
+    fn file_write_protocol_is_injected_once_and_only_in_read_write_mode() {
+        let history = vec![serde_json::json!({"role": "user", "content": "make a script"})];
+        let rw = AppConfig { ai_file_access_mode: "read_write".to_string(), ..AppConfig::default() };
+        let injected = with_file_write_protocol(history.clone(), &rw);
+        assert_eq!(injected.len(), 2);
+        assert_eq!(injected[0]["role"], "system");
+        assert!(injected[0]["content"].as_str().unwrap().contains(AI_FILE_BLOCK_OPEN));
+
+        let again = with_file_write_protocol(injected.clone(), &rw);
+        assert_eq!(again.len(), 2);
+
+        let ro = AppConfig { ai_file_access_mode: "read_only".to_string(), ..AppConfig::default() };
+        assert_eq!(with_file_write_protocol(history, &ro).len(), 1);
+    }
+
+    #[test]
+    fn read_write_briefing_includes_file_block_protocol() {
+        let status = describe_ai_file_access_mode("read_write");
+        assert!(status.contains(AI_FILE_BLOCK_OPEN));
+        assert!(status.contains(AI_FILE_BLOCK_CLOSE));
+        assert!(!describe_ai_file_access_mode("read_only").contains(AI_FILE_BLOCK_OPEN));
+        assert!(!describe_ai_file_access_mode("disabled").contains(AI_FILE_BLOCK_OPEN));
     }
 
     #[test]
@@ -11059,6 +11209,7 @@ pub fn run() {
             get_version_tags,
             save_equation_to_md,
             save_scratchpad_content,
+            write_ai_project_file,
             read_attachment_file,
             compute_cosmology_metrics_command,
             generate_empirical_analysis_primer,
