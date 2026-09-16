@@ -14,26 +14,6 @@ use tauri::{AppHandle, Manager};
 use std::os::unix::fs::PermissionsExt;
 
 #[derive(Deserialize, Default)]
-struct GeminiApiResponse {
-    candidates: Vec<GeminiCandidate>,
-}
-
-#[derive(Deserialize, Default)]
-struct GeminiCandidate {
-    content: GeminiContent,
-}
-
-#[derive(Deserialize, Default)]
-struct GeminiContent {
-    parts: Vec<GeminiPart>,
-}
-
-#[derive(Deserialize, Default)]
-struct GeminiPart {
-    text: String,
-}
-
-#[derive(Deserialize, Default)]
 struct GeminiModelListResponse {
     #[serde(default)]
     models: Vec<GeminiModelInfo>,
@@ -1946,12 +1926,7 @@ fn generate_exit_session_draft(
 }
 
 fn has_required_master_axiom_sections(content: &str) -> (bool, Vec<String>) {
-    let required_sections = [
-        "## Core Axiom",
-        "## Hypothesis",
-        "## Predictions",
-        "## Observational Consequences",
-    ];
+    let required_sections = ["## Governing Equations"];
 
     let lower = content.to_ascii_lowercase();
     let mut missing = Vec::new();
@@ -6548,6 +6523,8 @@ fn query_retrieval_index_value(index_path: &Path, query: &str, limit: usize) -> 
 }
 
 const DEFAULT_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS: usize = 6_000;
+// The compiled master axiom is sent whole in the startup primer (~30K tokens at this cap).
+const MASTER_AXIOM_TRANSPORT_MAX_CHARS: usize = 120_000;
 const MIN_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS: usize = 500;
 const MAX_RETRIEVAL_EVIDENCE_BUDGET_CHARACTERS: usize = 24_000;
 
@@ -8097,58 +8074,11 @@ fn structural_prompt_decision(
     })
 }
 
-fn detect_theory_style(scan: &serde_json::Value) -> &'static str {
-    let combined = scan["headings"].as_array().map(|items| {
-        items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
-    }).unwrap_or_default()
-    + "\n"
-    + &scan["file_summaries"].as_array().map(|items| {
-        items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>().join(" \n ")
-    }).unwrap_or_default();
-
-    let lowercase = combined.to_lowercase();
-
-    let left_field_markers = [
-        "bimodal",
-        "manifold",
-        "emergent constraint",
-        "seam stress",
-        "boundary seam",
-        "topological",
-        "nonstandard",
-        "left-field",
-        "alternative",
-        "emergent",
-    ];
-
-    let mainstream_markers = [
-        "lambda",
-        "cosmological constant",
-        "einstein",
-        "general relativity",
-        "standard model",
-        "perturbation",
-        "metric",
-        "flrw",
-    ];
-
-    let has_left_field = left_field_markers.iter().any(|marker| lowercase.contains(marker));
-    let has_mainstream = mainstream_markers.iter().any(|marker| lowercase.contains(marker));
-
-    if has_left_field && !has_mainstream {
-        "left_field"
-    } else if has_left_field && has_mainstream {
-        "hybrid"
-    } else {
-        "mainstream"
-    }
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 struct ChapterEquationEntry {
     label: String,
     equation: String,
-    term_definitions: Option<String>,
+    term_definitions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -8158,53 +8088,120 @@ struct ChapterEquations {
     entries: Vec<ChapterEquationEntry>,
 }
 
-fn is_equation_line(line: &str) -> bool {
-    let lower = line.to_lowercase();
-    lower.contains("$$")
-        || lower.contains("\\begin{")
-        || lower.contains("\\frac")
-        || lower.contains("\\partial")
-        || lower.contains("\\mathcal")
-        || lower.contains("\\nabla")
-        || lower.contains("\\sum")
-        || lower.contains("\\int")
-        || lower.contains("\\sqrt")
+const LATEX_EQUATION_MARKERS: [&str; 16] = [
+    "\\frac", "\\partial", "\\mathcal", "\\mathbf", "\\nabla", "\\sum", "\\int", "\\sqrt",
+    "\\alpha", "\\mu", "\\nu", "\\sigma", "\\omega", "\\approx", "\\cdot", "\\times",
+];
+
+fn has_latex_marker(line: &str) -> bool {
+    LATEX_EQUATION_MARKERS.iter().any(|marker| line.contains(marker))
+        || (line.contains('=') && (line.contains("^") || line.contains("_{")))
 }
 
-fn contains_where_clause(line: &str) -> bool {
-    line.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .any(|word| word == "where")
+fn strip_markdown_emphasis(line: &str) -> String {
+    line.replace("**", "").replace("__", "").trim().to_string()
 }
 
-// Looks at the two sentences (lines) following an equation for a "where ..."
-// clause defining its terms/variables, stopping early at the next heading or equation.
-fn collect_term_definitions(lines: &[&str], mut index: usize) -> Option<String> {
-    let mut collected = Vec::new();
-    let mut sentences_checked = 0;
+fn starts_with_where(line: &str) -> bool {
+    let stripped = strip_markdown_emphasis(line)
+        .trim_start_matches(['*', '-', '_', ' '])
+        .to_lowercase();
+    stripped.starts_with("where") || stripped.starts_with("in which ")
+}
 
-    while index < lines.len() && sentences_checked < 2 {
-        let line = lines[index];
+fn is_list_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("* ")
+        || trimmed.starts_with("- ")
+        || trimmed.starts_with("+ ")
+        || trimmed
+            .split_once(['.', ')'])
+            .map_or(false, |(number, rest)| {
+                !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) && rest.starts_with(' ')
+            })
+}
+
+// A line is prose when, after removing inline `$...$` math and LaTeX macros,
+// it still contains several ordinary words; raw un-delimited LaTeX has almost none.
+fn is_prose_line(line: &str) -> bool {
+    let mut without_math = String::new();
+    let mut in_math = false;
+    for ch in line.chars() {
+        if ch == '$' {
+            in_math = !in_math;
+            without_math.push(' ');
+        } else if !in_math {
+            without_math.push(ch);
+        }
+    }
+    let words = without_math
+        .split_whitespace()
+        .filter(|token| !token.starts_with('\\'))
+        .map(|token| token.trim_matches(|c: char| !c.is_alphabetic()))
+        .filter(|token| token.chars().count() >= 3 && token.chars().all(|c| c.is_alphabetic()))
+        .count();
+    words >= 3
+}
+
+// Display math on a single line: `$$ ... $$` or `\[ ... \]`.
+fn strip_display_delimiters(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.len() >= 4 && trimmed.starts_with("$$") && trimmed.ends_with("$$") {
+        return Some(trimmed[2..trimmed.len() - 2].trim().to_string());
+    }
+    if trimmed.len() >= 4 && trimmed.starts_with("\\[") && trimmed.ends_with("\\]") {
+        return Some(trimmed[2..trimmed.len() - 2].trim().to_string());
+    }
+    if trimmed.len() >= 2
+        && trimmed.starts_with('$')
+        && trimmed.ends_with('$')
+        && !trimmed.starts_with("$$")
+        && trimmed.matches('$').count() == 2
+    {
+        return Some(trimmed[1..trimmed.len() - 1].trim().to_string());
+    }
+    None
+}
+
+fn normalize_equation_key(equation: &str) -> String {
+    equation.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+// Collects the "where ..." clause following an equation together with any
+// bullet list of term definitions attached to it.
+fn collect_term_definitions(lines: &[&str], mut index: usize) -> (Vec<String>, usize) {
+    while index < lines.len() && lines[index].is_empty() {
         index += 1;
+    }
+    if index >= lines.len() {
+        return (Vec::new(), index);
+    }
 
+    let first = lines[index];
+    if first.starts_with('#') || !starts_with_where(first) {
+        return (Vec::new(), index);
+    }
+
+    let mut collected = vec![strip_markdown_emphasis(first)];
+    index += 1;
+
+    let mut cursor = index;
+    while cursor < lines.len() {
+        let line = lines[cursor];
         if line.is_empty() {
+            cursor += 1;
             continue;
         }
-        if line.starts_with('#') || line == "$$" || is_equation_line(line) {
-            break;
-        }
-
-        sentences_checked += 1;
-        if contains_where_clause(line) {
+        if is_list_item(line) && !line.starts_with('#') {
             collected.push(line.to_string());
+            cursor += 1;
+            index = cursor;
+            continue;
         }
+        break;
     }
 
-    if collected.is_empty() {
-        None
-    } else {
-        Some(collected.join(" "))
-    }
+    (collected, index)
 }
 
 fn derive_chapter_title(path: &Path, content: &str) -> String {
@@ -8219,91 +8216,191 @@ fn derive_chapter_title(path: &Path, content: &str) -> String {
         .unwrap_or_else(|| "Untitled Chapter".to_string())
 }
 
-// Scans a master manuscript or chapter markdown tree and pulls, per chapter file,
-// the chapter title plus each equation together with the nearest preceding text
-// line to use as its descriptive label and any "where"-clause term definitions
-// found in the two sentences following it.
-fn extract_equations_by_chapter(theory_dir: &str) -> Vec<ChapterEquations> {
+fn is_compilation_document(path: &Path) -> bool {
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    stem.contains("master") && stem.contains("manuscript")
+}
+
+fn is_master_axiom_document(path: &Path, master_axiom_path: &str) -> bool {
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if stem == "master_axiom" {
+        return true;
+    }
+    let target = Path::new(master_axiom_path.trim());
+    if master_axiom_path.trim().is_empty() {
+        return false;
+    }
+    match (fs::canonicalize(path), fs::canonicalize(target)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => path == target,
+    }
+}
+
+fn extract_chapter_equations(
+    path: &Path,
+    theory_path: &Path,
+    content: &str,
+    seen: &mut std::collections::HashSet<String>,
+) -> Option<ChapterEquations> {
+    let relative_path = path
+        .strip_prefix(theory_path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+    let chapter_title = derive_chapter_title(path, content);
+
+    let lines: Vec<&str> = content.lines().map(|line| line.trim()).collect();
+    let mut entries: Vec<ChapterEquationEntry> = Vec::new();
+    let mut last_label: Option<String> = None;
+    let mut index = 0usize;
+    let mut in_code_fence = false;
+
+    let mut push_entry = |equation: String, label: &Option<String>, terms: Vec<String>, entries: &mut Vec<ChapterEquationEntry>| {
+        let equation = equation.split_whitespace().collect::<Vec<_>>().join(" ");
+        if equation.is_empty() || !seen.insert(normalize_equation_key(&equation)) {
+            return;
+        }
+        let label = label
+            .clone()
+            .unwrap_or_else(|| format!("Equation from {}", chapter_title));
+        entries.push(ChapterEquationEntry { label, equation, term_definitions: terms });
+    };
+
+    while index < lines.len() {
+        let line = lines[index];
+
+        if line.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            index += 1;
+            continue;
+        }
+        if in_code_fence || line.is_empty() || line.starts_with('|') {
+            index += 1;
+            continue;
+        }
+
+        if line.starts_with('#') {
+            last_label = None;
+            index += 1;
+            continue;
+        }
+
+        // Multi-line display block: `$$`, `\[`, or `\begin{...}` opening on its own line
+        // (or `$$...` opening without a closing delimiter on the same line).
+        let opens_block = line == "$$"
+            || line == "\\["
+            || line.starts_with("\\begin{")
+            || (line.starts_with("$$") && !line[2..].contains("$$"));
+        if opens_block {
+            let closer_is = |candidate: &str| {
+                candidate == "$$"
+                    || candidate.ends_with("$$")
+                    || candidate == "\\]"
+                    || candidate.ends_with("\\]")
+                    || candidate.starts_with("\\end{")
+            };
+            let mut block_lines = Vec::new();
+            let opener_body = line
+                .trim_start_matches("$$")
+                .trim_start_matches("\\[")
+                .trim();
+            if !opener_body.is_empty() && !line.starts_with("\\begin{") {
+                block_lines.push(opener_body.to_string());
+            } else if line.starts_with("\\begin{") {
+                block_lines.push(line.to_string());
+            }
+            let mut end_index = index + 1;
+            while end_index < lines.len() && !closer_is(lines[end_index]) {
+                if !lines[end_index].is_empty() {
+                    block_lines.push(lines[end_index].to_string());
+                }
+                end_index += 1;
+            }
+            if end_index < lines.len() {
+                let closer = lines[end_index];
+                if closer.starts_with("\\end{") {
+                    block_lines.push(closer.to_string());
+                } else {
+                    let body = closer.trim_end_matches("$$").trim_end_matches("\\]").trim();
+                    if !body.is_empty() {
+                        block_lines.push(body.to_string());
+                    }
+                }
+            }
+            let (terms, next) = collect_term_definitions(&lines, end_index + 1);
+            push_entry(block_lines.join(" "), &last_label, terms, &mut entries);
+            index = next.max(end_index + 1);
+            continue;
+        }
+
+        if let Some(equation) = strip_display_delimiters(line) {
+            let (terms, next) = collect_term_definitions(&lines, index + 1);
+            push_entry(equation, &last_label, terms, &mut entries);
+            index = next.max(index + 1);
+            continue;
+        }
+
+        // Raw un-delimited LaTeX line (no `$` fences) that is not a prose sentence.
+        if !starts_with_where(line)
+            && !is_list_item(line)
+            && !line.contains(['$', '`'])
+            && !line.starts_with('>')
+            && has_latex_marker(line)
+            && !is_prose_line(line)
+        {
+            let (terms, next) = collect_term_definitions(&lines, index + 1);
+            push_entry(line.trim_matches('$').to_string(), &last_label, terms, &mut entries);
+            index = next.max(index + 1);
+            continue;
+        }
+
+        if !starts_with_where(line) {
+            last_label = Some(strip_markdown_emphasis(line));
+        }
+        index += 1;
+    }
+
+    if entries.is_empty() {
+        None
+    } else {
+        Some(ChapterEquations {
+            chapter_title,
+            source_path: relative_path,
+            entries,
+        })
+    }
+}
+
+// Scans a chapter markdown tree and compiles, per chapter file, every display
+// equation (LaTeX kept verbatim) with the descriptive sentence preceding it and
+// the "where ..." term definitions following it. Chapter files are processed
+// before compilation documents (master manuscript) so that duplicated equations
+// are attributed to the chapter that owns them; the master axiom output itself
+// is never scanned.
+fn extract_equations_by_chapter(theory_dir: &str, master_axiom_path: &str) -> Vec<ChapterEquations> {
     let mut files = Vec::new();
     let theory_path = Path::new(theory_dir);
     if theory_path.exists() {
         let _ = recursive_markdown_scan(theory_path, &mut files);
     }
+    files.retain(|path| !is_master_axiom_document(path, master_axiom_path));
     files.sort();
+    files.sort_by_key(|path| is_compilation_document(path));
 
+    let mut seen = std::collections::HashSet::new();
     let mut chapters = Vec::new();
-
     for path in &files {
         let Ok(content) = fs::read_to_string(path) else { continue };
-        let relative_path = path
-            .strip_prefix(theory_path)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
-        let chapter_title = derive_chapter_title(path, &content);
-
-        let lines: Vec<&str> = content.lines().map(|line| line.trim()).collect();
-        let mut entries: Vec<ChapterEquationEntry> = Vec::new();
-        let mut last_label: Option<String> = None;
-        let mut index = 0usize;
-
-        while index < lines.len() {
-            let line = lines[index];
-
-            if line.is_empty() {
-                index += 1;
-                continue;
-            }
-
-            if line.starts_with('#') {
-                last_label = None;
-                index += 1;
-                continue;
-            }
-
-            if line == "$$" {
-                let mut block_lines = Vec::new();
-                let mut end_index = index + 1;
-                while end_index < lines.len() && lines[end_index] != "$$" {
-                    if !lines[end_index].is_empty() {
-                        block_lines.push(lines[end_index].to_string());
-                    }
-                    end_index += 1;
-                }
-                let equation = block_lines.join(" ").trim().to_string();
-                let label = last_label
-                    .clone()
-                    .unwrap_or_else(|| format!("Equation from {}", chapter_title));
-                let term_definitions = collect_term_definitions(&lines, end_index + 1);
-                entries.push(ChapterEquationEntry { label, equation, term_definitions });
-                index = end_index + 1;
-                continue;
-            }
-
-            if is_equation_line(line) {
-                let equation = line.trim_matches('$').trim().to_string();
-                let label = last_label
-                    .clone()
-                    .unwrap_or_else(|| format!("Equation from {}", chapter_title));
-                let term_definitions = collect_term_definitions(&lines, index + 1);
-                entries.push(ChapterEquationEntry { label, equation, term_definitions });
-                index += 1;
-                continue;
-            }
-
-            last_label = Some(line.to_string());
-            index += 1;
-        }
-
-        if !entries.is_empty() {
-            chapters.push(ChapterEquations {
-                chapter_title,
-                source_path: relative_path,
-                entries,
-            });
+        if let Some(chapter) = extract_chapter_equations(path, theory_path, &content, &mut seen) {
+            chapters.push(chapter);
         }
     }
-
     chapters
 }
 
@@ -8319,152 +8416,52 @@ fn render_governing_equations_section(chapters: &[ChapterEquations]) -> String {
             chapter.chapter_title, chapter.source_path
         ));
         for entry in &chapter.entries {
-            section.push_str(&format!("- **{}**\n  $$ {} $$\n", entry.label, entry.equation));
-            if let Some(term_definitions) = &entry.term_definitions {
-                section.push_str(&format!("  - Terms: {}\n", term_definitions));
+            section.push_str(&format!("- **{}**\n\n  $$ {} $$\n", entry.label, entry.equation));
+            match entry.term_definitions.as_slice() {
+                [] => {}
+                [single] => section.push_str(&format!("\n  - Terms: {}\n", single)),
+                [first, rest @ ..] => {
+                    section.push_str(&format!("\n  - Terms: {}\n", first));
+                    for line in rest {
+                        section.push_str(&format!("    {}\n", line));
+                    }
+                }
             }
+            section.push('\n');
         }
     }
     section
 }
 
-fn governing_equations_preserved(content: &str, chapters: &[ChapterEquations]) -> bool {
-    chapters.iter().all(|chapter| {
-        chapter.entries.iter().all(|entry| {
-            content.contains(entry.equation.as_str())
-                && entry
-                    .term_definitions
-                    .as_deref()
-                    .map_or(true, |terms| content.contains(terms))
-        })
-    })
-}
-
-// Replaces (or inserts) the `## Governing Equations` section of `content` with the
-// deterministic rendering so AI rewrites can never drop or alter extracted
-// equations and their term definitions.
-fn enforce_governing_equations_section(content: &str, chapters: &[ChapterEquations]) -> String {
-    if governing_equations_preserved(content, chapters) {
-        return content.to_string();
-    }
-
-    let rendered = render_governing_equations_section(chapters);
-    let lines: Vec<&str> = content.lines().collect();
-    let is_h2 = |line: &str| line.trim_start().starts_with("## ");
-    let start = lines
-        .iter()
-        .position(|line| is_h2(line) && line.to_lowercase().contains("governing equation"));
-
-    let mut output = String::new();
-    match start {
-        Some(start) => {
-            let end = lines[start + 1..]
-                .iter()
-                .position(|line| is_h2(line))
-                .map(|offset| start + 1 + offset)
-                .unwrap_or(lines.len());
-            for line in &lines[..start] {
-                output.push_str(line);
-                output.push('\n');
-            }
-            output.push_str(rendered.trim_end());
-            output.push_str("\n\n");
-            for line in &lines[end..] {
-                output.push_str(line);
-                output.push('\n');
-            }
-        }
-        None => {
-            let insert_at = lines
-                .iter()
-                .enumerate()
-                .skip_while(|(_, line)| !(is_h2(line) && line.to_lowercase().contains("core axiom")))
-                .skip(1)
-                .find(|(_, line)| is_h2(line))
-                .map(|(index, _)| index)
-                .unwrap_or(lines.len());
-            for line in &lines[..insert_at] {
-                output.push_str(line);
-                output.push('\n');
-            }
-            output.push('\n');
-            output.push_str(rendered.trim_end());
-            output.push_str("\n\n");
-            for line in &lines[insert_at..] {
-                output.push_str(line);
-                output.push('\n');
-            }
-        }
-    }
-    output
-}
-
 fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: &serde_json::Value) -> String {
-    let theory_label = scan["headings"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|value| value.as_str())
-        .unwrap_or("this cosmological model");
-
-    let lagrangian = scan["lagrangian_candidates"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|value| value.as_str())
-        .unwrap_or("Add the Lagrangian or action functional for the theory here.");
-
-    let hypothesis = scan["hypothesis_candidates"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|value| value.as_str())
-        .unwrap_or("State the core explanatory hypothesis here.");
-
-    let style = detect_theory_style(scan);
-
-    let (structure_section, _assumptions_section, _predictions_section) = if style == "left_field" {
-        (
-            "## Structural Assumptions\n- Describe the foundational geometry, interaction domain, or manifold topology assumed by the model.\n- Note any boundary-condition-like constraints or seam-like operators introduced by the theory.",
-            "## Model Constraints\n- Identify any explicit constraints, conservation-like rules, or emergent operator requirements.\n- Distinguish what is postulated from what is derived or inferred.",
-            "## Derived Signatures\n1. Specify a signature, scaling relation, or topological pattern that should emerge from the model.\n2. Describe the boundary or transition regime where the theory predicts a distinct behavior.\n3. Note what would count as a meaningful divergence from competing interpretations."
-        )
-    } else {
-        (
-            "## Assumptions\n- Assumption 1: State the foundational conditions under which the model is expected to hold.\n- Assumption 2: State any symmetry, conservation law, or boundary condition that is required.",
-            "## Hypothesis\n{}",
-            "## Predictions\n1. Specify a measurable signature or scaling relation that follows from the hypothesis.\n2. State a limiting case or boundary condition that should produce a distinct outcome.\n3. Describe the expected observational or analytic difference from competing models."
-        )
-    };
-
-    let chapters = extract_equations_by_chapter(theory_dir);
+    let chapters = extract_equations_by_chapter(theory_dir, master_axiom_path);
+    let equation_count: usize = chapters.iter().map(|chapter| chapter.entries.len()).sum();
+    let defined_count: usize = chapters
+        .iter()
+        .flat_map(|chapter| chapter.entries.iter())
+        .filter(|entry| !entry.term_definitions.is_empty())
+        .count();
     let governing_equations_section = render_governing_equations_section(&chapters);
 
-    let mut template = format!(
-        "# Master Axiom\n\n## Core Axiom\nThe {} framework is treated here as a structured model candidate rather than as an assumed truth. Its purpose is to define a coherent internal rule set that can be tested against empirical data and compared against alternative formulations.\n\n{}\n\n{}\n\n",
-        theory_label,
+    format!(
+        "# Master Axiom\n\n\
+_Compiled mathematical framework of the theory: every governing equation found in the chapter markdown under `{}`, kept as LaTeX exactly as written, with the descriptive sentence that introduces it in the source and the definitions of its terms. Narrative exposition lives in the manuscript chapters; this file is the equation-level primer. Regenerate it after editing chapters._\n\n\
+{}\n\
+## Source Context\n\
+- Theory directory: {}\n\
+- Master axiom file: {}\n\
+- Files scanned: {}\n\
+- Chapters with equations: {}\n\
+- Equations compiled: {} ({} with term definitions)\n",
+        theory_dir,
         governing_equations_section,
-        structure_section
-    );
-
-    if style == "left_field" {
-        template.push_str(&format!(
-            "## Model Constraints\n- Identify any explicit constraints, conservation-like rules, or emergent operator requirements.\n- Distinguish what is postulated from what is derived or inferred.\n\n## Hypothesis\n{}\n\n## Derived Signatures\n1. Specify a signature, scaling relation, or topological pattern that should emerge from the model.\n2. Describe the boundary or transition regime where the theory predicts a distinct behavior.\n3. Note what would count as a meaningful divergence from competing interpretations.\n\n## Observational Consequences\n- Identify the observational patterns, data products, or simulation outputs implied by the theory.\n- Explain how those consequences would be distinguished from alternative interpretations.\n\n## Testable Criteria\n- What evidence would confirm the hypothesis?\n- What evidence would falsify or constrain it?\n\n## Lagrangian / Action\n{}\n\n## Source Context\n- Theory directory: {}\n- Master axiom file: {}\n- Files scanned: {}\n",
-            hypothesis,
-            lagrangian,
-            theory_dir,
-            master_axiom_path,
-            scan["files_scanned"].as_u64().unwrap_or(0)
-        ));
-    } else {
-        template.push_str(&format!(
-            "## Hypothesis\n{}\n\n## Predictions\n1. Specify a measurable signature or scaling relation that follows from the hypothesis.\n2. State a limiting case or boundary condition that should produce a distinct outcome.\n3. Describe the expected observational or analytic difference from competing models.\n\n## Observational Consequences\n- Identify the observational patterns, data products, or simulation outputs implied by the theory.\n- Explain how those consequences would be distinguished from alternative interpretations.\n\n## Testable Criteria\n- What evidence would confirm the hypothesis?\n- What evidence would falsify or constrain it?\n\n## Lagrangian / Action\n{}\n\n## Source Context\n- Theory directory: {}\n- Master axiom file: {}\n- Files scanned: {}\n",
-            hypothesis,
-            lagrangian,
-            theory_dir,
-            master_axiom_path,
-            scan["files_scanned"].as_u64().unwrap_or(0)
-        ));
-    }
-
-    template
+        theory_dir,
+        master_axiom_path,
+        scan["files_scanned"].as_u64().unwrap_or(0),
+        chapters.len(),
+        equation_count,
+        defined_count
+    )
 }
 
 // NOTE: The long-term architecture for theory ingestion is intentionally
@@ -8474,74 +8471,6 @@ fn build_master_axiom_template(theory_dir: &str, master_axiom_path: &str, scan: 
 // manuscript document instead of a markdown directory, the IDE should be able to
 // split that document into chapter/section markdown files and then continue the
 // same ingestion workflow from those generated files.
-
-fn try_generate_with_gemini(api_key: &str, theory_dir: &str, scan: &serde_json::Value, fallback_template: &str) -> Option<String> {
-    if api_key.trim().is_empty() {
-        return None;
-    }
-
-    let heading_summary = scan["headings"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|value| value.as_str())
-        .unwrap_or("No headings found");
-
-    let lagrangian_summary = scan["lagrangian_candidates"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|value| value.as_str())
-        .unwrap_or("No Lagrangian detected");
-
-    let hypothesis_summary = scan["hypothesis_candidates"]
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(|value| value.as_str())
-        .unwrap_or("No hypothesis detected");
-
-    let prompt = format!(
-        "You are helping produce a scientific master axiom file for a cosmological theory repository.\n\nTheory directory: {}\n\nDetected heading: {}\nDetected Lagrangian/action: {}\nDetected hypothesis/axiom candidate: {}\n\nWrite a polished markdown master axiom document with sections: Core Axiom, Governing Equations, Assumptions, Hypothesis, Predictions, Observational Consequences, Testable Criteria, and Lagrangian / Action. Keep it concise, scientific, and suitable for a researcher to refine.\n\nThe fallback template's '## Governing Equations' section was extracted directly from the manuscript's chapters, with each equation paired with the descriptive label found near it in the source text and, where present, a 'Terms:' line holding the where-clause definitions of its variables. Reproduce that section's chapter headings, source paths, equations, labels, and 'Terms:' definition lines verbatim without inventing, omitting, or reordering entries. Only the narrative sections around it may be rewritten for clarity.\n\nIf the evidence is sparse, preserve the human-in-the-loop placeholders rather than inventing unsupported details.\n\nFallback template:\n{}",
-        theory_dir, heading_summary, lagrangian_summary, hypothesis_summary, fallback_template
-    );
-
-    let client = reqwest::blocking::Client::new();
-    let body = serde_json::json!({
-        "contents": [{
-            "parts": [{ "text": prompt }]
-        }]
-    });
-
-    for candidate_model in ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"] {
-        let response = client
-            .post(format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={}",
-                api_key
-            ))
-            .json(&body)
-            .send()
-            .ok()?;
-
-        if !response.status().is_success() {
-            if response.status() == reqwest::StatusCode::NOT_FOUND {
-                continue;
-            }
-            return None;
-        }
-
-        let text_body = response.text().ok()?;
-        let parsed: GeminiApiResponse = serde_json::from_str(&text_body).ok()?;
-        if let Some(result) = parsed.candidates.into_iter().find_map(|candidate| {
-            candidate.content.parts.into_iter().find_map(|part| {
-                let text = part.text.trim();
-                if text.is_empty() { None } else { Some(text.to_string()) }
-            })
-        })
-        {
-            return Some(result);
-        }
-    }
-
-    None
-}
 
 #[tauri::command]
 fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
@@ -8636,7 +8565,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
     };
     let (recap_payload, recap_diag) = read_source_payload("session_recap", &recap_path, 12_000);
     let (tree_payload, tree_diag) = read_source_payload("workspace_tree", &tree_path, 20_000);
-    let (axiom_payload, axiom_diag) = read_source_payload("master_axiom", &master_axiom_path, 16_000);
+    let (axiom_payload, axiom_diag) = read_source_payload("master_axiom", &master_axiom_path, MASTER_AXIOM_TRANSPORT_MAX_CHARS);
 
     if let Some(diag) = primer_diag {
         diagnostics.push(diag);
@@ -9015,20 +8944,8 @@ fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: Stri
     };
 
     let scan = scan_markdown_theory(&effective_theory_dir);
-    let fallback_template = build_master_axiom_template(&effective_theory_dir, &effective_output_path, &scan);
-    let mut final_content = fallback_template.clone();
-    let mut status = "Generated locally from scanned markdown".to_string();
-
-    if let Some(ai_content) = try_generate_with_gemini(&config.gemini_api_key, &effective_theory_dir, &scan, &fallback_template) {
-        let chapters = extract_equations_by_chapter(&effective_theory_dir);
-        if governing_equations_preserved(&ai_content, &chapters) {
-            final_content = ai_content;
-            status = "Generated with Gemini".to_string();
-        } else {
-            final_content = enforce_governing_equations_section(&ai_content, &chapters);
-            status = "Generated with Gemini; Governing Equations restored from manuscript scan".to_string();
-        }
-    }
+    let final_content = build_master_axiom_template(&effective_theory_dir, &effective_output_path, &scan);
+    let status = "Compiled from manuscript equation scan".to_string();
 
     let output_path = PathBuf::from(&effective_output_path);
     if let Some(parent) = output_path.parent() {
@@ -9899,9 +9816,11 @@ mod tests {
         assert!(scan["lagrangian_candidates"].as_array().unwrap().len() >= 1);
 
         let template = build_master_axiom_template(temp_dir.to_str().unwrap(), "", &scan);
-        assert!(template.contains("## Hypothesis"));
-        assert!(template.contains("## Predictions"));
-        assert!(template.contains("## Observational Consequences"));
+        assert!(template.contains("## Governing Equations"));
+        assert!(template.contains("## Source Context"));
+        assert!(template.contains("- Equations compiled: 1 (0 with term definitions)"));
+        assert!(!template.contains("## Hypothesis"));
+        assert!(!template.contains("Assumption 1"));
     }
 
     #[test]
@@ -9921,7 +9840,7 @@ mod tests {
         )
         .unwrap();
 
-        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap());
+        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap(), "");
         assert_eq!(chapters.len(), 2);
         assert_eq!(chapters[0].chapter_title, "Field Foundations");
         assert_eq!(chapters[0].entries.len(), 2);
@@ -9930,12 +9849,12 @@ mod tests {
             "The scalar field obeys the following Lagrangian density:"
         );
         assert!(chapters[0].entries[0].equation.contains("\\mathcal{L}"));
-        assert!(chapters[0].entries[0].term_definitions.is_none());
+        assert!(chapters[0].entries[0].term_definitions.is_empty());
         assert_eq!(chapters[1].chapter_title, "Cosmological Expansion");
         assert_eq!(chapters[1].entries[0].label, "The expansion rate is governed by the Friedmann relation:");
         assert_eq!(
-            chapters[1].entries[0].term_definitions.as_deref(),
-            Some("where $H$ is the Hubble parameter, $G$ is Newton's constant, and $\\rho$ is the energy density.")
+            chapters[1].entries[0].term_definitions,
+            vec!["where $H$ is the Hubble parameter, $G$ is Newton's constant, and $\\rho$ is the energy density.".to_string()]
         );
 
         let scan = scan_markdown_theory(temp_dir.to_str().unwrap());
@@ -9949,57 +9868,81 @@ mod tests {
     }
 
     #[test]
-    fn enforce_governing_equations_restores_dropped_equations_and_term_definitions() {
-        let chapters = vec![ChapterEquations {
-            chapter_title: "Cosmological Expansion".to_string(),
-            source_path: "chapter2.md".to_string(),
-            entries: vec![ChapterEquationEntry {
-                label: "The expansion rate is governed by the Friedmann relation:".to_string(),
-                equation: "H^2 = \\frac{8\\pi G}{3}\\rho".to_string(),
-                term_definitions: Some("where $H$ is the Hubble parameter and $\\rho$ is the energy density.".to_string()),
-            }],
-        }];
-
-        let faithful = "# Master Axiom\n\n## Core Axiom\nText.\n\n## Governing Equations\n- **The expansion rate is governed by the Friedmann relation:**\n  $$ H^2 = \\frac{8\\pi G}{3}\\rho $$\n  - Terms: where $H$ is the Hubble parameter and $\\rho$ is the energy density.\n\n## Hypothesis\nH.\n";
-        assert!(governing_equations_preserved(faithful, &chapters));
-        assert_eq!(enforce_governing_equations_section(faithful, &chapters), faithful);
-
-        let dropped_terms = "# Master Axiom\n\n## Core Axiom\nText.\n\n## Governing Equations\n- **Friedmann relation**\n  $$ H^2 = \\frac{8\\pi G}{3}\\rho $$\n\n## Hypothesis\nH.\n";
-        assert!(!governing_equations_preserved(dropped_terms, &chapters));
-        let restored = enforce_governing_equations_section(dropped_terms, &chapters);
-        assert!(restored.contains("### Cosmological Expansion"));
-        assert!(restored.contains("- Terms: where $H$ is the Hubble parameter"));
-        assert!(!restored.contains("- **Friedmann relation**"));
-        assert!(restored.contains("## Core Axiom\nText."));
-        assert!(restored.contains("## Hypothesis\nH."));
-        assert_eq!(restored.matches("## Governing Equations").count(), 1);
-
-        let missing_section = "# Master Axiom\n\n## Core Axiom\nText.\n\n## Hypothesis\nH.\n";
-        let inserted = enforce_governing_equations_section(missing_section, &chapters);
-        let core = inserted.find("## Core Axiom").unwrap();
-        let governing = inserted.find("## Governing Equations").unwrap();
-        let hypothesis = inserted.find("## Hypothesis").unwrap();
-        assert!(core < governing && governing < hypothesis);
-        assert!(inserted.contains("$$ H^2 = \\frac{8\\pi G}{3}\\rho $$"));
-    }
-
-    #[test]
-    fn term_definitions_only_look_at_two_sentences_after_an_equation_and_stop_at_next_equation() {
-        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_term_definitions_test");
+    fn master_axiom_captures_where_bullet_definitions_and_skips_prose_with_inline_latex() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_where_bullets_test");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
         fs::write(
             temp_dir.join("chapter1.md"),
-            "# Field Foundations\n\nThe field equation is:\n\n$$\\partial_\\mu \\partial^\\mu \\phi = 0$$\n\nFirst filler sentence.\n\nSecond filler sentence.\n\nwhere $\\phi$ is the scalar field, defined too late to count.\n\n$$\\mathcal{L} = V(\\phi)$$\n",
+            "# Foundations\n\nThe medium seeks equilibrium ($\\Xi = \\tau + V_{gap}$), so the impedance $\\mathbf{Z}_{ij}$ evolves with $\\frac{d\\Xi}{dt}$ over cosmic time.\n\nThe mass of any state follows the fundamental wave equation:\n\n$$M(n) = n \\cdot \\omega_0 \\cdot \\Lambda_{\\text{geom}}$$\n\n**Where:**\n* $n \\in \\mathbb{Z}^+$ is the principal harmonic mode.\n* $\\omega_0$ is the base frequency.\n* $\\Lambda_{\\text{geom}}$ is the topological correction factor.\n\nRaw projection of the bulk metric onto the brane:\n\ng_{\\mu\\nu}(x) = G_AB(X) (\\partial X^A / \\partial x^\\mu) (\\partial X^B / \\partial x^\\nu)\n\nwhere x^\\mu denote local coordinates.\n\nEvaluating the brane covariant derivative \\nabla_\\mu v_\\nu gives the lensing term.\n\n```python\nx = \\frac_not_math\n```\n",
         )
         .unwrap();
 
-        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap());
-        assert_eq!(chapters[0].entries.len(), 2);
-        // The "where" clause is the third sentence after the first equation, beyond the two-sentence window.
-        assert!(chapters[0].entries[0].term_definitions.is_none());
-        assert!(chapters[0].entries[1].term_definitions.is_none());
+        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap(), "");
+        assert_eq!(chapters.len(), 1);
+        let entries = &chapters[0].entries;
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert_eq!(entries[0].label, "The mass of any state follows the fundamental wave equation:");
+        assert_eq!(entries[0].equation, "M(n) = n \\cdot \\omega_0 \\cdot \\Lambda_{\\text{geom}}");
+        assert_eq!(entries[0].term_definitions.len(), 4);
+        assert_eq!(entries[0].term_definitions[0], "Where:");
+        assert!(entries[0].term_definitions[1].starts_with("* $n \\in"));
+        assert_eq!(entries[1].label, "Raw projection of the bulk metric onto the brane:");
+        assert!(entries[1].equation.starts_with("g_{\\mu\\nu}(x) = G_AB(X)"));
+        assert_eq!(entries[1].term_definitions, vec!["where x^\\mu denote local coordinates.".to_string()]);
+
+        let rendered = render_governing_equations_section(&chapters);
+        assert!(rendered.contains("  - Terms: Where:\n    * $n \\in \\mathbb{Z}^+$ is the principal harmonic mode.\n    * $\\omega_0$"));
+    }
+
+    #[test]
+    fn master_axiom_dedupes_master_manuscript_and_skips_its_own_output() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_dedupe_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let chapter = "# Chapter 1\n\nThe field equation is:\n\n$$\\partial_\\mu \\partial^\\mu \\phi = 0$$\n";
+        fs::write(temp_dir.join("Chapter_1.md"), chapter).unwrap();
+        fs::write(
+            temp_dir.join("master_manuscript.md"),
+            format!("{chapter}\n# Chapter 2\n\nOnly the compilation has this one:\n\n$$\\mathcal{{L}} = V(\\phi)$$\n"),
+        )
+        .unwrap();
+        let axiom_path = temp_dir.join("master_axiom.md");
+        fs::write(&axiom_path, "# Master Axiom\n\n$$E = mc^2$$\n").unwrap();
+        fs::write(temp_dir.join("old_axiom.md"), "# Old\n\n$$F = ma$$\n").unwrap();
+
+        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap(), temp_dir.join("old_axiom.md").to_str().unwrap());
+        let sources: Vec<&str> = chapters.iter().map(|c| c.source_path.as_str()).collect();
+        assert_eq!(sources, vec!["Chapter_1.md", "master_manuscript.md"], "{chapters:?}");
+        assert_eq!(chapters[0].entries.len(), 1);
+        assert_eq!(chapters[1].entries.len(), 1);
+        assert!(chapters[1].entries[0].equation.contains("\\mathcal{L}"));
+        let all: Vec<&str> = chapters.iter().flat_map(|c| c.entries.iter()).map(|e| e.equation.as_str()).collect();
+        assert!(!all.contains(&"E = mc^2"));
+        assert!(!all.contains(&"F = ma"));
+    }
+
+    #[test]
+    fn master_axiom_handles_multiline_display_blocks_and_where_after_blank_lines() {
+        let temp_dir = std::env::temp_dir().join("physics_ide_master_axiom_multiline_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(
+            temp_dir.join("chapter1.md"),
+            "# Field Foundations\n\nThe action reads:\n\n$$\nS = \\int d^4x\n\\sqrt{-g} R\n$$\n\nwhere $R$ is the Ricci scalar.\n\nSecond form:\n\n\\[ G_{\\mu\\nu} = 8\\pi G T_{\\mu\\nu} \\]\n\nFirst filler sentence.\n\nwhere this clause is too far away to count.\n",
+        )
+        .unwrap();
+
+        let chapters = extract_equations_by_chapter(temp_dir.to_str().unwrap(), "");
+        let entries = &chapters[0].entries;
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert_eq!(entries[0].equation, "S = \\int d^4x \\sqrt{-g} R");
+        assert_eq!(entries[0].term_definitions, vec!["where $R$ is the Ricci scalar.".to_string()]);
+        assert_eq!(entries[1].equation, "G_{\\mu\\nu} = 8\\pi G T_{\\mu\\nu}");
+        assert!(entries[1].term_definitions.is_empty());
     }
 
     #[test]
@@ -10876,26 +10819,6 @@ mod tests {
     }
 
     #[test]
-    fn classifies_left_field_theory_as_non_mainstream() {
-        let temp_dir = std::env::temp_dir().join("physics_ide_left_field_style_test");
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(&temp_dir).unwrap();
-
-        fs::write(
-            temp_dir.join("bmi.md"),
-            "# BMI Theory\n\nThis model uses a bimodal manifold interaction framework with emergent constraint operators and seam stress.\n",
-        )
-        .unwrap();
-
-        let scan = scan_markdown_theory(temp_dir.to_str().unwrap());
-        let style = detect_theory_style(&scan);
-        let template = build_master_axiom_template(temp_dir.to_str().unwrap(), "", &scan);
-
-        assert_eq!(style, "left_field");
-        assert!(template.contains("## Structural Assumptions"));
-    }
-
-    #[test]
     fn imports_plaintext_manuscript_into_markdown_sections() {
         let temp_dir = std::env::temp_dir().join(format!("physics_ide_import_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
@@ -11124,7 +11047,7 @@ mod tests {
 
         fs::write(
             temp_dir.join("master_axiom.md"),
-            "## Core Axiom\n\ntext\n\n## Hypothesis\n\ntext\n\n## Predictions\n\ntext\n\n## Observational Consequences\n\ntext\n",
+            "# Master Axiom\n\n## Governing Equations\n\n$$E = mc^2$$\n\n## Source Context\n- Files scanned: 1\n",
         )
         .unwrap();
 
