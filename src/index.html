@@ -3271,11 +3271,8 @@
         ? briefing.hypothesis_candidates[0]
         : 'No explicit hypothesis cue detected yet.';
       const masterAxiomContent = (briefing?.master_axiom?.content || '').trim();
-      const axiomExcerpt = masterAxiomContent
-        ? (masterAxiomContent.length > 1500
-          ? `${masterAxiomContent.slice(0, 1500)}\n\n[...truncated master axiom excerpt...]`
-          : masterAxiomContent)
-        : 'Master axiom snapshot unavailable.';
+      const masterAxiomBlock = masterAxiomContent || 'Master axiom snapshot unavailable; generate it from Customize > Theory Setup.';
+      const masterAxiomGuidance = 'Master axiom (compiled mathematical framework: every governing equation extracted from the chapter markdown, with labels, term definitions, and source paths). Treat it as the primary mathematical reference for the model; the chapters\' narrative explanations are not preloaded and arrive per message through the retrieval packet.';
       const awarenessContent = (briefing?.project_awareness?.content || '').trim();
       const awarenessExcerpt = awarenessContent
         ? (awarenessContent.length > 2200
@@ -3291,10 +3288,11 @@
       const stableContextBlock = useStructuralCore
         ? ['Structural context core:', structuralPrompt.content]
         : contextMode === 'legacy'
-          ? ['Master axiom excerpt:', axiomExcerpt, 'Project awareness excerpt:', awarenessExcerpt]
+          ? [`${masterAxiomGuidance}\n${masterAxiomBlock}`, 'Project awareness excerpt:', awarenessExcerpt]
           : [
-              'Project corpus transport: omitted from the automatic primer.',
-              'Each chat message arrives with a bounded local hybrid retrieval packet of source-grounded theory chunks (project-relative paths); answer from that evidence and cite its paths. Request explicit legacy context only for recovery or comparison.'
+              `${masterAxiomGuidance}\n${masterAxiomBlock}`,
+              'Manuscript corpus transport: omitted from the automatic primer.',
+              'Each chat message arrives with a bounded local hybrid retrieval packet of source-grounded theory chunks (project-relative paths); use it for the literary explanations and chapter-specific details behind the equations above, answer from that evidence, and cite its paths. Request explicit legacy context only for recovery or comparison.'
             ];
       const retrievalContract = [
         'Retrieval contract:',
@@ -3372,7 +3370,7 @@
     function buildPrimerContextParts(briefing, promptText) {
       const candidates = [
         ['structural_context', String(briefing?.structural_context?.prompt_core?.content || '').trim()],
-        ['master_axiom', (briefing?.master_axiom?.content || '').trim().slice(0, 1500)],
+        ['master_axiom', (briefing?.master_axiom?.content || '').trim()],
         ['project_awareness', (briefing?.project_awareness?.content || '').trim().slice(0, 2200)],
         ['session_summary', String(briefing?.summary || '').trim()],
         ['current_hypothesis', String(briefing?.hypothesis_candidates?.[0] || '').trim()],
