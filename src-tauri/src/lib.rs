@@ -6097,6 +6097,7 @@ fn fts_query(query: &str) -> String {
 struct RetrievalFusionCandidate {
     score: f64,
     intent_adjustment: f64,
+    title_boost: f64,
     lexical_rank: Option<usize>,
     lexical_score: Option<f64>,
     vector_rank: Option<usize>,
@@ -6147,6 +6148,77 @@ fn retrieval_intent_adjustment(query: &str, path: &str, heading: &str, content: 
     }
     adjustment -= retrieval_source_copy_penalty(path) as f64 * 0.002;
     adjustment
+}
+
+const RETRIEVAL_TITLE_STOP_WORDS: &[&str] = &[
+    "the", "and", "for", "with", "that", "this", "from", "into", "about", "what", "which", "where", "does",
+    "there", "tell", "find", "look", "please", "appendix", "chapter", "section", "part", "notes", "draft",
+    "manuscript", "master", "readme", "index", "file", "document",
+];
+
+fn retrieval_title_stem(word: &str) -> String {
+    let mut stem = word.to_string();
+    for suffix in ["ies", "es", "s"] {
+        if stem.len() > suffix.len() + 2 && stem.ends_with(suffix) {
+            stem.truncate(stem.len() - suffix.len());
+            if suffix == "ies" {
+                stem.push('y');
+            }
+            break;
+        }
+    }
+    stem
+}
+
+// Splits `Appendix_B_On_the_Age_and_Size_of_the_Cosmos` / `HigherDimensionalProjection` into
+// lowercase stems so file titles can be matched against a natural-language query.
+fn retrieval_title_tokens(text: &str) -> std::collections::BTreeSet<String> {
+    let mut spaced = String::with_capacity(text.len() + 8);
+    let mut previous_lower = false;
+    for ch in text.chars() {
+        if ch.is_uppercase() && previous_lower {
+            spaced.push(' ');
+        }
+        previous_lower = ch.is_lowercase();
+        spaced.push(ch);
+    }
+    spaced
+        .split(|ch: char| !ch.is_alphanumeric())
+        .map(|token| token.to_lowercase())
+        .filter(|token| token.len() >= 3 && !token.chars().all(|ch| ch.is_ascii_digit()))
+        .filter(|token| !RETRIEVAL_TITLE_STOP_WORDS.contains(&token.as_str()))
+        .map(|token| retrieval_title_stem(&token))
+        .collect()
+}
+
+fn retrieval_document_title(path: &str) -> &str {
+    let file_name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    file_name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file_name)
+}
+
+// Rewards chunks whose file name or heading names the topic the user asked about, so a
+// direct reference such as "the appendix on the age and size of the cosmos" lands on
+// Appendix_B_On_the_Age_and_Size_of_the_Cosmos.md rather than a loosely related file whose
+// body merely mentions the same words.
+fn retrieval_title_match_boost(query: &str, path: &str, heading: &str) -> f64 {
+    let query_tokens = retrieval_title_tokens(query);
+    if query_tokens.is_empty() {
+        return 0.0;
+    }
+    let file_tokens = retrieval_title_tokens(retrieval_document_title(path));
+    let heading_tokens = retrieval_title_tokens(heading);
+    let file_matches = query_tokens.iter().filter(|token| file_tokens.contains(*token)).count();
+    let heading_matches = query_tokens.iter().filter(|token| heading_tokens.contains(*token)).count();
+    let matches = file_matches.max(heading_matches);
+    if matches == 0 {
+        return 0.0;
+    }
+    let coverage = matches as f64 / file_tokens.len().max(heading_tokens.len()).max(1) as f64;
+    let mut boost = 0.006 * matches as f64 + 0.012 * coverage;
+    if matches >= 2 {
+        boost += 0.012;
+    }
+    boost
 }
 
 fn retrieval_content_fingerprint(heading: &str, content: &str) -> String {
@@ -6262,6 +6334,40 @@ fn query_retrieval_index_hybrid_value(
         }
     }
 
+    let mut title_candidate_count = 0usize;
+    if mode != RetrievalQueryMode::Vector {
+        let titled_paths = {
+            let mut statement = connection
+                .prepare("SELECT path FROM retrieval_files ORDER BY path ASC")
+                .map_err(|e| format!("Failed to prepare title retrieval query: {e}"))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| format!("Failed to execute title retrieval query: {e}"))?
+                .filter_map(Result::ok)
+                .filter(|path| retrieval_title_match_boost(query, path, "") > 0.0)
+                .collect::<Vec<_>>();
+            rows
+        };
+        for path in titled_paths {
+            let mut statement = connection
+                .prepare(
+                    "SELECT chunk_id FROM retrieval_chunks WHERE path = ?1 ORDER BY chunk_index ASC LIMIT 2",
+                )
+                .map_err(|e| format!("Failed to prepare title chunk query: {e}"))?;
+            let chunk_ids = statement
+                .query_map([&path], |row| row.get::<_, String>(0))
+                .map_err(|e| format!("Failed to load title chunks: {e}"))?
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            for chunk_id in chunk_ids {
+                if !candidates.contains_key(&chunk_id) {
+                    title_candidate_count += 1;
+                }
+                candidates.entry(chunk_id).or_default();
+            }
+        }
+    }
+
     let mut ranked = candidates.into_iter().collect::<Vec<_>>();
     for (chunk_id, candidate) in &mut ranked {
         if let Ok((path, heading, content)) = connection.query_row(
@@ -6270,7 +6376,12 @@ fn query_retrieval_index_hybrid_value(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
         ) {
             candidate.intent_adjustment = retrieval_intent_adjustment(query, &path, &heading, &content);
-            candidate.score += candidate.intent_adjustment;
+            candidate.title_boost = if mode == RetrievalQueryMode::Vector {
+                0.0
+            } else {
+                retrieval_title_match_boost(query, &path, &heading)
+            };
+            candidate.score += candidate.intent_adjustment + candidate.title_boost;
         }
     }
     ranked.sort_by(|(left_id, left), (right_id, right)| {
@@ -6400,6 +6511,7 @@ fn query_retrieval_index_hybrid_value(
             "rank": fusion.score,
             "fusion_score": fusion.score,
             "intent_adjustment": fusion.intent_adjustment,
+            "title_boost": fusion.title_boost,
             "lexical_rank": fusion.lexical_rank,
             "lexical_score": fusion.lexical_score,
             "vector_rank": fusion.vector_rank,
@@ -6422,6 +6534,7 @@ fn query_retrieval_index_hybrid_value(
         "rrf_k": if mode == RetrievalQueryMode::Hybrid && vector_used { Some(RRF_K) } else { None },
         "lexical_candidates": lexical_candidate_count,
         "vector_candidates": vector_candidate_count,
+        "title_candidates": title_candidate_count,
         "modality_coverage_reserved": mode == RetrievalQueryMode::Hybrid && result_limit >= 2 && lexical_candidate_count > 0 && vector_candidate_count > 0,
         "vector_status": if vector_used { "used" } else if query_embedding.is_some() { "index_empty" } else { "unavailable" },
         "index": index_diagnostics,
@@ -10136,6 +10249,53 @@ mod tests {
     }
 
     #[test]
+    fn title_match_boost_tokenizes_file_names_and_ignores_generic_words() {
+        let tokens = retrieval_title_tokens("Appendix_B_On_the_Age_and_Size_of_the_Cosmos");
+        assert_eq!(
+            tokens.into_iter().collect::<Vec<_>>(),
+            vec!["age".to_string(), "cosmo".to_string(), "size".to_string()]
+        );
+        let camel = retrieval_title_tokens("Appendix_H_HigherDimensional_Projection_Mechanics");
+        assert!(camel.contains("higher") && camel.contains("dimensional") && camel.contains("projection"));
+
+        let query = "there is an appendix about the age and size of the cosmos";
+        let direct = retrieval_title_match_boost(query, "chapters/Appendix_B_On_the_Age_and_Size_of_the_Cosmos.md", "");
+        let unrelated = retrieval_title_match_boost(query, "chapters/Appendix_H_HigherDimensional_Projection_Mechanics.md", "");
+        assert!(direct > 0.03, "direct title match should outrank a top RRF rank: {direct}");
+        assert_eq!(unrelated, 0.0);
+        assert_eq!(retrieval_title_match_boost("appendix chapter", "chapters/Appendix_B.md", ""), 0.0);
+    }
+
+    #[test]
+    fn retrieval_prefers_document_whose_title_names_the_requested_topic() {
+        let temp_dir = std::env::temp_dir().join(format!("physics_ide_retrieval_title_test_{}", std::process::id()));
+        let index_path = temp_dir.join(".test-retrieval.sqlite3");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("chapters")).unwrap();
+        fs::write(
+            temp_dir.join("chapters/Appendix_B_On_the_Age_and_Size_of_the_Cosmos.md"),
+            "# Appendix B\nThis appendix derives the cosmic horizon from the projection scale.\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("chapters/Appendix_H_HigherDimensional_Projection_Mechanics.md"),
+            "# Appendix H\nThe age of the cosmos and the size of the cosmos follow from projection mechanics.\nThe age and size scale with the cosmos radius; the cosmos age is finite.\n",
+        )
+        .unwrap();
+
+        refresh_retrieval_index_value(&temp_dir, &index_path).unwrap();
+        let query = query_retrieval_index_value(&index_path, "the appendix about the age and size of the cosmos", 4).unwrap();
+        let results = query["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(
+            results[0]["relative_path"],
+            "chapters/Appendix_B_On_the_Age_and_Size_of_the_Cosmos.md"
+        );
+        assert!(results[0]["title_boost"].as_f64().unwrap() > 0.0);
+        assert!(query["title_candidates"].as_u64().is_some());
+    }
+
+    #[test]
     fn retrieval_chunks_bound_large_unicode_sections() {
         let content = format!("# Large Section\n{}", "λ".repeat(9_001));
         let chunks = chunk_markdown("large.md", &content);
@@ -10611,7 +10771,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(result["status"], "fail", "{result}");
+        assert_eq!(result["status"], "pass", "{result}");
         assert_eq!(result["family_count"].as_u64().unwrap(), 4);
         assert_eq!(result["case_count"].as_u64().unwrap(), 8);
         assert_eq!(result["hits_at_3"]["lexical"].as_u64().unwrap(), 7);
@@ -10619,7 +10779,11 @@ mod tests {
         assert_eq!(result["hits_at_3"]["hybrid"].as_u64().unwrap(), 8, "{result}");
         assert_eq!(result["graph"]["complete"], true);
         assert_eq!(result["strict_superiority_status"], "pass");
-        assert_eq!(result["acceptance"]["passed"], false);
+        assert!(
+            result["mrr_at_3"]["hybrid"].as_f64().unwrap() >= result["mrr_at_3"]["lexical"].as_f64().unwrap(),
+            "{result}"
+        );
+        assert_eq!(result["acceptance"]["passed"], true);
     }
 
     #[test]
