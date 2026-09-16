@@ -3680,6 +3680,7 @@
 
         chatHistories[pane][index].push(responsePayload);
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
+        await applyAssistantFileBlocks(pane, index, reply);
         return reply;
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
@@ -3687,6 +3688,50 @@
         throw err;
       } finally {
         setPaneBusy(pane, false);
+      }
+    }
+
+    const AI_FILE_BLOCK_PATTERN = /<<<FILE\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END FILE>>>/g;
+
+    function parseAssistantFileBlocks(text) {
+      const blocks = [];
+      const source = String(text || '');
+      let match;
+      AI_FILE_BLOCK_PATTERN.lastIndex = 0;
+      while ((match = AI_FILE_BLOCK_PATTERN.exec(source)) !== null) {
+        blocks.push({ path: match[1].trim(), content: match[2] });
+      }
+      return blocks;
+    }
+
+    async function applyAssistantFileBlocks(pane, index, reply) {
+      const blocks = parseAssistantFileBlocks(reply);
+      if (blocks.length === 0) return;
+
+      const results = [];
+      for (const block of blocks) {
+        try {
+          const outcome = JSON.parse(await invoke('write_ai_project_file', {
+            path: block.path,
+            content: block.content
+          }));
+          const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)`;
+          appendTerminalLog(`AI file write [${pane}]: ${line}`);
+          results.push(`- OK: ${line}`);
+        } catch (writeError) {
+          appendTerminalLog(`AI file write failed [${pane}] for ${block.path}: ${writeError}`);
+          results.push(`- FAILED: ${block.path} — ${writeError}`);
+        }
+      }
+
+      const summary = `File write results:\n${results.join('\n')}`;
+      injectSystemPrimerMessage(pane, index, 'File System', summary, {
+        source: 'file_write_result',
+        trigger: 'assistant_file_block',
+        volatility: 'dynamic'
+      });
+      if (typeof refreshFileTree === 'function') {
+        try { await refreshFileTree(); } catch (_) { /* tree refresh is best-effort */ }
       }
     }
 
