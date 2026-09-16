@@ -3294,7 +3294,7 @@
           ? ['Master axiom excerpt:', axiomExcerpt, 'Project awareness excerpt:', awarenessExcerpt]
           : [
               'Project corpus transport: omitted from the automatic primer.',
-              'Use bounded local hybrid retrieval for source-grounded theory details; request explicit legacy context only for recovery or comparison.'
+              'Each chat message arrives with a bounded local hybrid retrieval packet of source-grounded theory chunks (project-relative paths); answer from that evidence and cite its paths. Request explicit legacy context only for recovery or comparison.'
             ];
       const retrievalContract = [
         'Retrieval contract:',
@@ -3544,11 +3544,29 @@
       inputEl.value = "";
       pendingAttachments[pane] = [];
       renderPendingAttachment(pane);
+      const retrievalEvidenceLines = await buildChatRetrievalEvidenceLines(text);
       await dispatchPromptToPane(pane, text, "Gregory", attachments, {
         source: 'current_request',
-        trigger: 'chat_submit'
+        trigger: 'chat_submit',
+        retrievalEvidenceLines,
+        retrievalBudgetCharacters: latestRetrievalDiagnostics?.budget_characters
       });
     }
+
+    async function buildChatRetrievalEvidenceLines(text) {
+      const queryText = String(text || '').trim();
+      if (!queryText || !String(currentWorkspacePath || '').trim()) return [];
+      const evidence = await getProbeEvidence(queryText, false);
+      if (!latestRetrievalProviderText && evidence.length === 0) return [];
+      const included = latestRetrievalDiagnostics?.included_sources;
+      const sourceSummary = Array.isArray(included) && included.length > 0
+        ? included.join(', ')
+        : evidence.map((row) => row.relative_path).filter(Boolean).join(', ');
+      appendTerminalLog(`Retrieval evidence attached to chat prompt: ${sourceSummary || 'none'}.`);
+      return buildProbeEvidenceBlock(evidence);
+    }
+
+    const CHAT_RETRIEVAL_EVIDENCE_HEADER = 'Project source evidence retrieved for this message (project-relative paths; cite these when answering about the theory):';
 
     function buildPromptText(text, attachments = []) {
       const parts = [];
@@ -3572,7 +3590,14 @@
         return '';
       }
 
-      const fullPrompt = buildPromptText(text, attachments);
+      const retrievalEvidenceLines = Array.isArray(provenance.retrievalEvidenceLines)
+        ? provenance.retrievalEvidenceLines.map((line) => String(line ?? '')).filter((line) => line.trim())
+        : [];
+      const retrievalEvidenceText = retrievalEvidenceLines.join('\n');
+      const promptText = retrievalEvidenceText
+        ? `${text}\n\n${CHAT_RETRIEVAL_EVIDENCE_HEADER}\n${retrievalEvidenceText}`
+        : text;
+      const fullPrompt = buildPromptText(promptText, attachments);
       if (!fullPrompt) {
         return '';
       }
@@ -3611,6 +3636,10 @@
           source: provenance.source || 'current_request',
           content: text
         });
+        if (retrievalEvidenceText) {
+          messagePayload.context_parts.push({ source: 'retrieval_instruction', content: CHAT_RETRIEVAL_EVIDENCE_HEADER });
+          messagePayload.context_parts.push({ source: 'retrieval', content: retrievalEvidenceText });
+        }
       }
       attachments.forEach((attachment) => {
         const safePath = String(attachment?.path || 'attachment');
