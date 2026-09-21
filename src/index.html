@@ -1789,7 +1789,47 @@
         <select id="manuscript-mode" onchange="toggleManuscriptMode(this.value)">
           <option value="single">Render a single file</option>
           <option value="combine">Combine files into a master manuscript</option>
+          <option value="mathfix">Math Fixer: scan and repair math notation</option>
         </select>
+      </div>
+
+      <div id="math-fixer-panel" style="display: none;">
+        <div class="form-group">
+          <label for="math-fixer-scope">Scan Scope</label>
+          <select id="math-fixer-scope" onchange="toggleMathFixerScope(this.value)">
+            <option value="project">All markdown files in the project root</option>
+            <option value="directory">A directory (recursive)</option>
+            <option value="file">A single markdown file</option>
+          </select>
+        </div>
+        <div id="math-fixer-path-group" class="form-group" style="display: none;">
+          <label for="math-fixer-path">Path</label>
+          <div style="display: flex; gap: 5px;">
+            <input type="text" id="math-fixer-path" placeholder="Choose the file or directory to scan">
+            <button type="button" onclick="browseForMathFixerPath()" title="Select the file or directory to scan">Browse</button>
+          </div>
+        </div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="math-fixer-backup" checked>
+            <span>Save a .bak copy of each changed file</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="math-fixer-dry-run">
+            <span>Dry run (report only, write nothing)</span>
+          </label>
+          <button type="button" onclick="runMathFixerScan()" title="Scan the selected scope for math notation problems">Scan</button>
+        </div>
+        <div id="math-fixer-summary" style="font-size:0.8rem; color:var(--accent-dim); margin-bottom:6px;">Fenced code blocks and inline code are skipped. Safe fixes are pre-selected; review findings need a choice before they are applied.</div>
+        <div id="math-fixer-bulk" style="display:none; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+          <button type="button" onclick="setMathFixerSelection('safe')" title="Select only fixes marked safe">Select safe fixes</button>
+          <button type="button" onclick="setMathFixerSelection('all')" title="Select every finding that has a proposed replacement">Select all</button>
+          <button type="button" onclick="setMathFixerSelection('none')" title="Deselect every finding">Select none</button>
+          <input type="text" id="math-fixer-filter" placeholder="Filter by rule or text" oninput="renderMathFixerFindings()" style="flex:1; min-width:160px;">
+        </div>
+        <div id="math-fixer-findings" style="border:1px solid var(--border-color); border-radius:4px; padding:8px; min-height:120px; max-height:460px; overflow:auto; background: rgba(0,0,0,0.04); font-size:0.82rem;">
+          <div style="color:var(--text-muted)">Run a scan to list findings.</div>
+        </div>
       </div>
 
       <div id="single-file-controls" class="form-group" style="display: none;">
@@ -1838,7 +1878,7 @@
         </div>
       </div>
 
-      <div class="form-group">
+      <div id="manuscript-format-group" class="form-group">
         <label for="manuscript-format">Output Format</label>
         <select id="manuscript-format">
           <option value="md">Markdown</option>
@@ -1858,7 +1898,8 @@
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
         <button onclick="openMarkdownDocsFromManuscriptTools()" title="Switch to markdown document viewer">Markdown Viewer</button>
         <button onclick="closeManuscriptToolsModal()" title="Close manuscript tools modal">Close</button>
-        <button style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()" title="Render output using selected mode and format">Render</button>
+        <button id="manuscript-render-button" style="background-color: var(--accent); color: var(--bg-darker);" onclick="renderManuscript()" title="Render output using selected mode and format">Render</button>
+        <button id="math-fixer-apply-button" style="display:none; background-color: var(--accent); color: var(--bg-darker);" onclick="applyMathFixerFixes()" title="Apply the selected fixes to the source files">Apply Selected Fixes</button>
       </div>
     </div>
   </div>
@@ -5569,7 +5610,24 @@ async function restoreVersion() {
       const trainPanel = document.getElementById('train-ai-panel');
       const singleFileControls = document.getElementById('single-file-controls');
       const singleFileConfiguration = document.getElementById('single-file-configuration');
+      const mathFixerPanel = document.getElementById('math-fixer-panel');
+      const formatGroup = document.getElementById('manuscript-format-group');
+      const renderButton = document.getElementById('manuscript-render-button');
+      const applyButton = document.getElementById('math-fixer-apply-button');
       const isCombine = mode === 'combine';
+      const isMathFix = mode === 'mathfix';
+      if (mathFixerPanel) mathFixerPanel.style.display = isMathFix ? 'block' : 'none';
+      if (formatGroup) formatGroup.style.display = isMathFix ? 'none' : 'block';
+      if (renderButton) renderButton.style.display = isMathFix ? 'none' : 'inline-block';
+      if (applyButton) applyButton.style.display = isMathFix ? 'inline-block' : 'none';
+      if (isMathFix) {
+        if (combinedPanel) combinedPanel.style.display = 'none';
+        if (trainPanel) trainPanel.style.display = 'none';
+        if (singleFileControls) singleFileControls.style.display = 'none';
+        if (singleFileConfiguration) singleFileConfiguration.style.display = 'none';
+        toggleMathFixerScope(document.getElementById('math-fixer-scope')?.value || 'project');
+        return;
+      }
       if (combinedPanel) combinedPanel.style.display = isCombine ? 'block' : 'none';
       if (trainPanel) trainPanel.style.display = isCombine ? 'block' : 'none';
       if (singleFileControls) singleFileControls.style.display = isCombine ? 'none' : 'block';
@@ -5580,6 +5638,216 @@ async function restoreVersion() {
       }
       if (isCombine) {
         refreshManuscriptFileList();
+      }
+    }
+
+    // ---- Math Fixer -------------------------------------------------------
+    let mathFixerReport = null;
+    // finding id -> chosen replacement string (or null when deselected)
+    let mathFixerChoices = new Map();
+
+    const MATH_FIXER_RULE_LABELS = {
+      unicode_math: 'Unicode in math',
+      unicode_prose: 'Math symbol in prose',
+      greek_name: 'Spelled-out Greek',
+      shorthand: 'Python/shorthand notation',
+      bare_identifier: 'Bare identifier',
+      word_equation: 'Typed equation',
+      malformed: 'Malformed math',
+      unsupported_symbol: 'Unsupported symbol',
+    };
+
+    function escapeMathFixerHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function toggleMathFixerScope(scope) {
+      const group = document.getElementById('math-fixer-path-group');
+      const input = document.getElementById('math-fixer-path');
+      if (group) group.style.display = scope === 'project' ? 'none' : 'block';
+      if (input) {
+        input.placeholder = scope === 'file'
+          ? 'Choose the markdown file to scan'
+          : 'Choose the directory to scan recursively';
+      }
+    }
+
+    async function browseForMathFixerPath() {
+      const scope = document.getElementById('math-fixer-scope')?.value || 'project';
+      if (scope === 'file') {
+        await browseForFile('math-fixer-path', ['md', 'markdown']);
+      } else {
+        await browseForDirectory('math-fixer-path');
+      }
+    }
+
+    function mathFixerFindingIsSafe(finding) {
+      return finding.severity === 'auto' && Array.isArray(finding.options) && finding.options.length === 1;
+    }
+
+    async function runMathFixerScan() {
+      const scope = document.getElementById('math-fixer-scope')?.value || 'project';
+      const path = document.getElementById('math-fixer-path')?.value?.trim() || '';
+      const summary = document.getElementById('math-fixer-summary');
+      const container = document.getElementById('math-fixer-findings');
+      if (scope !== 'project' && !path) {
+        if (summary) summary.textContent = 'Choose a file or directory to scan first.';
+        return;
+      }
+      if (summary) summary.textContent = 'Scanning…';
+      if (container) container.innerHTML = '<div style="color:var(--text-muted)">Scanning…</div>';
+      try {
+        const report = await invoke('scan_math_fixer', { request: { scope, path: path || null } });
+        mathFixerReport = typeof report === 'string' ? JSON.parse(report) : report;
+        mathFixerChoices = new Map();
+        for (const finding of mathFixerReport.findings || []) {
+          mathFixerChoices.set(finding.id, mathFixerFindingIsSafe(finding) ? finding.options[0] : null);
+        }
+        const bulk = document.getElementById('math-fixer-bulk');
+        if (bulk) bulk.style.display = 'flex';
+        renderMathFixerFindings();
+        appendTerminalLog(`Math Fixer scanned ${mathFixerReport.files_scanned} file(s) under ${mathFixerReport.root}: ${(mathFixerReport.findings || []).length} finding(s).`);
+      } catch (err) {
+        mathFixerReport = null;
+        if (summary) summary.textContent = `Scan failed: ${err}`;
+        if (container) container.innerHTML = `<div style="color:var(--accent)">${escapeMathFixerHtml(err)}</div>`;
+        appendTerminalLog(`Math Fixer Error: ${err}`);
+      }
+    }
+
+    function updateMathFixerSummary() {
+      const summary = document.getElementById('math-fixer-summary');
+      if (!summary || !mathFixerReport) return;
+      const findings = mathFixerReport.findings || [];
+      const selected = findings.filter((f) => mathFixerChoices.get(f.id)).length;
+      const manual = findings.filter((f) => !f.options || f.options.length === 0).length;
+      const ruleText = (mathFixerReport.rule_counts || [])
+        .map(([rule, count]) => `${MATH_FIXER_RULE_LABELS[rule] || rule}: ${count}`)
+        .join(' · ');
+      summary.textContent = `${mathFixerReport.files_scanned} file(s) scanned, ${findings.length} finding(s) in ${(mathFixerReport.files || []).length} file(s); ${selected} selected, ${manual} need manual edits. ${ruleText}`;
+    }
+
+    function setMathFixerSelection(kind) {
+      if (!mathFixerReport) return;
+      for (const finding of mathFixerReport.findings || []) {
+        const hasOptions = Array.isArray(finding.options) && finding.options.length > 0;
+        if (kind === 'none' || !hasOptions) {
+          mathFixerChoices.set(finding.id, null);
+        } else if (kind === 'all') {
+          mathFixerChoices.set(finding.id, mathFixerChoices.get(finding.id) || finding.options[0]);
+        } else {
+          mathFixerChoices.set(finding.id, mathFixerFindingIsSafe(finding) ? finding.options[0] : null);
+        }
+      }
+      renderMathFixerFindings();
+    }
+
+    function setMathFixerChoice(id, value) {
+      mathFixerChoices.set(Number(id), value === '' ? null : value);
+      updateMathFixerSummary();
+    }
+
+    function toggleMathFixerFinding(id, checked) {
+      const finding = (mathFixerReport?.findings || []).find((f) => f.id === Number(id));
+      if (!finding) return;
+      if (!checked) {
+        mathFixerChoices.set(finding.id, null);
+      } else {
+        const select = document.getElementById(`math-fixer-choice-${finding.id}`);
+        const chosen = select && select.value ? select.value : (finding.options?.[0] || null);
+        mathFixerChoices.set(finding.id, chosen);
+        if (select && !select.value && chosen) select.value = chosen;
+      }
+      updateMathFixerSummary();
+    }
+
+    function renderMathFixerFindings() {
+      const container = document.getElementById('math-fixer-findings');
+      if (!container) return;
+      if (!mathFixerReport) {
+        container.innerHTML = '<div style="color:var(--text-muted)">Run a scan to list findings.</div>';
+        return;
+      }
+      const filter = (document.getElementById('math-fixer-filter')?.value || '').trim().toLowerCase();
+      const findings = (mathFixerReport.findings || []).filter((f) => {
+        if (!filter) return true;
+        const hay = `${f.rule} ${MATH_FIXER_RULE_LABELS[f.rule] || ''} ${f.relative_path} ${f.original} ${f.message}`.toLowerCase();
+        return hay.includes(filter);
+      });
+      if (findings.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted)">No findings match.</div>';
+        updateMathFixerSummary();
+        return;
+      }
+      const byFile = new Map();
+      for (const f of findings) {
+        if (!byFile.has(f.relative_path)) byFile.set(f.relative_path, []);
+        byFile.get(f.relative_path).push(f);
+      }
+      const parts = [];
+      for (const [file, list] of byFile) {
+        parts.push(`<div style="font-weight:600; margin:8px 0 4px; color:var(--accent);">${escapeMathFixerHtml(file)} <span style="color:var(--text-muted); font-weight:400;">(${list.length})</span></div>`);
+        for (const f of list) {
+          const choice = mathFixerChoices.get(f.id);
+          const hasOptions = Array.isArray(f.options) && f.options.length > 0;
+          const severityColor = f.severity === 'auto' ? 'var(--accent)' : (f.severity === 'manual' ? 'var(--text-muted)' : 'var(--accent-dim)');
+          const label = MATH_FIXER_RULE_LABELS[f.rule] || f.rule;
+          let control;
+          if (!hasOptions) {
+            control = '<span style="color:var(--text-muted);">manual edit</span>';
+          } else if (f.options.length === 1) {
+            control = `<code>${escapeMathFixerHtml(f.options[0])}</code>`;
+          } else {
+            const opts = ['<option value="">— choose replacement —</option>']
+              .concat(f.options.map((o) => `<option value="${escapeMathFixerHtml(o)}"${choice === o ? ' selected' : ''}>${escapeMathFixerHtml(o)}</option>`))
+              .join('');
+            control = `<select id="math-fixer-choice-${f.id}" onchange="setMathFixerChoice(${f.id}, this.value)" style="max-width:320px;">${opts}</select>`;
+          }
+          parts.push(`<div style="display:flex; gap:8px; align-items:flex-start; padding:4px 6px; border-bottom:1px solid var(--border-color);">
+            <input type="checkbox" ${choice ? 'checked' : ''} ${hasOptions ? '' : 'disabled'} onchange="toggleMathFixerFinding(${f.id}, this.checked)" title="Apply this fix" style="margin-top:3px;">
+            <div style="flex:1; min-width:0;">
+              <div><span style="color:${severityColor};">[${escapeMathFixerHtml(label)} · ${escapeMathFixerHtml(f.severity)}]</span> line ${f.line}:${f.column} — ${escapeMathFixerHtml(f.message)}</div>
+              <div style="margin-top:2px;"><code>${escapeMathFixerHtml(f.original)}</code> → ${control}</div>
+              <div style="color:var(--text-muted); white-space:pre-wrap; margin-top:2px;">${escapeMathFixerHtml(f.context)}</div>
+            </div>
+          </div>`);
+        }
+      }
+      container.innerHTML = parts.join('');
+      updateMathFixerSummary();
+    }
+
+    async function applyMathFixerFixes() {
+      if (!mathFixerReport) {
+        appendTerminalLog('Math Fixer: run a scan before applying fixes.');
+        return;
+      }
+      const backup = document.getElementById('math-fixer-backup')?.checked !== false;
+      const dryRun = document.getElementById('math-fixer-dry-run')?.checked === true;
+      const selections = (mathFixerReport.findings || [])
+        .filter((f) => mathFixerChoices.get(f.id))
+        .map((f) => ({ file: f.file, offset: f.offset, original: f.original, replacement: mathFixerChoices.get(f.id) }));
+      if (selections.length === 0) {
+        appendTerminalLog('Math Fixer: no fixes are selected.');
+        return;
+      }
+      if (dryRun) {
+        const files = new Set(selections.map((s) => s.file));
+        appendTerminalLog(`Math Fixer dry run: ${selections.length} fix(es) would be applied across ${files.size} file(s). Nothing was written.`);
+        return;
+      }
+      try {
+        const result = await invoke('apply_math_fixes', { selections, backup });
+        const report = typeof result === 'string' ? JSON.parse(result) : result;
+        appendTerminalLog(`Math Fixer applied ${report.fixes_applied} fix(es) across ${report.files_changed} file(s)${backup ? `; ${report.backups.length} backup(s) written` : ''}.`);
+        for (const skipped of report.skipped || []) appendTerminalLog(`Math Fixer skipped: ${skipped}`);
+        await runMathFixerScan();
+      } catch (err) {
+        appendTerminalLog(`Math Fixer Error: ${err}`);
       }
     }
 

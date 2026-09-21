@@ -13,6 +13,8 @@ use tauri::{AppHandle, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+mod math_fixer;
+
 #[derive(Deserialize, Default)]
 struct GeminiModelListResponse {
     #[serde(default)]
@@ -7297,29 +7299,18 @@ fn render_manuscript_content(
         fs::write(&temp_markdown_path, &content)
             .map_err(|e| format!("Failed to stage markdown for conversion: {e}"))?;
 
-        let conversion = std::process::Command::new("pandoc")
-            .arg(&temp_markdown_path)
-            .arg("-o")
-            .arg(&rendered_path)
-            .output();
+        let conversion = run_pandoc_conversion(&temp_markdown_path, &rendered_path, output_ext);
 
         let _ = fs::remove_file(&temp_markdown_path);
 
         match conversion {
-            Ok(output) => {
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    let reason = if stderr.is_empty() {
-                        "Pandoc conversion failed with no error output.".to_string()
-                    } else {
-                        stderr
-                    };
-                    return Err(format!(
-                        "Failed to convert markdown to {}. {}",
-                        output_ext, reason
-                    ));
-                }
+            Ok(Err(reason)) => {
+                return Err(format!(
+                    "Failed to convert markdown to {}. {}",
+                    output_ext, reason
+                ));
             }
+            Ok(Ok(())) => {}
             Err(err) => {
                 return Err(format!(
                     "Failed to run pandoc for {} export: {}. Install pandoc to enable this format.",
@@ -9492,6 +9483,137 @@ fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -
     .to_string())
 }
 
+/// PDF engines in preference order: Unicode-capable engines first so manuscripts with
+/// Greek letters, arrows, or typographic dashes still render; pdflatex as the last resort.
+const PDF_ENGINE_PREFERENCE: &[&str] = &["xelatex", "lualatex", "pdflatex"];
+
+fn pdf_engine_available(engine: &str) -> bool {
+    std::process::Command::new(engine)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Outer `Err` = pandoc could not be launched; inner `Err` = conversion failed.
+fn run_pandoc_conversion(source: &Path, target: &Path, output_ext: &str) -> Result<Result<(), String>, std::io::Error> {
+    let engines: Vec<&str> = if output_ext == "pdf" {
+        let available: Vec<&str> = PDF_ENGINE_PREFERENCE.iter().copied().filter(|e| pdf_engine_available(e)).collect();
+        if available.is_empty() { vec![""] } else { available }
+    } else {
+        vec![""]
+    };
+
+    let mut failures: Vec<String> = Vec::new();
+    for engine in engines {
+        let mut command = std::process::Command::new("pandoc");
+        command.arg(source).arg("-o").arg(target);
+        if !engine.is_empty() {
+            command.arg(format!("--pdf-engine={engine}"));
+        }
+        let output = command.output()?;
+        if output.status.success() {
+            if !engine.is_empty() {
+                println!("Manuscript PDF rendered with --pdf-engine={engine}");
+            }
+            return Ok(Ok(()));
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let label = if engine.is_empty() { "pandoc".to_string() } else { engine.to_string() };
+        failures.push(if stderr.is_empty() {
+            format!("{label}: conversion failed with no error output.")
+        } else {
+            format!("{label}: {stderr}")
+        });
+    }
+    Ok(Err(failures.join("\n")))
+}
+
+#[derive(Debug, Deserialize)]
+struct MathFixerScanRequest {
+    /// "file" | "directory" | "project"
+    scope: String,
+    path: Option<String>,
+}
+
+fn math_fixer_root(app: &AppHandle, request: &MathFixerScanRequest) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let scope = request.scope.trim().to_ascii_lowercase();
+    let explicit = request.path.as_deref().map(str::trim).unwrap_or("");
+    match scope.as_str() {
+        "file" => {
+            if explicit.is_empty() {
+                return Err("Select a markdown file to scan.".to_string());
+            }
+            let file = PathBuf::from(explicit);
+            if !file.is_file() {
+                return Err(format!("Markdown file does not exist: {explicit}"));
+            }
+            let root = file.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+            Ok((root, vec![file]))
+        }
+        "directory" => {
+            if explicit.is_empty() {
+                return Err("Select a directory to scan.".to_string());
+            }
+            let root = PathBuf::from(explicit);
+            if !root.is_dir() {
+                return Err(format!("Directory does not exist: {explicit}"));
+            }
+            let paths = math_fixer::collect_markdown_paths(&root);
+            Ok((root, paths))
+        }
+        _ => {
+            let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
+            let root_str = if !config.project_root_dir.trim().is_empty() {
+                config.project_root_dir.trim().to_string()
+            } else if !config.theory_md_dir.trim().is_empty() {
+                config.theory_md_dir.trim().to_string()
+            } else {
+                return Err("No project root is configured. Set the project root in Customize first.".to_string());
+            };
+            let root = PathBuf::from(&root_str);
+            if !root.is_dir() {
+                return Err(format!("Project root does not exist: {root_str}"));
+            }
+            let paths = math_fixer::collect_markdown_paths(&root);
+            Ok((root, paths))
+        }
+    }
+}
+
+#[tauri::command]
+fn scan_math_fixer(request: MathFixerScanRequest, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let (root, paths) = math_fixer_root(&app, &request)?;
+    if paths.is_empty() {
+        return Err(format!("No markdown files found under {}", root.display()));
+    }
+    let report = math_fixer::scan_paths(&root, &paths);
+    println!(
+        "Math Fixer scanned {} file(s) under {} and found {} issue(s)",
+        report.files_scanned,
+        root.display(),
+        report.findings.len()
+    );
+    serde_json::to_value(report).map_err(|e| format!("Failed to serialise scan report: {e}"))
+}
+
+#[tauri::command]
+fn apply_math_fixes(selections: Vec<math_fixer::MathFixSelection>, backup: bool) -> Result<serde_json::Value, String> {
+    if selections.is_empty() {
+        return Err("No fixes selected.".to_string());
+    }
+    let report = math_fixer::apply_fixes(&selections, backup)?;
+    println!(
+        "Math Fixer applied {} fix(es) across {} file(s); {} skipped",
+        report.fixes_applied,
+        report.files_changed,
+        report.skipped.len()
+    );
+    serde_json::to_value(report).map_err(|e| format!("Failed to serialise apply report: {e}"))
+}
+
 fn build_empirical_analysis_primer(request: &EmpiricalAnalysisRequest) -> String {
     let dataset = if request.dataset_path.trim().is_empty() {
         "unspecified dataset".to_string()
@@ -11297,6 +11419,8 @@ pub fn run() {
             save_equation_to_md,
             save_scratchpad_content,
             write_ai_project_file,
+            scan_math_fixer,
+            apply_math_fixes,
             read_attachment_file,
             compute_cosmology_metrics_command,
             generate_empirical_analysis_primer,
