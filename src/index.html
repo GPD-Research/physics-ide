@@ -626,6 +626,22 @@
         white-space: pre-wrap;
       }
 
+      .code-card { position: relative; margin: 0.5em 0; }
+      .code-card pre { margin: 0; padding-top: 1.6em; }
+      .code-card .code-lang {
+        position: absolute; top: 4px; left: 8px; font-size: 0.7em; opacity: 0.6;
+      }
+      .code-copy-btn, .bubble-action-btn {
+        font-size: 0.7em; padding: 1px 6px; line-height: 1.4; opacity: 0.55; cursor: pointer;
+        background: rgba(255,255,255,0.06); border: 1px solid var(--border-color); border-radius: 3px; color: inherit;
+      }
+      .code-copy-btn { position: absolute; top: 3px; right: 6px; }
+      .code-copy-btn:hover, .bubble-action-btn:hover { opacity: 1; }
+      .bubble-actions { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; }
+      .chat-bubble.frozen-notice {
+        border: 1px solid #f38ba8; background: rgba(243, 139, 168, 0.12); color: #f38ba8;
+      }
+
       .chat-bubble .katex-display,
       .chat-bubble .katex {
         overflow-x: auto;
@@ -1133,7 +1149,10 @@
               </div>
             </div>
             <input id="project-title-input" type="text" value="Cosmology Workspace" onkeydown="handleProjectTitleKeydown(event)" onblur="commitProjectTitle()">
-            <button id="select-dir-btn" onclick="loadWorkspace()" style="width: 100%; margin-bottom: 10px;" title="Choose and load a workspace directory">📂 Open Workspace</button>
+            <div style="display: flex; gap: 6px; margin-bottom: 10px;">
+  <button id="select-dir-btn" onclick="loadWorkspace()" style="flex: 1;" title="Choose and load a workspace directory">📂 Open Workspace</button>
+  <button id="refresh-tree-btn" onclick="refreshFileTree()" title="Re-read the workspace directory (the tree does not watch the disk)">⟳</button>
+</div>
             
             <div class="file-tree" id="file-tree-container" style="flex: 1; overflow-y: auto; min-height: 0;">
                 <!-- Tree content will go here -->
@@ -3628,6 +3647,11 @@
       if (!currentConfig) {
         return '';
       }
+      const frozenIndex = pane === 'left' ? leftIndex : rightIndex;
+      if (frozenThreads[pane] && frozenThreads[pane][frozenIndex]) {
+        appendTerminalLog(`Thread ${pane}[${frozenIndex}] is frozen (usage limit); switch threads to continue.`);
+        return '';
+      }
 
       const retrievalEvidenceLines = Array.isArray(provenance.retrievalEvidenceLines)
         ? provenance.retrievalEvidenceLines.map((line) => String(line ?? '')).filter((line) => line.trim())
@@ -3752,6 +3776,10 @@
         return reply;
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
+        if (isUsageLimitError(err)) {
+          freezeThread(pane, index, err);
+          return '';
+        }
         appendChatBubble(pane, index, "System Error", err);
         throw err;
       } finally {
@@ -4504,10 +4532,139 @@
         bubble.classList.add('ai');
       }
       bubble.innerHTML = `<strong>${safeSender}:</strong> ${safeText || escapeHelpHtml(String(text || ''))}`;
-      
+      bubble._rawText = String(text || '');
+      bubble._sender = String(sender || 'Assistant');
+      bubble._pane = pane;
+      bubble._index = index;
+
+      const actions = document.createElement('div');
+      actions.className = 'bubble-actions';
+      actions.innerHTML = `<button type="button" class="bubble-action-btn" onclick="copyBubbleRaw(this)" title="Copy the raw message text (markdown/LaTeX source)">Copy</button>`
+        + `<button type="button" class="bubble-action-btn" onclick="addBubbleToNotes(this)" title="Append this message to today's session notes in the project root">Add to notes</button>`;
+      bubble.appendChild(actions);
+
       activeSlot.appendChild(bubble);
       activeSlot.scrollTop = activeSlot.scrollHeight;
     }
+
+    async function copyTextToClipboard(text) {
+      const value = String(text ?? '');
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_e) { ok = false; }
+        ta.remove();
+        return ok;
+      }
+    }
+
+    function flashButtonLabel(btn, label) {
+      if (!btn) return;
+      const original = btn.textContent;
+      btn.textContent = label;
+      setTimeout(() => { btn.textContent = original; }, 1200);
+    }
+
+    async function copyCodeCard(btn) {
+      const code = btn.closest('.code-card')?.querySelector('code');
+      const ok = await copyTextToClipboard(code ? code.textContent : '');
+      flashButtonLabel(btn, ok ? 'Copied' : 'Failed');
+    }
+
+    async function copyBubbleRaw(btn) {
+      const bubble = btn.closest('.chat-bubble');
+      const ok = await copyTextToClipboard(bubble?._rawText ?? bubble?.innerText ?? '');
+      flashButtonLabel(btn, ok ? 'Copied' : 'Failed');
+    }
+
+    function convertMathForMarkdownNotes(text) {
+      const src = String(text || '').replace(/\r\n/g, '\n');
+      const parts = src.split(/(```[\s\S]*?```)/g);
+      return parts.map((part, idx) => {
+        if (idx % 2 === 1) return part;
+        return part
+          .replace(/\\begin\{(equation\*?|align\*?|eqnarray\*?|gather\*?|multline\*?)\}([\s\S]*?)\\end\{\1\}/g,
+            (_m, _env, body) => `\n$$\n${body.trim()}\n$$\n`)
+          .replace(/\\\[([\s\S]*?)\\\]/g, (_m, body) => `\n$$\n${body.trim()}\n$$\n`)
+          .replace(/\\\(([\s\S]*?)\\\)/g, (_m, body) => `$${body.trim()}$`)
+          .replace(/\$\$([^\n$][^$]*?)\$\$/g, (_m, body) => `\n$$\n${body.trim()}\n$$\n`);
+      }).join('').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    function localDateStamp(d = new Date()) {
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+
+    function threadTitle(pane, index) {
+      const titles = pane === 'left'
+        ? ['L1: GitHub & Scripting', 'L2: Theory Analysis', 'L3: Empirical Synthesis']
+        : ['R1: Speculation & Horizons', 'R2: Empirical Critique', 'R3: Wild Expansion'];
+      return titles[index] || `${pane} ${index}`;
+    }
+
+    async function addBubbleToNotes(btn) {
+      const bubble = btn.closest('.chat-bubble');
+      if (!bubble) return;
+      const raw = bubble._rawText ?? bubble.innerText ?? '';
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      const where = bubble._pane ? ` (${threadTitle(bubble._pane, bubble._index)})` : '';
+      const markdown = `## ${time} — ${bubble._sender || 'Message'}${where}\n\n${convertMathForMarkdownNotes(raw)}`;
+      try {
+        const result = JSON.parse(await invoke('append_session_note', { markdown, date: localDateStamp(now) }));
+        appendTerminalLog(`Session notes: ${result.action} ${result.relative_path} (+${result.bytes} bytes).`);
+        flashButtonLabel(btn, 'Saved');
+        if (result.action === 'created') {
+          try { await refreshFileTree(); } catch (_) { /* best-effort */ }
+        }
+      } catch (err) {
+        appendTerminalLog(`Session notes failed: ${err}`);
+        flashButtonLabel(btn, 'Failed');
+      }
+    }
+
+    const frozenThreads = { left: [false, false, false], right: [false, false, false] };
+
+    function isUsageLimitError(err) {
+      const msg = String(err && err.message ? err.message : err || '').toLowerCase();
+      return /status 429|too many requests|rate limit|rate_limit|quota|billing|resource_exhausted|context_length|context length|maximum context|token limit|too many tokens|tokens exceed|exceeds the (?:model'?s )?(?:maximum|context)|prompt is too long|request too large|input is too long/.test(msg);
+    }
+
+    function freezeThread(pane, index, err) {
+      frozenThreads[pane][index] = true;
+      const strip = document.getElementById(pane === 'left' ? 'left-strip' : 'right-strip');
+      const slot = strip ? strip.children[index] : null;
+      if (slot) {
+        const notice = document.createElement('div');
+        notice.className = 'chat-bubble frozen-notice';
+        notice.innerHTML = `<strong>Usage/token limit reached — ${escapeHelpHtml(threadTitle(pane, index))} is now read-only.</strong><br>The conversation above is preserved: you can still copy messages or add them to notes. Switch to another thread to continue.<br><span style="font-size: 0.85em; opacity: 0.8;">${escapeHelpHtml(String(err || ''))}</span>`;
+        slot.appendChild(notice);
+        slot.scrollTop = slot.scrollHeight;
+      }
+      appendTerminalLog(`Thread ${pane}[${index}] frozen after usage/token-limit error.`);
+    }
+
+    window.addEventListener('error', (event) => {
+      try {
+        appendTerminalLog(`Frontend error: ${event.message} (${event.filename || 'inline'}:${event.lineno || '?'})`);
+      } catch (_) { /* logging must never throw */ }
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      try {
+        const reason = event.reason && event.reason.message ? event.reason.message : event.reason;
+        appendTerminalLog(`Unhandled promise rejection: ${reason}`);
+      } catch (_) { /* logging must never throw */ }
+    });
 
     function getPaneProvider(pane) {
       const provider = pane === 'left' ? currentConfig?.left_provider : currentConfig?.right_provider;
@@ -4866,6 +5023,22 @@
       }
     }
 
+    async function refreshFileTree() {
+      const root = String(currentWorkspacePath || '').trim();
+      if (!root) return;
+      const container = document.getElementById('file-tree-container');
+      const expanded = new Set(
+        Array.from(container.querySelectorAll('li[data-path][data-expanded="true"]')).map((li) => li.dataset.path)
+      );
+      await fetchAndRenderDirectory(root);
+      for (const dirPath of expanded) {
+        const li = container.querySelector(`li[data-path="${CSS.escape(dirPath)}"]`);
+        if (li && li.dataset.expanded !== 'true' && typeof li._expandDir === 'function') {
+          try { await li._expandDir(); } catch (_) { /* best-effort */ }
+        }
+      }
+    }
+
     async function fetchAndRenderDirectory(path, containerElement = null) {
       try {
         const container = containerElement || document.getElementById('file-tree-container');
@@ -4905,21 +5078,27 @@
             const subContainer = document.createElement('div');
             subContainer.style.display = 'none';
             li.appendChild(subContainer);
+            li.dataset.path = entry.path;
+            li.dataset.expanded = 'false';
 
             let subFoldersLoaded = false;
+            const expandDir = async () => {
+              if (!subFoldersLoaded) {
+                await fetchAndRenderDirectory(entry.path, subContainer);
+                subFoldersLoaded = true;
+              }
+              subContainer.style.display = 'block';
+              li.dataset.expanded = 'true';
+              label.innerText = '📂 ' + entry.name;
+            };
+            li._expandDir = expandDir;
             label.onclick = async (e) => {
               e.stopPropagation();
-              const isCollapsed = subContainer.style.display === 'none';
-              
-              if (isCollapsed) {
-                if (!subFoldersLoaded) {
-                  await fetchAndRenderDirectory(entry.path, subContainer);
-                  subFoldersLoaded = true;
-                }
-                subContainer.style.display = 'block';
-                label.innerText = '📂 ' + entry.name;
+              if (subContainer.style.display === 'none') {
+                await expandDir();
               } else {
                 subContainer.style.display = 'none';
+                li.dataset.expanded = 'false';
                 label.innerText = '📁 ' + entry.name;
               }
             };
@@ -6522,7 +6701,7 @@ async function restoreVersion() {
       value = value
         .replace(/\\\[(.*?)\\\]/gs, (_, expr) => `$$${expr.trim()}$$`)
         .replace(/\\\((.*?)\\\)/gs, (_, expr) => `$${expr.trim()}$`)
-        .replace(/```(?:latex|tex|math)?\s*([\s\S]*?)```/gi, (_, expr) => `$$${expr.trim()}$$`)
+        .replace(/```(?:latex|tex|math)[ \t]*\r?\n([\s\S]*?)```/gi, (_, expr) => `$$${expr.trim()}$$`)
         .replace(/\\begin\{(equation|align|align\*|eqnarray|cases)\}([\s\S]*?)\\end\{\1\}/g, (_match, _env, expr) => `$$${expr.trim()}$$`);
 
       const hasMathMarkers = /(\\(?:frac|sqrt|sum|int|alpha|beta|gamma|delta|omega|theta|lambda|mu|nu|sigma|partial|nabla|cdot|times|rightarrow|leftarrow|approx|neq|geq|leq|mathcal|mathbf)|\$\$|\$[^\n$]+\$|\\\(|\\\[)/.test(value);
@@ -6574,6 +6753,13 @@ async function restoreVersion() {
       }
     }
 
+    function renderCodeCard(code, lang) {
+      const safeCode = escapeHelpHtml(code);
+      const langAttr = lang ? ` class="language-${escapeHelpHtml(lang)}"` : '';
+      const langLabel = lang ? `<span class="code-lang">${escapeHelpHtml(lang)}</span>` : '';
+      return `<div class="code-card">${langLabel}<button type="button" class="code-copy-btn" onclick="copyCodeCard(this)" title="Copy code">Copy</button><pre><code${langAttr}>${safeCode}</code></pre></div>`;
+    }
+
     function renderMarkdownToHtml(markdownText) {
       const src = String(markdownText || '').replace(/\r\n/g, '\n');
       const lines = src.split('\n');
@@ -6581,6 +6767,7 @@ async function restoreVersion() {
       let i = 0;
       let inCodeFence = false;
       let codeBuffer = [];
+      let codeLang = '';
       let listMode = '';
       let paragraphBuffer = [];
 
@@ -6606,11 +6793,12 @@ async function restoreVersion() {
           if (!inCodeFence) {
             inCodeFence = true;
             codeBuffer = [];
+            codeLang = trimmed.slice(3).trim().split(/\s+/)[0] || '';
           } else {
-            const code = escapeHelpHtml(codeBuffer.join('\n'));
-            html.push(`<pre><code>${code}</code></pre>`);
+            html.push(renderCodeCard(codeBuffer.join('\n'), codeLang));
             inCodeFence = false;
             codeBuffer = [];
+            codeLang = '';
           }
           i += 1;
           continue;
@@ -6689,6 +6877,10 @@ async function restoreVersion() {
 
       closeParagraph();
       closeList();
+      if (inCodeFence) {
+        html.push(renderCodeCard(codeBuffer.join('\n'), codeLang));
+        inCodeFence = false;
+      }
 
       if (inCodeFence && codeBuffer.length > 0) {
         html.push(`<pre><code>${escapeHelpHtml(codeBuffer.join('\n'))}</code></pre>`);

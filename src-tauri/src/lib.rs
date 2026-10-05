@@ -9440,6 +9440,55 @@ fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle)
 }
 
 #[tauri::command]
+fn append_session_note(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let project_root = config.project_root_dir.trim();
+    if project_root.is_empty() {
+        return Err("Session notes blocked: no project root is configured. Open a workspace or set the project root in Customize first.".to_string());
+    }
+    let workspace_path = PathBuf::from(project_root);
+    if !workspace_path.is_dir() {
+        return Err(format!("Session notes blocked: project root does not exist: {}", project_root));
+    }
+    let body = markdown.trim_end();
+    if body.trim().is_empty() {
+        return Err("Session notes blocked: nothing to append.".to_string());
+    }
+
+    let date = date.trim().to_string();
+    let valid_date = date.len() == 10
+        && date.chars().enumerate().all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() });
+    if !valid_date {
+        return Err(format!("Session notes blocked: invalid date '{date}' (expected YYYY-MM-DD)."));
+    }
+    let file_name = format!("session_notes_{date}.md");
+    let target_path = workspace_path.join(&file_name);
+    let existed = target_path.exists();
+    let mut content = String::new();
+    if !existed {
+        content.push_str(&format!("# Session Notes — {date}\n\n"));
+    }
+    content.push_str(body);
+    content.push_str("\n\n---\n\n");
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&target_path)
+        .map_err(|e| format!("Failed to open {}: {e}", target_path.to_string_lossy()))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to append to {}: {e}", target_path.to_string_lossy()))?;
+
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "relative_path": file_name,
+        "bytes": content.len(),
+        "action": if existed { "appended" } else { "created" },
+    })
+    .to_string())
+}
+
+#[tauri::command]
 fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     let project_root = config.project_root_dir.trim();
@@ -11419,6 +11468,7 @@ pub fn run() {
             save_equation_to_md,
             save_scratchpad_content,
             write_ai_project_file,
+            append_session_note,
             scan_math_fixer,
             apply_math_fixes,
             read_attachment_file,
