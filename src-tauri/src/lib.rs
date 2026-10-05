@@ -9439,6 +9439,191 @@ fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle)
     Ok(format!("Scratchpad saved successfully to {}", path))
 }
 
+fn thread_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    path.push("threads");
+    fs::create_dir_all(&path).map_err(|e| format!("Failed to create thread store directory: {e}"))?;
+    path.push("thread_saves.sqlite3");
+    Ok(path)
+}
+
+fn open_thread_store(app: &AppHandle) -> Result<rusqlite::Connection, String> {
+    let path = thread_store_path(app)?;
+    let connection = rusqlite::Connection::open(&path)
+        .map_err(|e| format!("Failed to open thread store {}: {e}", path.to_string_lossy()))?;
+    connection
+        .execute_batch(
+            "PRAGMA journal_mode = WAL;
+             CREATE TABLE IF NOT EXISTS thread_saves (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 session_key TEXT NOT NULL UNIQUE,
+                 pane TEXT NOT NULL,
+                 slot INTEGER NOT NULL,
+                 title TEXT NOT NULL,
+                 project_root TEXT NOT NULL DEFAULT '',
+                 started_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL,
+                 updated_unix INTEGER NOT NULL,
+                 message_count INTEGER NOT NULL,
+                 preview TEXT NOT NULL DEFAULT '',
+                 transcript_json TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_thread_saves_slot ON thread_saves(pane, slot, updated_unix DESC);",
+        )
+        .map_err(|e| format!("Failed to initialize thread store: {e}"))?;
+    Ok(connection)
+}
+
+fn unix_now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ThreadSaveSummary {
+    id: i64,
+    session_key: String,
+    pane: String,
+    slot: i64,
+    title: String,
+    project_root: String,
+    started_at: String,
+    updated_at: String,
+    message_count: i64,
+    preview: String,
+}
+
+#[tauri::command]
+fn autosave_thread(
+    session_key: String,
+    pane: String,
+    slot: i64,
+    title: String,
+    started_at: String,
+    updated_at: String,
+    transcript_json: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let session_key = session_key.trim().to_string();
+    if session_key.is_empty() {
+        return Err("Thread autosave blocked: empty session key.".to_string());
+    }
+    let transcript: Vec<serde_json::Value> = serde_json::from_str(&transcript_json)
+        .map_err(|e| format!("Thread autosave blocked: transcript is not valid JSON: {e}"))?;
+    if transcript.is_empty() {
+        return Ok(serde_json::json!({ "skipped": true, "reason": "empty transcript" }).to_string());
+    }
+    let preview = transcript
+        .iter()
+        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+        .or_else(|| transcript.first())
+        .and_then(|m| m.get("text").and_then(|t| t.as_str()))
+        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|t| t.chars().take(120).collect::<String>())
+        .unwrap_or_default();
+    let project_root = load_app_config(&app)
+        .map(|c| c.project_root_dir.trim().to_string())
+        .unwrap_or_default();
+
+    let connection = open_thread_store(&app)?;
+    connection
+        .execute(
+            "INSERT INTO thread_saves (session_key, pane, slot, title, project_root, started_at, updated_at, updated_unix, message_count, preview, transcript_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(session_key) DO UPDATE SET
+                 title = excluded.title,
+                 updated_at = excluded.updated_at,
+                 updated_unix = excluded.updated_unix,
+                 message_count = excluded.message_count,
+                 preview = excluded.preview,
+                 transcript_json = excluded.transcript_json",
+            rusqlite::params![
+                session_key,
+                pane.trim(),
+                slot,
+                title.trim(),
+                project_root,
+                started_at.trim(),
+                updated_at.trim(),
+                unix_now_seconds(),
+                transcript.len() as i64,
+                preview,
+                transcript_json,
+            ],
+        )
+        .map_err(|e| format!("Thread autosave failed: {e}"))?;
+
+    Ok(serde_json::json!({
+        "saved": true,
+        "message_count": transcript.len(),
+        "bytes": transcript_json.len(),
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn list_thread_saves(pane: String, slot: i64, limit: i64, app: tauri::AppHandle) -> Result<String, String> {
+    let connection = open_thread_store(&app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, session_key, pane, slot, title, project_root, started_at, updated_at, message_count, preview
+             FROM thread_saves WHERE pane = ?1 AND slot = ?2
+             ORDER BY updated_unix DESC, id DESC LIMIT ?3",
+        )
+        .map_err(|e| format!("Thread list failed: {e}"))?;
+    let rows = statement
+        .query_map(rusqlite::params![pane.trim(), slot, limit.clamp(1, 50)], |row| {
+            Ok(ThreadSaveSummary {
+                id: row.get(0)?,
+                session_key: row.get(1)?,
+                pane: row.get(2)?,
+                slot: row.get(3)?,
+                title: row.get(4)?,
+                project_root: row.get(5)?,
+                started_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                message_count: row.get(8)?,
+                preview: row.get(9)?,
+            })
+        })
+        .map_err(|e| format!("Thread list failed: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Thread list failed: {e}"))?;
+    serde_json::to_string(&rows).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_thread_save(id: i64, app: tauri::AppHandle) -> Result<String, String> {
+    let connection = open_thread_store(&app)?;
+    connection
+        .query_row(
+            "SELECT id, session_key, pane, slot, title, project_root, started_at, updated_at, message_count, transcript_json
+             FROM thread_saves WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                let transcript_raw: String = row.get(9)?;
+                let transcript: serde_json::Value =
+                    serde_json::from_str(&transcript_raw).unwrap_or(serde_json::Value::Array(vec![]));
+                Ok(serde_json::json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "session_key": row.get::<_, String>(1)?,
+                    "pane": row.get::<_, String>(2)?,
+                    "slot": row.get::<_, i64>(3)?,
+                    "title": row.get::<_, String>(4)?,
+                    "project_root": row.get::<_, String>(5)?,
+                    "started_at": row.get::<_, String>(6)?,
+                    "updated_at": row.get::<_, String>(7)?,
+                    "message_count": row.get::<_, i64>(8)?,
+                    "transcript": transcript,
+                })
+                .to_string())
+            },
+        )
+        .map_err(|e| format!("Thread load failed: {e}"))
+}
+
 #[tauri::command]
 fn append_session_note(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
@@ -11469,6 +11654,9 @@ pub fn run() {
             save_scratchpad_content,
             write_ai_project_file,
             append_session_note,
+            autosave_thread,
+            list_thread_saves,
+            load_thread_save,
             scan_math_fixer,
             apply_math_fixes,
             read_attachment_file,
