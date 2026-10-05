@@ -641,6 +641,13 @@
       .chat-bubble.frozen-notice {
         border: 1px solid #f38ba8; background: rgba(243, 139, 168, 0.12); color: #f38ba8;
       }
+      .recall-select {
+        max-width: 150px; font-size: 0.7rem; padding: 1px 4px; opacity: 0.75;
+        background: var(--bg-panel); color: inherit; border: 1px solid var(--border-color); border-radius: 3px;
+      }
+      .recall-select:hover { opacity: 1; }
+      .recall-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px; }
+      .recall-body .chat-bubble { margin-bottom: 8px; }
 
       .chat-bubble .katex-display,
       .chat-bubble .katex {
@@ -1198,6 +1205,9 @@
           <div class="pane-header-left">
             <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
             <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
+            <select id="left-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('left')" onchange="openRecallViewer('left', this.value); this.selectedIndex = 0;">
+              <option value="">Recall session…</option>
+            </select>
           </div>
           <div>
             <button onclick="rotateLeft(-1)" title="Previous analytical slot">▲</button>
@@ -1246,6 +1256,9 @@
           <div class="pane-header-left">
             <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
             <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
+            <select id="right-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('right')" onchange="openRecallViewer('right', this.value); this.selectedIndex = 0;">
+              <option value="">Recall session…</option>
+            </select>
           </div>
           <div>
             <button onclick="rotateRight(-1)" title="Previous creative slot">▲</button>
@@ -1430,6 +1443,19 @@
   </div>
 
 <!-- Restore Version Modal -->
+  <div id="recall-modal" class="modal" style="z-index: 1120;">
+    <div class="modal-content" style="width: min(900px, 90vw); max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header" id="recall-modal-title">Recall session</div>
+      <div id="recall-modal-meta" style="font-size: 0.8rem; opacity: 0.75; margin-bottom: 8px;"></div>
+      <div id="recall-modal-body" class="recall-body"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap;">
+        <button onclick="closeRecallViewer()" title="Close without changing the thread">Close</button>
+        <button onclick="copyRecallToNotes(this)" title="Append this whole transcript to today's session notes">Copy to session notes</button>
+        <button onclick="loadRecallIntoThread()" title="Replace the current thread contents with this transcript (tokens are only spent when you send the next message)">Load into thread</button>
+      </div>
+    </div>
+  </div>
+
   <div id="restore-modal" class="modal">
     <div class="modal-content" style="width: 350px;">
       <div class="modal-header" style="color: #f38ba8;">⚠️ Restore Version</div>
@@ -3715,6 +3741,7 @@
       });
 
       chatHistories[pane][index].push(messagePayload);
+      recordThreadTranscript(pane, index, 'user', senderLabel, text);
       const sanitizedHistory = sanitizeHistoryForInvoke(chatHistories[pane][index]);
       appendChatBubble(pane, index, senderLabel, text);
       appendTerminalLog(`Dispatching payload via active connection string to [${provider}]...`);
@@ -3771,13 +3798,16 @@
         responsePayload.context_volatility = 'dynamic';
 
         chatHistories[pane][index].push(responsePayload);
+        recordThreadTranscript(pane, index, 'assistant', getProviderDisplayName(provider), reply);
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
+        scheduleThreadAutosave(pane, index);
         await applyAssistantFileBlocks(pane, index, reply);
         return reply;
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
         if (isUsageLimitError(err)) {
           freezeThread(pane, index, err);
+          scheduleThreadAutosave(pane, index, 0);
           return '';
         }
         appendChatBubble(pane, index, "System Error", err);
@@ -4665,6 +4695,195 @@
         appendTerminalLog(`Unhandled promise rejection: ${reason}`);
       } catch (_) { /* logging must never throw */ }
     });
+
+    // ---- Thread autosave / recall (condensed transcripts: user text + replies only) ----
+    const threadTranscripts = { left: [[], [], []], right: [[], [], []] };
+    const threadSessions = { left: [null, null, null], right: [null, null, null] };
+    const threadAutosaveTimers = { left: [null, null, null], right: [null, null, null] };
+    const RECALL_LIST_LIMIT = 3;
+    let recallViewerState = null;
+
+    function localDateTimeStamp(d = new Date()) {
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${localDateStamp(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function ensureThreadSession(pane, index) {
+      if (!threadSessions[pane][index]) {
+        threadSessions[pane][index] = {
+          key: `${pane}-${index}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          startedAt: localDateTimeStamp()
+        };
+      }
+      return threadSessions[pane][index];
+    }
+
+    function recordThreadTranscript(pane, index, role, sender, text) {
+      ensureThreadSession(pane, index);
+      threadTranscripts[pane][index].push({
+        role,
+        sender: String(sender || ''),
+        text: String(text || ''),
+        at: localDateTimeStamp()
+      });
+    }
+
+    function scheduleThreadAutosave(pane, index, delayMs = 1500) {
+      const existing = threadAutosaveTimers[pane][index];
+      if (existing) clearTimeout(existing);
+      threadAutosaveTimers[pane][index] = setTimeout(() => {
+        threadAutosaveTimers[pane][index] = null;
+        autosaveThread(pane, index).catch((err) => appendTerminalLog(`Thread autosave failed [${pane}/${index}]: ${err}`));
+      }, Math.max(0, delayMs));
+    }
+
+    async function autosaveThread(pane, index) {
+      const transcript = threadTranscripts[pane][index];
+      if (!transcript || transcript.length === 0) return;
+      const session = ensureThreadSession(pane, index);
+      const result = JSON.parse(await invoke('autosave_thread', {
+        sessionKey: session.key,
+        pane,
+        slot: index,
+        title: threadTitle(pane, index),
+        startedAt: session.startedAt,
+        updatedAt: localDateTimeStamp(),
+        transcriptJson: JSON.stringify(transcript)
+      }));
+      if (result.saved) {
+        appendTerminalLog(`Thread autosaved [${threadTitle(pane, index)}]: ${result.message_count} messages, ${result.bytes} bytes.`);
+      }
+    }
+
+    async function populateRecallSelect(pane) {
+      const select = document.getElementById(`${pane}-recall-select`);
+      if (!select) return;
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      let rows = [];
+      try {
+        rows = JSON.parse(await invoke('list_thread_saves', { pane, slot: index, limit: RECALL_LIST_LIMIT }));
+      } catch (err) {
+        appendTerminalLog(`Recall list unavailable [${pane}]: ${err}`);
+      }
+      const currentKey = threadSessions[pane][index]?.key;
+      select.innerHTML = '';
+      const head = document.createElement('option');
+      head.value = '';
+      head.textContent = rows.length ? 'Recall session…' : 'Recall session… (none saved)';
+      select.appendChild(head);
+      rows.forEach((row) => {
+        const option = document.createElement('option');
+        option.value = String(row.id);
+        const live = row.session_key === currentKey ? ' (current)' : '';
+        const preview = row.preview ? ` — ${row.preview.slice(0, 48)}` : '';
+        option.textContent = `${row.updated_at}${live} · ${row.message_count} msgs${preview}`;
+        option.title = row.preview || '';
+        select.appendChild(option);
+      });
+    }
+
+    async function openRecallViewer(pane, idValue) {
+      const id = Number(idValue);
+      if (!Number.isFinite(id) || id <= 0) return;
+      let save;
+      try {
+        save = JSON.parse(await invoke('load_thread_save', { id }));
+      } catch (err) {
+        appendTerminalLog(`Recall load failed: ${err}`);
+        return;
+      }
+      recallViewerState = { pane, save };
+      const transcript = Array.isArray(save.transcript) ? save.transcript : [];
+      document.getElementById('recall-modal-title').textContent = `Recall session — ${save.title}`;
+      document.getElementById('recall-modal-meta').textContent =
+        `${transcript.length} messages · started ${save.started_at} · last saved ${save.updated_at}` +
+        (save.project_root ? ` · project ${save.project_root}` : '') +
+        ' · Viewing uses no AI tokens; loading into the thread sends this history with your next message.';
+      const body = document.getElementById('recall-modal-body');
+      body.innerHTML = '';
+      transcript.forEach((m) => {
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble' + (m.role === 'assistant' ? ' ai' : '');
+        const rendered = renderMathContentToHtml(m.text);
+        bubble.innerHTML = `<strong>${escapeHelpHtml(m.sender || m.role)}:</strong> ${rendered || escapeHelpHtml(String(m.text || ''))}`;
+        body.appendChild(bubble);
+      });
+      document.getElementById('recall-modal').style.display = 'flex';
+    }
+
+    function closeRecallViewer() {
+      document.getElementById('recall-modal').style.display = 'none';
+      recallViewerState = null;
+    }
+
+    function recallTranscriptToMarkdown(save) {
+      const transcript = Array.isArray(save.transcript) ? save.transcript : [];
+      const lines = [`## Recalled session — ${save.title} (saved ${save.updated_at})`, ''];
+      transcript.forEach((m) => {
+        lines.push(`### ${m.at || ''} — ${m.sender || m.role}`.trim());
+        lines.push('');
+        lines.push(convertMathForMarkdownNotes(m.text));
+        lines.push('');
+      });
+      return lines.join('\n');
+    }
+
+    async function copyRecallToNotes(btn) {
+      if (!recallViewerState) return;
+      try {
+        const result = JSON.parse(await invoke('append_session_note', {
+          markdown: recallTranscriptToMarkdown(recallViewerState.save),
+          date: localDateStamp()
+        }));
+        appendTerminalLog(`Session notes: ${result.action} ${result.relative_path} (+${result.bytes} bytes).`);
+        flashButtonLabel(btn, 'Saved');
+        if (result.action === 'created') {
+          try { await refreshFileTree(); } catch (_) { /* best-effort */ }
+        }
+      } catch (err) {
+        appendTerminalLog(`Session notes failed: ${err}`);
+        flashButtonLabel(btn, 'Failed');
+      }
+    }
+
+    function loadRecallIntoThread() {
+      if (!recallViewerState) return;
+      const { pane, save } = recallViewerState;
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      const provider = pane === 'left' ? currentConfig?.left_provider : currentConfig?.right_provider;
+      const transcript = Array.isArray(save.transcript) ? save.transcript : [];
+
+      const strip = document.getElementById(pane === 'left' ? 'left-strip' : 'right-strip');
+      const slot = strip ? strip.children[index] : null;
+      if (slot) {
+        slot.innerHTML = '';
+        slot.classList.remove('thread-frozen');
+      }
+      frozenThreads[pane][index] = false;
+
+      const retainedSystem = (chatHistories[pane][index] || []).filter((m) => m && m.role === 'system');
+      const rebuilt = transcript.map((m) => {
+        const text = String(m.text || '');
+        let payload;
+        if (provider === 'gemini') {
+          payload = { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text }] };
+        } else {
+          payload = { role: m.role === 'assistant' ? 'assistant' : 'user', content: text };
+        }
+        payload.context_source = m.role === 'assistant' ? 'assistant_history' : 'recalled_user_history';
+        payload.context_trigger = 'thread_recall';
+        payload.context_volatility = 'dynamic';
+        return payload;
+      });
+      chatHistories[pane][index] = [...retainedSystem, ...rebuilt];
+      threadTranscripts[pane][index] = transcript.map((m) => ({ ...m }));
+      threadSessions[pane][index] = { key: save.session_key, startedAt: save.started_at };
+
+      appendChatBubble(pane, index, 'System', `Recalled session "${save.title}" (${transcript.length} messages, saved ${save.updated_at}) loaded into this thread.`);
+      transcript.forEach((m) => appendChatBubble(pane, index, m.sender || m.role, m.text));
+      appendTerminalLog(`Thread ${pane}[${index}] restored from autosave #${save.id} (${transcript.length} messages).`);
+      closeRecallViewer();
+    }
 
     function getPaneProvider(pane) {
       const provider = pane === 'left' ? currentConfig?.left_provider : currentConfig?.right_provider;
