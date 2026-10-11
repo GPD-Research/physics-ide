@@ -9439,6 +9439,109 @@ fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle)
     Ok(format!("Scratchpad saved successfully to {}", path))
 }
 
+fn is_pdf_path(path: &std::path::Path) -> bool {
+    path.extension().map(|e| e.to_string_lossy().eq_ignore_ascii_case("pdf")).unwrap_or(false)
+}
+
+/// Read a Markdown/text/PDF document as plain text for the note pad or built-in editor.
+#[tauri::command]
+fn read_document_text(path: String) -> Result<String, String> {
+    let target = std::path::PathBuf::from(path.trim());
+    if !target.is_file() {
+        return Err(format!("Document does not exist: {}", target.to_string_lossy()));
+    }
+    let (kind, content) = if is_pdf_path(&target) {
+        let bytes = fs::read(&target).map_err(|e| format!("Failed to read PDF: {e}"))?;
+        let text = pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Failed to extract PDF text: {e}"))?;
+        ("pdf", text.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n").trim().to_string())
+    } else {
+        let bytes = fs::read(&target).map_err(|e| format!("Failed to read file: {e}"))?;
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        let ext = target.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        (if ext == "md" || ext == "markdown" { "markdown" } else { "text" }, text)
+    };
+    Ok(serde_json::json!({
+        "path": target.to_string_lossy().to_string(),
+        "name": target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        "kind": kind,
+        "editable": kind != "pdf",
+        "content": content,
+    }).to_string())
+}
+
+/// Write text to a file inside the configured project root (built-in editor save).
+#[tauri::command]
+fn write_document_text(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+    let target_path = PathBuf::from(path.trim());
+    if is_pdf_path(&target_path) {
+        return Err("Refusing to overwrite a PDF with plain text; save as .md or .txt instead.".to_string());
+    }
+    let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let workspace_root = config.project_root_dir.trim();
+    let workspace_path = if workspace_root.is_empty() { PathBuf::from(".") } else { PathBuf::from(workspace_root) };
+    ensure_ai_file_access(&config, "write", &target_path, &workspace_path)?;
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+    }
+    fs::write(&target_path, content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "bytes": content.len(),
+    }).to_string())
+}
+
+fn spawn_external_open(path: &str, mode: &str, editor: &str, terminal_app: &str) -> Result<String, String> {
+    if mode.trim().eq_ignore_ascii_case("editor") && !editor.trim().is_empty() {
+        let payload = LaunchFileEditorPayload {
+            file_path: path.to_string(),
+            terminal_app: terminal_app.to_string(),
+            editor: editor.to_string(),
+        };
+        let (program, args) = build_file_editor_command(&payload)?;
+        std::process::Command::new(&program)
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("Failed to launch {} {:?}: {}", program, args, e))?;
+        return Ok(format!("Opened {} in {}", path, editor.trim()));
+    }
+    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| format!("Failed to open {} with the system default application: {e}", path))?;
+    Ok(format!("Opened {} with the system default application", path))
+}
+
+/// Open an existing document externally. `mode` is "editor" (configured text editor) or "default" (OS association, e.g. word processor).
+#[tauri::command]
+fn open_document_externally(path: String, mode: String, editor: String, terminal_app: String) -> Result<String, String> {
+    let target = PathBuf::from(path.trim());
+    if !target.is_file() {
+        return Err(format!("Document does not exist: {}", target.to_string_lossy()));
+    }
+    spawn_external_open(&target.to_string_lossy(), &mode, &editor, &terminal_app)
+}
+
+/// Write in-app text (recalled transcript, chat message, note pad) to a scratch file and open it externally.
+#[tauri::command]
+fn open_text_externally(content: String, title: String, mode: String, editor: String, terminal_app: String, app: tauri::AppHandle) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Err("Nothing to open: the document is empty.".to_string());
+    }
+    let mut dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    dir.push("doc_buffer");
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create document buffer directory: {e}"))?;
+    let mut slug = sanitize_slug(&title);
+    if slug.is_empty() {
+        slug = "document".to_string();
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let target = dir.join(format!("{slug}_{stamp}.md"));
+    fs::write(&target, content.as_bytes()).map_err(|e| format!("Failed to write document buffer: {e}"))?;
+    let path = target.to_string_lossy().to_string();
+    let msg = spawn_external_open(&path, &mode, &editor, &terminal_app)?;
+    Ok(serde_json::json!({ "path": path, "message": msg }).to_string())
+}
+
 fn thread_store_path(app: &AppHandle) -> Result<PathBuf, String> {
     let mut path = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
     path.push("threads");
@@ -9624,34 +9727,75 @@ fn load_thread_save(id: i64, app: tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Thread load failed: {e}"))
 }
 
-#[tauri::command]
-fn append_session_note(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
-    let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
-    let project_root = config.project_root_dir.trim();
-    if project_root.is_empty() {
-        return Err("Session notes blocked: no project root is configured. Open a workspace or set the project root in Customize first.".to_string());
+fn session_doc_kind(kind: &str) -> Result<(&'static str, &'static str), String> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "notes" | "note" => Ok(("session_notes", "Session Notes")),
+        "equations" | "equation" => Ok(("session_equations", "Session Equations")),
+        other => Err(format!("Unknown session document kind '{other}' (expected notes or equations).")),
     }
-    let workspace_path = PathBuf::from(project_root);
-    if !workspace_path.is_dir() {
-        return Err(format!("Session notes blocked: project root does not exist: {}", project_root));
-    }
-    let body = markdown.trim_end();
-    if body.trim().is_empty() {
-        return Err("Session notes blocked: nothing to append.".to_string());
-    }
+}
 
+fn validate_session_date(date: &str) -> Result<String, String> {
     let date = date.trim().to_string();
     let valid_date = date.len() == 10
         && date.chars().enumerate().all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() });
     if !valid_date {
-        return Err(format!("Session notes blocked: invalid date '{date}' (expected YYYY-MM-DD)."));
+        return Err(format!("Session document blocked: invalid date '{date}' (expected YYYY-MM-DD)."));
     }
-    let file_name = format!("session_notes_{date}.md");
-    let target_path = workspace_path.join(&file_name);
+    Ok(date)
+}
+
+fn session_doc_target(app: &tauri::AppHandle, kind: &str, date: &str) -> Result<(PathBuf, String, String), String> {
+    let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let project_root = config.project_root_dir.trim();
+    if project_root.is_empty() {
+        return Err("Session document blocked: no project root is configured. Open a workspace or set the project root in Customize first.".to_string());
+    }
+    let workspace_path = PathBuf::from(project_root);
+    if !workspace_path.is_dir() {
+        return Err(format!("Session document blocked: project root does not exist: {}", project_root));
+    }
+    let (prefix, heading) = session_doc_kind(kind)?;
+    let date = validate_session_date(date)?;
+    let file_name = format!("{prefix}_{date}.md");
+    Ok((workspace_path.join(&file_name), file_name, format!("# {heading} — {date}\n\n")))
+}
+
+/// Resolve today's session document (notes or equations), creating it with a heading if missing.
+#[tauri::command]
+fn ensure_session_doc(kind: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    let (target_path, file_name, header) = session_doc_target(&app, &kind, &date)?;
+    let existed = target_path.exists();
+    if !existed {
+        fs::write(&target_path, header).map_err(|e| format!("Failed to create {}: {e}", target_path.to_string_lossy()))?;
+    }
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "relative_path": file_name,
+        "action": if existed { "opened" } else { "created" },
+    }).to_string())
+}
+
+#[tauri::command]
+fn append_session_equation(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    append_session_doc("equations", &markdown, &date, &app)
+}
+
+#[tauri::command]
+fn append_session_note(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    append_session_doc("notes", &markdown, &date, &app)
+}
+
+fn append_session_doc(kind: &str, markdown: &str, date: &str, app: &tauri::AppHandle) -> Result<String, String> {
+    let (target_path, file_name, header) = session_doc_target(app, kind, date)?;
+    let body = markdown.trim_end();
+    if body.trim().is_empty() {
+        return Err("Session document blocked: nothing to append.".to_string());
+    }
     let existed = target_path.exists();
     let mut content = String::new();
     if !existed {
-        content.push_str(&format!("# Session Notes — {date}\n\n"));
+        content.push_str(&header);
     }
     content.push_str(body);
     content.push_str("\n\n---\n\n");
@@ -11654,6 +11798,12 @@ pub fn run() {
             save_scratchpad_content,
             write_ai_project_file,
             append_session_note,
+            append_session_equation,
+            ensure_session_doc,
+            read_document_text,
+            write_document_text,
+            open_document_externally,
+            open_text_externally,
             autosave_thread,
             list_thread_saves,
             load_thread_save,
