@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+mod local_ai;
 mod math_fixer;
 
 #[derive(Deserialize, Default)]
@@ -181,6 +182,10 @@ fn compute_cosmology_metrics(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, 
 
 fn default_true() -> bool {
     true
+}
+
+fn default_ollama_host() -> String {
+    local_ai::DEFAULT_OLLAMA_HOST.to_string()
 }
 
 fn default_ai_file_access_mode() -> String {
@@ -382,6 +387,8 @@ pub struct AppConfig {
     right_preserve_thread_history: bool,
     #[serde(default = "default_ai_file_access_mode")]
     ai_file_access_mode: String,
+    #[serde(default = "default_ollama_host")]
+    ollama_host: String,
     reuse_notes_next_session: bool,
     first_session_completed: bool,
 }
@@ -416,6 +423,7 @@ impl Default for AppConfig {
             left_preserve_thread_history: true,
             right_preserve_thread_history: true,
             ai_file_access_mode: default_ai_file_access_mode(),
+            ollama_host: default_ollama_host(),
             reuse_notes_next_session: false,
             first_session_completed: false,
         }
@@ -473,6 +481,8 @@ pub struct SaveUserSettingsPayload {
     pub right_preserve_thread_history: bool,
     #[serde(default = "default_ai_file_access_mode", alias = "aiFileAccessMode")]
     pub ai_file_access_mode: String,
+    #[serde(default = "default_ollama_host", alias = "ollamaHost")]
+    pub ollama_host: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -3407,12 +3417,14 @@ async fn send_llm_prompt(
     let provider_name = provider.to_ascii_lowercase();
     let openai_api_key = normalize_api_key(&config.openai_api_key);
     let gemini_api_key = normalize_api_key(&config.gemini_api_key);
+    let ollama_host = config.ollama_host.clone();
 
     let reply = tauri::async_runtime::spawn_blocking(move || {
         match provider_name.as_str() {
             "openai" => call_openai(&openai_api_key, &model, &canonical_messages),
             "gemini" => call_gemini(&gemini_api_key, &model, &canonical_messages),
-            other => Err(format!("Unsupported provider '{}'. Choose OpenAI or Gemini.", other)),
+            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages),
+            other => Err(format!("Unsupported provider '{}'. Choose OpenAI, Gemini, or Local (Ollama).", other)),
         }
     })
     .await
@@ -3692,6 +3704,7 @@ fn provider_settings_for_pane<'a>(config: &'a AppConfig, pane: &'a str) -> (&'a 
                 }
             }
             "gemini" => "gemini-2.5-flash".to_string(),
+            "ollama" => local_ai::DEFAULT_LOCAL_MODEL.to_string(),
             _ => {
                 if pane_is_left {
                     "gpt-4.1".to_string()
@@ -3955,9 +3968,10 @@ async fn validate_model_selection(payload: serde_json::Value) -> Result<String, 
         match provider_normalized.as_str() {
             "openai" => validate_openai_model(&normalized_api_key, &normalized_model)?,
             "gemini" => validate_gemini_model(&normalized_api_key, &normalized_model)?,
+            "ollama" => local_ai::validate_model(&payload.api_key, &normalized_model)?,
             other => {
                 return Err(format!(
-                    "Unsupported provider '{}' for validation. Choose OpenAI or Gemini.",
+                    "Unsupported provider '{}' for validation. Choose OpenAI, Gemini, or Local (Ollama).",
                     other
                 ));
             }
@@ -4003,9 +4017,10 @@ async fn fetch_provider_model_catalog(payload: serde_json::Value) -> Result<Stri
     let provider_normalized = payload.provider.to_ascii_lowercase();
     let trimmed_key = normalize_api_key(&payload.api_key);
 
-    if trimmed_key.is_empty() {
+    if trimmed_key.is_empty() && provider_normalized != "ollama" {
         return Err(format!("{} API key is required to load model catalog.", provider_normalized));
     }
+    let ollama_host = payload.api_key.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
         let client = reqwest::blocking::Client::builder()
@@ -4015,9 +4030,10 @@ async fn fetch_provider_model_catalog(payload: serde_json::Value) -> Result<Stri
         let mut models = match provider_normalized.as_str() {
             "openai" => list_openai_chat_models(&client, &trimmed_key)?,
             "gemini" => list_gemini_generate_content_models(&client, &trimmed_key)?,
+            "ollama" => local_ai::list_installed_model_names(&ollama_host)?,
             other => {
                 return Err(format!(
-                    "Unsupported provider '{}' for model catalog. Choose OpenAI or Gemini.",
+                    "Unsupported provider '{}' for model catalog. Choose OpenAI, Gemini, or Local (Ollama).",
                     other
                 ));
             }
@@ -4404,6 +4420,109 @@ fn parse_openai_visible_content(response: &serde_json::Value) -> Result<String, 
         reasoning_tokens.map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string()),
         refusal.unwrap_or("none")
     ))
+}
+
+fn call_ollama(host: &str, model: &str, messages: &[serde_json::Value]) -> Result<ProviderReply, String> {
+    let result = local_ai::chat(host, model, messages)?;
+    let total = match (result.prompt_tokens, result.output_tokens) {
+        (Some(p), Some(o)) => Some(p + o),
+        _ => None,
+    };
+    Ok(ProviderReply {
+        content: result.content,
+        usage: ProviderUsage {
+            provider: "ollama".to_string(),
+            model: model.to_string(),
+            input_tokens: result.prompt_tokens,
+            cached_input_tokens: None,
+            output_tokens: result.output_tokens,
+            reasoning_tokens: None,
+            total_tokens: total,
+        },
+    })
+}
+
+#[tauri::command]
+async fn check_hardware_specs() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        serde_json::to_string(&local_ai::check_hardware_specs()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Hardware probe task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LocalAiOverviewPayload {
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    hardware: Option<local_ai::HardwareSpecs>,
+}
+
+#[tauri::command]
+async fn get_local_ai_overview(payload: LocalAiOverviewPayload, app: tauri::AppHandle) -> Result<String, String> {
+    let host = if payload.host.trim().is_empty() {
+        get_app_config(&app)?.ollama_host
+    } else {
+        payload.host
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = local_ai::ollama_status(&host);
+        let catalog: Vec<serde_json::Value> = local_ai::curated_model_catalog()
+            .into_iter()
+            .map(|spec| {
+                let installed = status
+                    .installed_models
+                    .iter()
+                    .any(|installed| local_ai::model_matches(&spec.name, &installed.name));
+                let estimate = payload
+                    .hardware
+                    .as_ref()
+                    .map(|hw| local_ai::estimate_performance(&spec, hw));
+                serde_json::json!({
+                    "name": spec.name,
+                    "family": spec.family,
+                    "params_b": spec.params_b,
+                    "quant": spec.quant,
+                    "file_gb": spec.file_gb,
+                    "description": spec.description,
+                    "installed": installed,
+                    "estimate": estimate,
+                })
+            })
+            .collect();
+        serde_json::to_string(&serde_json::json!({
+            "status": status,
+            "catalog": catalog,
+        }))
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Local AI overview task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct InstallLocalModelPayload {
+    model: String,
+    #[serde(default, alias = "terminalApp")]
+    terminal_app: String,
+    #[serde(default, alias = "ollamaInstalled")]
+    ollama_installed: bool,
+}
+
+#[tauri::command]
+fn install_local_model(payload: InstallLocalModelPayload) -> Result<String, String> {
+    let model = payload.model.trim();
+    if model.is_empty() || !model.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '-' | '_' | '/')) {
+        return Err(format!("Invalid model name '{}'", payload.model));
+    }
+    let script = local_ai::build_install_script(model, payload.ollama_installed);
+    let (program, args) = local_ai::build_terminal_command(&payload.terminal_app, &script);
+    std::process::Command::new(&program)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("Failed to launch terminal '{program}': {e}"))?;
+    Ok(format!("Launched {program} to download {model}"))
 }
 
 fn call_openai(api_key: &str, model: &str, messages: &[serde_json::Value]) -> Result<ProviderReply, String> {
@@ -10096,6 +10215,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.left_preserve_thread_history = payload.left_preserve_thread_history;
     config.right_preserve_thread_history = payload.right_preserve_thread_history;
     config.ai_file_access_mode = payload.ai_file_access_mode;
+    config.ollama_host = local_ai::normalize_host(&payload.ollama_host);
 
     if !config.project_root_dir.trim().is_empty() {
         config.last_root_dir = config.project_root_dir.clone();
@@ -11772,6 +11892,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_initial_state,
+            check_hardware_specs,
+            get_local_ai_overview,
+            install_local_model,
             get_help_doc,
             search_help_docs,
             list_markdown_documents,
