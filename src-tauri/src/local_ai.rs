@@ -168,21 +168,64 @@ fn nearest_existing(path: &Path) -> PathBuf {
 }
 
 fn disk_usage_gb(path: &Path) -> Option<(f64, f64)> {
-    let output = Command::new("df")
-        .arg("-B1")
-        .arg("--output=size,avail")
-        .arg(path)
-        .output()
-        .ok()?;
+    let output = Command::new("df").arg("-k").arg(path).output().ok()?;
     if !output.status.success() {
         return None;
     }
+    parse_df_k(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parses POSIX `df -k` output (Linux and macOS): columns are
+/// `Filesystem 1K-blocks Used Available ...`; the device name may wrap onto
+/// its own line, so the numeric columns are located from the end of the row.
+fn parse_df_k(text: &str) -> Option<(f64, f64)> {
+    let body: Vec<&str> = text.lines().skip(1).flat_map(|l| l.split_whitespace()).collect();
+    let numeric: Vec<f64> = body.iter().filter_map(|t| t.parse::<f64>().ok()).collect();
+    if numeric.len() < 3 {
+        return None;
+    }
+    let size_kb = numeric[0];
+    let avail_kb = numeric[2];
+    Some((kb_to_gb(size_kb), kb_to_gb(avail_kb)))
+}
+
+fn sysctl(key: &str) -> Option<String> {
+    let output = Command::new("sysctl").args(["-n", key]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Approximate free RAM on macOS from `vm_stat` (free + inactive + speculative pages).
+fn macos_available_ram_gb() -> Option<f64> {
+    let output = Command::new("vm_stat").output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().nth(1)?;
-    let mut parts = line.split_whitespace();
-    let size = parts.next()?.parse::<f64>().ok()?;
-    let avail = parts.next()?.parse::<f64>().ok()?;
-    Some((bytes_to_gb(size), bytes_to_gb(avail)))
+    let page_size = text
+        .lines()
+        .next()
+        .and_then(|l| l.split("page size of").nth(1))
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(16384.0);
+    let pages = |key: &str| -> f64 {
+        text.lines()
+            .find(|l| l.starts_with(key))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|v| v.trim().trim_end_matches('.'))
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
+    let free = pages("Pages free") + pages("Pages inactive") + pages("Pages speculative");
+    if free <= 0.0 {
+        return None;
+    }
+    Some(bytes_to_gb(free * page_size))
 }
 
 fn detect_nvidia_gpus() -> Vec<GpuInfo> {
@@ -223,39 +266,79 @@ fn detect_amd_gpus() -> Vec<GpuInfo> {
         .collect()
 }
 
-fn detect_apple_silicon(notes: &mut Vec<String>) -> Vec<GpuInfo> {
+fn detect_apple_silicon(cpu_model: &str, ram_total_gb: f64, notes: &mut Vec<String>) -> Vec<GpuInfo> {
     if !cfg!(target_os = "macos") {
         return Vec::new();
     }
-    notes.push("Apple Silicon shares system RAM with the GPU; the estimate treats RAM as unified memory.".to_string());
-    Vec::new()
+    let arm = sysctl("hw.optional.arm64").map(|v| v == "1").unwrap_or(false);
+    if !arm {
+        notes.push("Intel Mac detected; Ollama runs on CPU here (no Metal acceleration for discrete AMD GPUs).".to_string());
+        return Vec::new();
+    }
+    notes.push(format!(
+        "Apple Silicon: the GPU shares the {ram_total_gb} GB of unified memory (about 75% is usable for models); estimates use Metal bandwidth for this chip."
+    ));
+    vec![GpuInfo {
+        name: format!("{} GPU (unified memory)", cpu_model.trim()),
+        vram_gb: round1(ram_total_gb),
+    }]
+}
+
+/// Memory bandwidth (GB/s) of Apple Silicon chips by tier, inferred from the
+/// CPU brand string (e.g. "Apple M3 Pro").
+fn apple_unified_bandwidth_gbps(chip: &str) -> f64 {
+    let chip = chip.to_ascii_lowercase();
+    if chip.contains("ultra") {
+        800.0
+    } else if chip.contains("max") {
+        400.0
+    } else if chip.contains("pro") {
+        200.0
+    } else if chip.contains("m4") || chip.contains("m3") || chip.contains("m2") || chip.contains("m1") {
+        110.0
+    } else {
+        100.0
+    }
 }
 
 pub fn check_hardware_specs() -> HardwareSpecs {
     let mut notes = Vec::new();
 
-    let cpuinfo = read_to_string("/proc/cpuinfo");
-    let cpu_model = cpuinfo
-        .lines()
-        .find(|line| line.starts_with("model name"))
-        .and_then(|line| line.split(':').nth(1))
-        .map(|value| value.trim().to_string())
-        .unwrap_or_else(|| "Unknown CPU".to_string());
     let cpu_cores = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(0);
-
-    let meminfo = read_to_string("/proc/meminfo");
-    let ram_total_gb = parse_meminfo_kb(&meminfo, "MemTotal:").map(kb_to_gb).unwrap_or(0.0);
-    let ram_available_gb = parse_meminfo_kb(&meminfo, "MemAvailable:").map(kb_to_gb).unwrap_or(0.0);
-    if ram_total_gb <= 0.0 {
-        notes.push("Could not read /proc/meminfo; RAM figures are unavailable.".to_string());
-    }
+    let (cpu_model, ram_total_gb, ram_available_gb) = if cfg!(target_os = "macos") {
+        let cpu_model = sysctl("machdep.cpu.brand_string").unwrap_or_else(|| "Unknown CPU".to_string());
+        let ram_total_gb = sysctl("hw.memsize")
+            .and_then(|v| v.parse::<f64>().ok())
+            .map(bytes_to_gb)
+            .unwrap_or(0.0);
+        let ram_available_gb = macos_available_ram_gb().unwrap_or(ram_total_gb * 0.6);
+        if ram_total_gb <= 0.0 {
+            notes.push("Could not read hw.memsize; RAM figures are unavailable.".to_string());
+        }
+        (cpu_model, ram_total_gb, ram_available_gb)
+    } else {
+        let cpuinfo = read_to_string("/proc/cpuinfo");
+        let cpu_model = cpuinfo
+            .lines()
+            .find(|line| line.starts_with("model name"))
+            .and_then(|line| line.split(':').nth(1))
+            .map(|value| value.trim().to_string())
+            .unwrap_or_else(|| "Unknown CPU".to_string());
+        let meminfo = read_to_string("/proc/meminfo");
+        let ram_total_gb = parse_meminfo_kb(&meminfo, "MemTotal:").map(kb_to_gb).unwrap_or(0.0);
+        let ram_available_gb = parse_meminfo_kb(&meminfo, "MemAvailable:").map(kb_to_gb).unwrap_or(0.0);
+        if ram_total_gb <= 0.0 {
+            notes.push("Could not read /proc/meminfo; RAM figures are unavailable.".to_string());
+        }
+        (cpu_model, ram_total_gb, ram_available_gb)
+    };
 
     let mut gpus = detect_nvidia_gpus();
     if gpus.is_empty() {
         gpus = detect_amd_gpus();
     }
     if gpus.is_empty() {
-        gpus = detect_apple_silicon(&mut notes);
+        gpus = detect_apple_silicon(&cpu_model, ram_total_gb, &mut notes);
     }
     if gpus.is_empty() {
         notes.push("No discrete GPU detected (nvidia-smi / rocm-smi not available); estimates assume CPU inference.".to_string());
@@ -319,7 +402,7 @@ pub fn estimate_performance(spec: &LocalModelSpec, hw: &HardwareSpecs) -> Perfor
     let kv_gb = (spec.params_b / 8.0).max(0.5) * 1.0;
     let memory_needed_gb = round1(spec.file_gb * 1.1 + kv_gb);
 
-    let unified = cfg!(target_os = "macos");
+    let unified = cfg!(target_os = "macos") && !hw.gpus.is_empty();
     let vram = hw.vram_total_gb;
     let ram = if hw.ram_total_gb > 0.0 { hw.ram_total_gb } else { f64::INFINITY };
 
@@ -335,14 +418,13 @@ pub fn estimate_performance(spec: &LocalModelSpec, hw: &HardwareSpecs) -> Perfor
             gpu_share * 100.0
         ));
         ("gpu+cpu".to_string(), blended, 6.0)
+    } else if unified && memory_needed_gb <= ram * 0.75 {
+        let chip = hw.gpus.first().map(|g| g.name.as_str()).unwrap_or("");
+        reasons.push(format!("Fits in unified memory ({memory_needed_gb} GB needed, {} GB RAM).", hw.ram_total_gb));
+        ("unified".to_string(), apple_unified_bandwidth_gbps(chip), 15.0)
     } else if memory_needed_gb <= ram * 0.8 {
-        if unified {
-            reasons.push(format!("Fits in unified memory ({memory_needed_gb} GB needed, {} GB RAM).", hw.ram_total_gb));
-            ("unified".to_string(), 250.0, 15.0)
-        } else {
-            reasons.push(format!("Runs on CPU from system RAM ({memory_needed_gb} GB needed, {} GB RAM).", hw.ram_total_gb));
-            ("cpu".to_string(), cpu_bandwidth_gbps(hw.cpu_cores), 4.0)
-        }
+        reasons.push(format!("Runs on CPU from system RAM ({memory_needed_gb} GB needed, {} GB RAM).", hw.ram_total_gb));
+        ("cpu".to_string(), cpu_bandwidth_gbps(hw.cpu_cores), 4.0)
     } else {
         reasons.push(format!(
             "Needs about {memory_needed_gb} GB of memory but only {} GB RAM / {vram} GB VRAM available.",
@@ -431,6 +513,19 @@ fn which(binary: &str) -> Option<String> {
     }
 }
 
+/// GUI apps on macOS don't inherit the shell PATH, so check the usual
+/// Homebrew and Ollama.app locations when `which` finds nothing.
+fn find_ollama_in_known_locations() -> Option<String> {
+    [
+        "/opt/homebrew/bin/ollama",
+        "/usr/local/bin/ollama",
+        "/Applications/Ollama.app/Contents/Resources/ollama",
+    ]
+    .iter()
+    .find(|p| Path::new(p).exists())
+    .map(|p| p.to_string())
+}
+
 pub fn normalize_host(host: &str) -> String {
     let trimmed = host.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -479,7 +574,7 @@ pub fn ollama_status(host: &str) -> OllamaStatus {
         host: host.clone(),
         ..OllamaStatus::default()
     };
-    if let Some(path) = which("ollama") {
+    if let Some(path) = which("ollama").or_else(find_ollama_in_known_locations) {
         status.binary_found = true;
         status.binary_path = path;
     }
@@ -561,11 +656,28 @@ pub fn validate_model(host: &str, model: &str) -> Result<(), String> {
 /// Shell script run inside a terminal window to install Ollama (if needed)
 /// and pull the requested model.
 pub fn build_install_script(model: &str, ollama_installed: bool) -> String {
+    build_install_script_for(model, ollama_installed, cfg!(target_os = "macos"))
+}
+
+pub fn build_install_script_for(model: &str, ollama_installed: bool, macos: bool) -> String {
     let quoted = shell_quote(model);
     let mut script = String::from("set -e\n");
+    if macos {
+        script.push_str("export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\n");
+    }
     if !ollama_installed {
         script.push_str("echo '== Installing Ollama (https://ollama.com/download) =='\n");
-        script.push_str("curl -fsSL https://ollama.com/install.sh | sh\n");
+        if macos {
+            script.push_str("if command -v brew >/dev/null 2>&1; then\n");
+            script.push_str("  brew install ollama\n");
+            script.push_str("else\n");
+            script.push_str("  echo 'Homebrew not found. Download Ollama for macOS from https://ollama.com/download, open it once, then re-run Install.'\n");
+            script.push_str("  read -r -p 'Press Enter to close this window...' _\n");
+            script.push_str("  exit 1\n");
+            script.push_str("fi\n");
+        } else {
+            script.push_str("curl -fsSL https://ollama.com/install.sh | sh\n");
+        }
     }
     script.push_str("if ! curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then\n");
     script.push_str("  echo '== Starting Ollama server in the background =='\n");
@@ -585,6 +697,35 @@ pub fn shell_quote(value: &str) -> String {
 }
 
 pub fn build_terminal_command(terminal_app: &str, script: &str) -> (String, Vec<String>) {
+    if cfg!(target_os = "macos") {
+        return build_macos_terminal_command(terminal_app, script);
+    }
+    build_linux_terminal_command(terminal_app, script)
+}
+
+/// macOS terminals can't take an inline command, so the script is written to
+/// a `.command` file (Terminal/iTerm run those directly) and opened with
+/// `open -a <App>`.
+fn build_macos_terminal_command(terminal_app: &str, script: &str) -> (String, Vec<String>) {
+    let app = if terminal_app.trim().is_empty() || terminal_app.contains('/') && !terminal_app.ends_with(".app") {
+        "Terminal".to_string()
+    } else {
+        terminal_app.trim().trim_end_matches(".app").to_string()
+    };
+    let path = std::env::temp_dir().join("physics-ide-ollama-install.command");
+    let _ = std::fs::write(&path, format!("#!/bin/bash\n{script}"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+    }
+    (
+        "open".to_string(),
+        vec!["-a".to_string(), app, path.to_string_lossy().to_string()],
+    )
+}
+
+fn build_linux_terminal_command(terminal_app: &str, script: &str) -> (String, Vec<String>) {
     let terminal_app = if terminal_app.trim().is_empty() {
         "x-terminal-emulator"
     } else {
@@ -773,10 +914,10 @@ mod tests {
 
     #[test]
     fn terminal_command_shapes() {
-        let (app, args) = build_terminal_command("gnome-terminal", "echo hi");
+        let (app, args) = build_linux_terminal_command("gnome-terminal", "echo hi");
         assert_eq!(app, "gnome-terminal");
         assert_eq!(args[0], "--");
-        let (_, args) = build_terminal_command("xterm", "echo hi");
+        let (_, args) = build_linux_terminal_command("xterm", "echo hi");
         assert_eq!(args[0], "-e");
         assert_eq!(args[1..3], ["bash".to_string(), "-c".to_string()]);
     }
@@ -802,5 +943,34 @@ mod tests {
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].quant, "Q4_K_M");
         assert!(models[0].size_gb > 4.0);
+    }
+
+    #[test]
+    fn df_k_parses_linux_and_macos_layouts() {
+        let linux = "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/nvme0n1p2 1000000 400000 600000 40% /\n";
+        let (total, free) = parse_df_k(linux).unwrap();
+        assert!((total - kb_to_gb(1_000_000.0)).abs() < 1e-9);
+        assert!((free - kb_to_gb(600_000.0)).abs() < 1e-9);
+        let mac = "Filesystem   1024-blocks      Used Available Capacity iused ifree %iused  Mounted on\n/dev/disk3s5   971350180 300000000 500000000    38%  1000 2000    0%   /System/Volumes/Data\n";
+        let (total, free) = parse_df_k(mac).unwrap();
+        assert!((total - kb_to_gb(971_350_180.0)).abs() < 1e-9);
+        assert!((free - kb_to_gb(500_000_000.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn apple_bandwidth_tiers_increase() {
+        assert!(apple_unified_bandwidth_gbps("Apple M3") < apple_unified_bandwidth_gbps("Apple M3 Pro"));
+        assert!(apple_unified_bandwidth_gbps("Apple M3 Pro") < apple_unified_bandwidth_gbps("Apple M3 Max"));
+        assert!(apple_unified_bandwidth_gbps("Apple M3 Max") < apple_unified_bandwidth_gbps("Apple M2 Ultra"));
+    }
+
+    #[test]
+    fn macos_install_script_uses_brew_not_linux_installer() {
+        let script = build_install_script_for("qwen2.5:14b", false, true);
+        assert!(script.contains("brew install ollama"));
+        assert!(!script.contains("install.sh"));
+        assert!(script.contains("ollama pull 'qwen2.5:14b'"));
+        let linux = build_install_script_for("qwen2.5:14b", false, false);
+        assert!(linux.contains("install.sh"));
     }
 }
