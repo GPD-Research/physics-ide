@@ -836,7 +836,19 @@
               box-shadow: 0 4px 20px rgba(0,0,0,0.5);
       }
   
-      .doc-glass {
+  
+    .local-ai-model-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; }
+    .local-ai-row { display: grid; grid-template-columns: minmax(170px, 1.4fr) 70px 70px 60px minmax(150px, 1fr) auto; gap: 8px; align-items: center; font-size: 0.78rem; padding: 4px 6px; border-radius: 4px; }
+    .local-ai-row.header { font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); }
+    .local-ai-row.installed .local-ai-name { color: #4ade80; font-weight: 600; }
+    .local-ai-row.unusable { opacity: 0.6; }
+    .local-ai-spectrum { position: relative; height: 10px; border-radius: 5px; background: linear-gradient(90deg, #22c55e 0%, #eab308 50%, #3b82f6 100%); }
+    .local-ai-spectrum .marker { position: absolute; top: -3px; width: 4px; height: 16px; background: var(--text); border-radius: 2px; transform: translateX(-50%); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
+    .local-ai-spectrum-wrap { display: flex; align-items: center; gap: 6px; font-size: 0.68rem; color: var(--text-muted); }
+    .local-ai-unusable { color: #f87171; font-weight: 600; font-size: 0.74rem; }
+    .local-ai-actions { display: flex; gap: 4px; }
+    .local-ai-actions button { padding: 2px 8px; font-size: 0.72rem; }
+    .doc-glass {
         background-color: var(--menu-glass-bg) !important;
         border: 1px solid color-mix(in srgb, var(--border-color) 72%, white 28%) !important;
         box-shadow: inset 0 1px rgba(255, 255, 255, 0.23), 0 12px 28px rgba(0, 0, 0, 0.38);
@@ -1699,6 +1711,30 @@
 	            </div>
 	          </div>
 
+
+            <div class="pane-config-block" id="local-ai-block">
+              <h4>Local AI (Ollama)</h4>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+                Run models on this machine through Ollama. No API key or token limits; speed depends on your hardware.
+              </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px;">
+                <div class="form-group" style="flex: 1 1 240px; margin-bottom: 0;">
+                  <label for="settings-ollama-host">Ollama Host</label>
+                  <input type="text" id="settings-ollama-host" placeholder="http://127.0.0.1:11434" oninput="markAiRouteValidationPendingForProvider('ollama')">
+                </div>
+                <button type="button" onclick="refreshLocalAiOverview()" title="Check Ollama install/server status and refresh the model list">Refresh</button>
+                <button type="button" onclick="checkHardwareSpecs()" title="Read VRAM, RAM, disk and CPU to estimate which models will run reasonably">Check Hardware Specs</button>
+              </div>
+              <div id="local-ai-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">Ollama status not checked yet.</div>
+              <div id="local-ai-hardware" style="font-size: 0.78rem; color: var(--accent-dim); margin-bottom: 8px;">Hardware not checked. Click "Check Hardware Specs" to see a deep&harr;quick estimate per model.</div>
+              <div id="local-ai-model-list" class="local-ai-model-list">
+                <div style="color: var(--text-muted); padding: 4px 2px;">Click Refresh to list local models.</div>
+              </div>
+              <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 6px;">
+                Green = downloaded. Install opens your terminal with the Ollama download commands. Estimates assume a ~9K-token prompt (primer + retrieval) and a ~500-token reply; anything over 60 s per query is marked unusable.
+              </div>
+            </div>
+
             <div class="pane-config-block">
               <h4>AI Routing Summary</h4>
               <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
@@ -1828,6 +1864,17 @@
             </div>
             <div id="ai-catalog-gemini-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
           </div>
+
+          <div class="form-group" style="margin-bottom: 0; margin-top: 10px;">
+            <label for="ai-catalog-ollama-select">Local AI (Ollama) Downloaded Models</label>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <select id="ai-catalog-ollama-select" style="flex: 1 1 280px;"></select>
+              <button type="button" onclick="refreshLocalAiOverview()" title="Refresh downloaded Ollama models">Refresh</button>
+              <button type="button" onclick="applyCatalogModelToPane('ollama', 'left')" title="Apply selected local model to left pane">Use Left</button>
+              <button type="button" onclick="applyCatalogModelToPane('ollama', 'right')" title="Apply selected local model to right pane">Use Right</button>
+            </div>
+            <div id="ai-catalog-ollama-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Not loaded yet.</div>
+          </div>
         </div>
 
         <div class="ai-routing-pane-stack">
@@ -1838,6 +1885,7 @@
               <select id="settings-left-provider" onchange="updateModelUI('left'); syncAiRoutingSummaries(); markAiRouteValidationPending('left', 'Left route changed. Validate again.');">
                 <option value="gemini">Google Gemini</option>
                 <option value="openai">OpenAI</option>
+                <option value="ollama">Local AI (Ollama)</option>
               </select>
             </div>
             <div class="form-group">
@@ -1867,6 +1915,7 @@
               <select id="settings-right-provider" onchange="updateModelUI('right'); syncAiRoutingSummaries(); markAiRouteValidationPending('right', 'Right route changed. Validate again.');">
                 <option value="gemini">Google Gemini</option>
                 <option value="openai">OpenAI</option>
+                <option value="ollama">Local AI (Ollama)</option>
               </select>
             </div>
             <div class="form-group">
@@ -1892,7 +1941,7 @@
       </div>
 
       <div style="font-size: 0.78rem; color: var(--accent-dim); margin-top: 8px;">
-        Current backend supports Gemini and OpenAI provider routes. Other providers need backend integration before they can be called.
+        Backend supports Gemini, OpenAI, and Local AI (Ollama) routes. Local models are managed in Customize &rarr; AI Configuration &rarr; Local AI.
       </div>
     </div>
   </div>
@@ -2510,12 +2559,16 @@
     };
     const providerModelCatalog = {
       openai: [],
-      gemini: []
+      gemini: [],
+      ollama: []
     };
     const providerCatalogValidationProgress = {
       openai: { total: 0, tested: 0, validated: 0, running: false },
-      gemini: { total: 0, tested: 0, validated: 0, running: false }
+      gemini: { total: 0, tested: 0, validated: 0, running: false },
+      ollama: { total: 0, tested: 0, validated: 0, running: false }
     };
+    let localAiHardware = null;
+    let localAiOverview = null;
     const aiRouteValidationState = {
       left: { ok: false, stamp: '' },
       right: { ok: false, stamp: '' }
@@ -2560,12 +2613,15 @@
       if (normalizedProvider === 'openai') {
         return side === 'left' ? 'gpt-4.1' : 'gpt-4.1-mini';
       }
+      if (normalizedProvider === 'ollama') {
+        return 'llama3.1:8b';
+      }
       return 'gemini-2.5-flash';
     }
 
     function normalizeProviderForV7(provider) {
       const normalized = (provider || '').toLowerCase();
-      if (normalized === 'openai' || normalized === 'gemini') {
+      if (normalized === 'openai' || normalized === 'gemini' || normalized === 'ollama') {
         return normalized;
       }
       return 'openai';
@@ -3288,6 +3344,9 @@
       if (normalized === 'gemini') {
         return normalizeApiKeyValue(document.getElementById('settings-gemini-key')?.value || '');
       }
+      if (normalized === 'ollama') {
+        return getOllamaHostFromUi();
+      }
       return normalizeApiKeyValue(document.getElementById('settings-openai-key')?.value || '');
     }
 
@@ -3320,6 +3379,7 @@
       const normalizedProvider = normalizeProviderForV7(provider);
       const normalizedModel = String(model || '').trim().toLowerCase();
       if (!normalizedModel) return false;
+      if (normalizedProvider === 'ollama') return false;
       if (normalizedProvider === 'openai' && !normalizedModel.startsWith('gpt-')) return true;
       if (normalizedProvider === 'gemini' && !normalizedModel.startsWith('gemini-')) return true;
       return false;
@@ -3418,6 +3478,11 @@
 
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-ai-file-access').value = currentConfig.ai_file_access_mode || 'disabled';
+        const ollamaHostInput = document.getElementById('settings-ollama-host');
+        if (ollamaHostInput) ollamaHostInput.value = currentConfig.ollama_host || 'http://127.0.0.1:11434';
+        if (leftProvider === 'ollama' || rightProvider === 'ollama') {
+          refreshLocalAiOverview().catch(() => {});
+        }
         document.getElementById('settings-left-provider').value = leftProvider;
         document.getElementById('settings-right-provider').value = rightProvider;
         document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
@@ -4662,10 +4727,153 @@
       appendTerminalLog(`AI testing suite complete: ${suiteName} (${aggregatePasses}/${aggregateChecks}).`);
     }
 
+
+    function getOllamaHostFromUi() {
+      const raw = String(document.getElementById('settings-ollama-host')?.value || currentConfig?.ollama_host || '').trim();
+      return raw || 'http://127.0.0.1:11434';
+    }
+
+    function setLocalAiStatus(message, isError = false) {
+      const target = document.getElementById('local-ai-status');
+      if (!target) return;
+      target.textContent = message;
+      target.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    function describeHardware(hw) {
+      if (!hw) return '';
+      const gpu = Array.isArray(hw.gpus) && hw.gpus.length
+        ? hw.gpus.map((g) => `${g.name} (${g.vram_gb} GB VRAM)`).join(', ')
+        : 'no discrete GPU detected';
+      return `CPU: ${hw.cpu_model} (${hw.cpu_cores} threads) · RAM: ${hw.ram_total_gb} GB (${hw.ram_available_gb} GB free) · GPU: ${gpu} · Disk for models: ${hw.disk_free_gb} / ${hw.disk_total_gb} GB free at ${hw.disk_path}`;
+    }
+
+    async function checkHardwareSpecs() {
+      const target = document.getElementById('local-ai-hardware');
+      if (target) target.textContent = 'Probing hardware...';
+      try {
+        const response = await invoke('check_hardware_specs');
+        localAiHardware = typeof response === 'string' ? JSON.parse(response) : response;
+        if (target) {
+          const notes = Array.isArray(localAiHardware.notes) && localAiHardware.notes.length ? ` — ${localAiHardware.notes.join(' ')}` : '';
+          target.textContent = describeHardware(localAiHardware) + notes;
+        }
+        appendTerminalLog(`Hardware specs: ${describeHardware(localAiHardware)}`);
+        await refreshLocalAiOverview();
+      } catch (err) {
+        if (target) target.textContent = `Hardware check failed: ${err}`;
+        appendTerminalLog(`Hardware check failed: ${err}`);
+      }
+    }
+
+    async function refreshLocalAiOverview() {
+      setLocalAiStatus('Checking Ollama...');
+      try {
+        const response = await invoke('get_local_ai_overview', {
+          payload: { host: getOllamaHostFromUi(), hardware: localAiHardware }
+        });
+        localAiOverview = typeof response === 'string' ? JSON.parse(response) : response;
+        const status = localAiOverview.status || {};
+        if (status.running) {
+          setLocalAiStatus(`Ollama ${status.version || ''} running at ${status.host} · ${status.installed_models.length} model(s) downloaded.`);
+        } else {
+          setLocalAiStatus(status.error || 'Ollama server not reachable.', true);
+        }
+        providerModelCatalog.ollama = (status.installed_models || []).map((m) => m.name);
+        renderProviderModelCatalog('ollama');
+        setProviderCatalogStatus('ollama', status.running ? `Loaded ${providerModelCatalog.ollama.length} downloaded model(s).` : 'Ollama not reachable.', !status.running);
+        renderLocalAiModelList();
+        ['left', 'right'].forEach((side) => {
+          if (document.getElementById(`settings-${side}-provider`)?.value === 'ollama') {
+            updateModelUI(side, getEffectivePaneModelFromUi(side));
+          }
+        });
+      } catch (err) {
+        setLocalAiStatus(`Ollama check failed: ${err}`, true);
+      }
+    }
+
+    function spectrumMarkup(estimate) {
+      if (!estimate) {
+        return '<span style="color: var(--text-muted); font-size: 0.72rem;">Check specs for estimate</span>';
+      }
+      if (estimate.verdict === 'unusable') {
+        const why = escapeHelpHtml((estimate.reasons || []).join(' '));
+        return `<span class="local-ai-unusable" title="${why}">Unusable</span>`;
+      }
+      const pct = Math.round((estimate.spectrum_position || 0) * 100);
+      const title = escapeHelpHtml(`~${estimate.est_response_seconds}s per query · ${estimate.gen_tokens_per_sec} tok/s on ${estimate.runs_on} · ${(estimate.reasons || []).join(' ')}`);
+      return `<div class="local-ai-spectrum-wrap" title="${title}"><span>quick</span><div class="local-ai-spectrum" style="flex:1;"><div class="marker" style="left:${pct}%"></div></div><span>deep</span><span style="min-width:34px; text-align:right;">~${Math.round(estimate.est_response_seconds)}s</span></div>`;
+    }
+
+    function renderLocalAiModelList() {
+      const list = document.getElementById('local-ai-model-list');
+      if (!list) return;
+      const overview = localAiOverview || {};
+      const status = overview.status || {};
+      const catalog = Array.isArray(overview.catalog) ? overview.catalog.slice() : [];
+      const known = new Set(catalog.map((m) => m.name.replace(/:latest$/, '').toLowerCase()));
+      (status.installed_models || []).forEach((m) => {
+        const key = String(m.name || '').replace(/:latest$/, '').toLowerCase();
+        if (!known.has(key)) {
+          catalog.unshift({
+            name: m.name,
+            family: m.family || 'local',
+            params_b: parseFloat(m.params) || 0,
+            quant: m.quant || '',
+            file_gb: m.size_gb || 0,
+            description: 'Downloaded model not in the curated list.',
+            installed: true,
+            estimate: null
+          });
+        }
+      });
+      catalog.sort((a, b) => (b.installed - a.installed) || (a.params_b - b.params_b));
+
+      const rows = catalog.map((m) => {
+        const cls = ['local-ai-row', m.installed ? 'installed' : '', m.estimate?.verdict === 'unusable' ? 'unusable' : ''].join(' ');
+        const safeName = escapeHelpHtml(m.name);
+        const desc = escapeHelpHtml(m.description || '');
+        const actions = m.installed
+          ? `<button type="button" onclick="useLocalModel('${safeName}', 'left')" title="Load this model into the left pane">Left</button><button type="button" onclick="useLocalModel('${safeName}', 'right')" title="Load this model into the right pane">Right</button>`
+          : `<button type="button" onclick="installLocalModel('${safeName}')" title="Open a terminal that downloads this model with Ollama"${m.estimate?.verdict === 'unusable' ? ' disabled' : ''}>Install</button>`;
+        return `<div class="${cls}" title="${desc}"><span class="local-ai-name">${safeName}${m.installed ? ' ✓' : ''}</span><span>${m.params_b ? m.params_b + 'B' : '—'}</span><span>${escapeHelpHtml(m.quant || '—')}</span><span>${m.file_gb ? m.file_gb + ' GB' : '—'}</span>${spectrumMarkup(m.estimate)}<span class="local-ai-actions">${actions}</span></div>`;
+      });
+      list.innerHTML = `<div class="local-ai-row header"><span>Model</span><span>Params</span><span>Quant</span><span>Size</span><span>Estimate</span><span></span></div>${rows.join('')}`;
+    }
+
+    function useLocalModel(modelName, side) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const providerSelect = document.getElementById(`settings-${safeSide}-provider`);
+      if (providerSelect) providerSelect.value = 'ollama';
+      updateModelUI(safeSide, modelName);
+      const customInput = document.getElementById(`settings-${safeSide}-model-custom`);
+      if (customInput) customInput.value = isKnownModelOption('ollama', modelName) ? '' : modelName;
+      syncAiRoutingSummaries();
+      markAiRouteValidationPending(safeSide, `Local model ${modelName} selected. Validate (or Save) to apply.`);
+      appendTerminalLog(`Local AI: ${modelName} assigned to ${safeSide} pane (save settings to apply).`);
+    }
+
+    async function installLocalModel(modelName) {
+      const status = localAiOverview?.status || {};
+      const terminalApp = String(document.getElementById('settings-terminal')?.value || currentConfig?.terminal_app || '').trim();
+      try {
+        const result = await invoke('install_local_model', {
+          payload: { model: modelName, terminalApp, ollamaInstalled: !!status.binary_found }
+        });
+        setLocalAiStatus(`${result}. Click Refresh when the download finishes.`);
+        appendTerminalLog(result);
+      } catch (err) {
+        setLocalAiStatus(`Install launch failed: ${err}`, true);
+        appendTerminalLog(`Local AI install failed: ${err}`);
+      }
+    }
+
     function getProviderDisplayName(provider) {
       switch (provider) {
         case 'gemini': return 'Gemini';
         case 'openai': return 'OpenAI';
+        case 'ollama': return 'Local AI';
         default: return 'Assistant';
       }
     }
@@ -5676,6 +5884,7 @@ async function restoreVersion() {
 
       renderProviderModelCatalog('openai');
       renderProviderModelCatalog('gemini');
+      renderProviderModelCatalog('ollama');
       modal.style.display = 'flex';
       updateSaveGateForAiValidation();
 
@@ -8244,8 +8453,10 @@ async function restoreVersion() {
         ai_file_access_mode: aiFileAccessMode
       };
 
-      const leftApiKey = leftProvider === 'gemini' ? geminiKey.trim() : openaiKey.trim();
-      const rightApiKey = rightProvider === 'gemini' ? geminiKey.trim() : openaiKey.trim();
+      const ollamaHost = getOllamaHostFromUi();
+      payload.ollama_host = ollamaHost;
+      const leftApiKey = getApiKeyForProvider(leftProvider);
+      const rightApiKey = getApiKeyForProvider(rightProvider);
 
       try {
         await validateAiRouteModelSelection('left', leftProvider, leftModel, leftApiKey, { showStatus: true });
@@ -8283,6 +8494,7 @@ async function restoreVersion() {
         currentConfig.left_preserve_thread_history = leftPreserveThreadHistory;
         currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
         currentConfig.ai_file_access_mode = aiFileAccessMode;
+        currentConfig.ollama_host = ollamaHost;
 
         const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
         const rightModelChanged = previousRightProvider !== rightProvider || previousRightModel !== rightModel;
