@@ -836,6 +836,67 @@
               box-shadow: 0 4px 20px rgba(0,0,0,0.5);
       }
   
+      .doc-glass {
+        background-color: var(--menu-glass-bg) !important;
+        border: 1px solid color-mix(in srgb, var(--border-color) 72%, white 28%) !important;
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.23), 0 12px 28px rgba(0, 0, 0, 0.38);
+        backdrop-filter: blur(18px) saturate(145%);
+        -webkit-backdrop-filter: blur(18px) saturate(145%);
+      }
+      .doc-actions-menu {
+        position: fixed;
+        z-index: 1400;
+        min-width: 230px;
+        border-radius: 6px;
+        padding: 4px 0;
+        font-size: 0.82rem;
+      }
+      .doc-actions-menu .doc-actions-title {
+        padding: 6px 12px 4px;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 340px;
+      }
+      .doc-actions-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        padding: 6px 12px;
+        color: var(--text);
+        font-size: 0.82rem;
+        cursor: pointer;
+      }
+      .doc-actions-menu button:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+      .doc-actions-menu button:disabled { opacity: 0.45; cursor: default; }
+      .doc-actions-menu hr { border: 0; border-top: 1px solid var(--border-color); margin: 4px 0; }
+      .doc-editor-toolbar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+      .doc-editor-toolbar button { padding: 3px 9px; font-size: 0.75rem; }
+      #doc-editor-textarea {
+        flex: 1;
+        min-height: 320px;
+        width: 100%;
+        resize: none;
+        background-color: var(--bg-darker);
+        color: var(--text);
+        border: 1px solid var(--border-panel);
+        border-radius: 4px;
+        padding: 10px;
+        font-family: monospace;
+        font-size: 0.82rem;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        box-sizing: border-box;
+      }
+      #scratchpad-content { white-space: pre-wrap; }
+
       .modal-header {
         font-size: 1.2rem;
         color: var(--accent);
@@ -1095,8 +1156,11 @@
     <div class="menu-item">
       Edit
       <div class="dropdown-content">
-        <a href="#" onclick="alert('Formula clipboard copy...')" title="Copy equation text to clipboard (placeholder)">Copy Math String</a>
-        <a href="#" onclick="alert('Paste external parameters...')" title="Paste external context buffer (placeholder)">Paste Context Buffer</a>
+        <div class="menu-section">App buffer (equation-safe copy/paste)</div>
+        <a href="#" onclick="copySelectionToAppBuffer(); return false;" title="Copy the current selection into the in-app document buffer (raw text, no clipboard mangling)">Copy Selection to App Buffer</a>
+        <a href="#" onclick="pasteAppBufferIntoActive(); return false;" title="Paste the in-app document buffer into the focused editor or note pad">Paste App Buffer</a>
+        <a href="#" onclick="showAppBuffer(); return false;" title="View the in-app document buffer contents">Show App Buffer...</a>
+        <a href="#" onclick="clearAppBuffer(); return false;" title="Empty the in-app document buffer">Clear App Buffer</a>
       </div>
     </div>
     <div class="menu-item">
@@ -1113,6 +1177,18 @@
         <div class="menu-section">Navigation</div>
         <a href="#" onclick="rotateLeft(1); return false;" title="Switch to next analytical lane thread">Next Analytical Slot</a>
         <a href="#" onclick="rotateRight(1); return false;" title="Switch to next creative lane thread">Next Creative Slot</a>
+      </div>
+    </div>
+    <div class="menu-item">
+      Session Docs
+      <div class="dropdown-content">
+        <div class="menu-section">Today</div>
+        <a href="#" onclick="openSessionDoc('notes'); return false;" title="Open today's session_notes_YYYY-MM-DD.md in the built-in editor (created if missing)">Open Session Notes</a>
+        <a href="#" onclick="openSessionDoc('equations'); return false;" title="Open today's session_equations_YYYY-MM-DD.md in the built-in editor (created if missing)">Open Session Equations</a>
+        <div class="menu-section">Documents</div>
+        <a href="#" onclick="openDocumentFromDialog('editor'); return false;" title="Choose any .md/.txt/.pdf file and open it in the built-in editor">Open Document in Editor...</a>
+        <a href="#" onclick="openDocumentFromDialog('notepad'); return false;" title="Choose any .md/.txt/.pdf file and load its text into the note pad">Load Document into Note Pad...</a>
+        <a href="#" onclick="openDocEditor({ text: '', title: 'Untitled' }); return false;" title="Open an empty built-in editor document">New Blank Document</a>
       </div>
     </div>
     <div class="menu-item">
@@ -1405,6 +1481,8 @@
               <button onclick="loadMasterAxiomIntoEquationPanel()" title="Load master axiom content into equation panel">View Axiom File</button>
               <button onclick="openMasterAxiomEditor()" title="Open the master axiom file in editor">Edit Axiom File</button>
               <button class="btn-large btn-special" onclick="saveEquation()" title="Save equation output to workspace markdown">💾 Save to Workspace</button>
+              <button onclick="appendEquationPanelToSessionEquations(this)" title="Append this LaTeX to today's session_equations_YYYY-MM-DD.md">Add to session equations</button>
+              <button onclick="openDocActionsMenu(this, equationPanelSpec())" title="Send to note pad, session notes, built-in or external editor">Document ▾</button>
             </div>
             <div id="equation-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; min-height: 16px;">
               Equation tools ready.
@@ -1420,6 +1498,10 @@
               <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="formatScratchpad('italic')" title="Apply italic formatting"><i>I</i></button>
               <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\\int_{0}^{\\infty}')" title="Insert integral LaTeX snippet">∫ LaTeX</button>
               <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="insertScratchpadText('\n--- Note ---\n')" title="Insert note divider">Divider</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="copySelectionToAppBuffer()" title="Copy selection to the in-app buffer (raw text)">Copy▸Buf</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="pasteAppBufferInto(document.getElementById('scratchpad-content'))" title="Paste the in-app buffer here">Paste◂Buf</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="openDocumentFromDialog('notepad')" title="Load any .md/.txt/.pdf text into the note pad">Load...</button>
+              <button style="padding: 3px 8px; font-size: 0.7rem;" onclick="openDocActionsMenu(this, notePadSpec())" title="Session notes / equations, built-in or external editor">Document ▾</button>
               <button style="padding: 3px 8px; font-size: 0.7rem; margin-left: auto; color: var(--accent);" onclick="clearScratchpad()" title="Clear scratchpad content">Clear</button>
             </div>
             <div id="scratchpad-content" contenteditable="true" style="flex: 1; min-height: 0; background-color: var(--bg-darker); border: 1px solid var(--border-panel); border-radius: 4px; padding: 10px; color: var(--text); font-family: monospace; font-size: 0.8rem; overflow-y: auto; outline: none;" placeholder="Jot down raw ideas, equations, or script snippets..."></div>
@@ -1443,14 +1525,50 @@
   </div>
 
 <!-- Restore Version Modal -->
+  <div id="doc-editor-modal" class="modal" style="z-index: 1125;">
+    <div class="modal-content doc-glass" style="width: min(1000px, 92vw); height: 86vh; display: flex; flex-direction: column;">
+      <div class="modal-header" id="doc-editor-title" style="margin-bottom: 4px;">Document</div>
+      <div id="doc-editor-meta" style="font-size: 0.78rem; opacity: 0.75; margin-bottom: 8px; word-break: break-all;"></div>
+      <div class="doc-editor-toolbar">
+        <button type="button" onclick="docEditorEdit('cut')" title="Cut selection to the app buffer (and OS clipboard)">Cut</button>
+        <button type="button" onclick="docEditorEdit('copy')" title="Copy selection to the app buffer (and OS clipboard)">Copy</button>
+        <button type="button" onclick="docEditorEdit('paste')" title="Paste from the app buffer">Paste</button>
+        <button type="button" onclick="docEditorEdit('delete')" title="Delete selection">Delete</button>
+        <button type="button" onclick="docEditorEdit('selectAll')" title="Select all">Select all</button>
+        <button type="button" onclick="docEditorEdit('undo')" title="Undo">Undo</button>
+        <button type="button" onclick="docEditorEdit('redo')" title="Redo">Redo</button>
+        <span style="flex: 1;"></span>
+        <button type="button" onclick="docEditorWrapMath('$')" title="Wrap selection in inline math $...$">$x$</button>
+        <button type="button" onclick="docEditorWrapMath('$$')" title="Wrap selection in display math $$...$$">$$x$$</button>
+        <button type="button" onclick="docEditorToggleFind()" title="Find text (Ctrl+F)">Find</button>
+      </div>
+      <div id="doc-editor-find" style="display: none; gap: 6px; margin-bottom: 6px;">
+        <input id="doc-editor-find-input" type="text" placeholder="Find..." style="flex: 1;" onkeydown="if(event.key==='Enter'){docEditorFindNext(); event.preventDefault();}">
+        <button type="button" onclick="docEditorFindNext()">Next</button>
+      </div>
+      <textarea id="doc-editor-textarea" spellcheck="false" oninput="markDocEditorDirty()"></textarea>
+      <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; flex-wrap: wrap; align-items: center;">
+        <span id="doc-editor-status" style="font-size: 0.78rem; opacity: 0.75;"></span>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" onclick="openDocActionsMenu(this, docEditorSpec())" title="Send to note pad, session notes, external editor...">Document ▾</button>
+          <button type="button" onclick="saveDocEditor(true)" title="Save to a new file path">Save As...</button>
+          <button type="button" id="doc-editor-save-btn" onclick="saveDocEditor(false)" title="Save to the current file">Save</button>
+          <button type="button" onclick="closeDocEditor()" title="Close the editor">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="recall-modal" class="modal" style="z-index: 1120;">
-    <div class="modal-content" style="width: min(900px, 90vw); max-height: 85vh; display: flex; flex-direction: column;">
+    <div class="modal-content doc-glass" style="width: min(900px, 90vw); max-height: 85vh; display: flex; flex-direction: column;">
       <div class="modal-header" id="recall-modal-title">Recall session</div>
       <div id="recall-modal-meta" style="font-size: 0.8rem; opacity: 0.75; margin-bottom: 8px;"></div>
       <div id="recall-modal-body" class="recall-body"></div>
       <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap;">
         <button onclick="closeRecallViewer()" title="Close without changing the thread">Close</button>
         <button onclick="copyRecallToNotes(this)" title="Append this whole transcript to today's session notes">Copy to session notes</button>
+        <button onclick="sendRecallToNotePad()" title="Load this transcript into the note pad (no AI call)">Send to note pad</button>
+        <button onclick="openDocActionsMenu(this, recallDocSpec())" title="More: open in built-in editor, external editor, word processor, session equations...">Open in... ▾</button>
         <button onclick="loadRecallIntoThread()" title="Replace the current thread contents with this transcript (tokens are only spent when you send the next message)">Load into thread</button>
       </div>
     </div>
@@ -2211,6 +2329,7 @@
       <div id="help-doc-search-results" style="display: none; margin-bottom: 8px; max-height: 140px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;"></div>
       <div id="help-doc-content" class="help-doc-rendered">Loading...</div>
       <div style="display: flex; justify-content: flex-end; margin-top: 12px; gap: 8px;">
+        <button onclick="openDocActionsMenu(this, helpDocSpec())" title="Send to note pad, session notes, built-in or external editor">Document ▾</button>
         <button onclick="closeHelpDocModal()" title="Close help modal">Close</button>
       </div>
     </div>
@@ -2269,6 +2388,7 @@
         </div>
         <div style="display: flex; gap: 8px;">
           <button type="button" onclick="openManuscriptToolsFromMarkdownDocs()" title="Switch to manuscript tools with current context">Manuscript Tools</button>
+          <button type="button" onclick="openDocActionsMenu(this, markdownDocsSpec())" title="Send to note pad, session notes, built-in or external editor">Document ▾</button>
           <button type="button" onclick="editSelectedMarkdownDocument()" title="Open selected markdown file in configured editor">Edit</button>
           <button type="button" style="background-color: var(--accent); color: var(--bg-darker);" onclick="exportSelectedMarkdownToPdf()" title="Export selected markdown document to PDF">Export PDF</button>
           <button type="button" onclick="closeMarkdownDocumentsModal()" title="Close markdown documents modal">Close</button>
@@ -4570,7 +4690,8 @@
       const actions = document.createElement('div');
       actions.className = 'bubble-actions';
       actions.innerHTML = `<button type="button" class="bubble-action-btn" onclick="copyBubbleRaw(this)" title="Copy the raw message text (markdown/LaTeX source)">Copy</button>`
-        + `<button type="button" class="bubble-action-btn" onclick="addBubbleToNotes(this)" title="Append this message to today's session notes in the project root">Add to notes</button>`;
+        + `<button type="button" class="bubble-action-btn" onclick="addBubbleToNotes(this)" title="Append this message to today's session notes in the project root">Add to notes</button>`
+        + `<button type="button" class="bubble-action-btn" onclick="openDocActionsMenu(this, bubbleDocSpec(this))" title="Send to note pad, session equations, built-in or external editor">⋯</button>`;
       bubble.appendChild(actions);
 
       activeSlot.appendChild(bubble);
@@ -5324,8 +5445,9 @@
           } else {
             label.onclick = (e) => {
               e.stopPropagation();
-              openEditor(entry.path);
+              openDocActionsMenu(label, fileTreeDocSpec(entry));
             };
+            label.title = 'Click for document actions (note pad, built-in editor, external editor, session notes...)';
           }
           ul.appendChild(li);
         });
@@ -8347,6 +8469,411 @@ async function restoreVersion() {
 
       initResize(leftResizer, leftWing, true);
       initResize(rightResizer, rightWing, false);
+    });
+
+
+    // ===== Unified document actions / app buffer / built-in editor =====
+    const APP_BUFFER_KEY = 'physicsIdeAppDocBuffer';
+    function getAppBuffer() { try { return localStorage.getItem(APP_BUFFER_KEY) || ''; } catch (_) { return ''; } }
+    function setAppBuffer(text) {
+      try { localStorage.setItem(APP_BUFFER_KEY, String(text ?? '')); } catch (_) { /* quota */ }
+      copyTextToClipboard(text).catch(() => {});
+    }
+    function clearAppBuffer() { try { localStorage.removeItem(APP_BUFFER_KEY); } catch (_) {} appendTerminalLog('App buffer cleared.'); }
+    function showAppBuffer() {
+      const text = getAppBuffer();
+      openDocEditor({ text, title: 'App buffer', readOnlyPath: true });
+    }
+    function currentSelectionRawText() {
+      const active = document.activeElement;
+      if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT') && active.selectionStart !== active.selectionEnd) {
+        return active.value.slice(active.selectionStart, active.selectionEnd);
+      }
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return '';
+      const range = sel.getRangeAt(0);
+      const bubble = range.commonAncestorContainer?.parentElement?.closest?.('.chat-bubble');
+      if (bubble && bubble._rawText && bubble.contains(range.startContainer) && bubble.contains(range.endContainer)
+          && sel.toString().trim().length >= Math.min(40, bubble.innerText.trim().length)) {
+        return bubble._rawText;
+      }
+      return sel.toString();
+    }
+    function copySelectionToAppBuffer() {
+      const text = currentSelectionRawText();
+      if (!text) { appendTerminalLog('App buffer: nothing selected.'); return; }
+      setAppBuffer(text);
+      appendTerminalLog(`App buffer: copied ${text.length} chars.`);
+    }
+    function insertTextIntoTextarea(ta, text) {
+      const start = ta.selectionStart ?? ta.value.length;
+      const end = ta.selectionEnd ?? ta.value.length;
+      ta.setRangeText(text, start, end, 'end');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.focus();
+    }
+    function pasteAppBufferInto(target) {
+      const text = getAppBuffer();
+      if (!target) return;
+      if (!text) { appendTerminalLog('App buffer is empty.'); return; }
+      if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') { insertTextIntoTextarea(target, text); return; }
+      if (target.isContentEditable) {
+        target.focus();
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && target.contains(sel.getRangeAt(0).startContainer)) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          const node = document.createTextNode(text);
+          range.insertNode(node);
+          range.setStartAfter(node); range.collapse(true);
+          sel.removeAllRanges(); sel.addRange(range);
+        } else {
+          target.appendChild(document.createTextNode(text));
+        }
+      }
+    }
+    function pasteAppBufferIntoActive() {
+      const active = document.activeElement;
+      if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable)) {
+        pasteAppBufferInto(active);
+      } else {
+        pasteAppBufferInto(document.getElementById('scratchpad-content'));
+      }
+    }
+
+    // ---- note pad ----
+    function sendToNotePad(text, title, { append = false } = {}) {
+      const pad = document.getElementById('scratchpad-content');
+      if (!pad) return;
+      const value = String(text ?? '');
+      if (append && pad.textContent.trim()) {
+        pad.appendChild(document.createTextNode(`\n\n--- ${title || 'Document'} ---\n${value}`));
+      } else {
+        pad.textContent = value;
+      }
+      try { toggleViewToolOn('notes'); } catch (_) {}
+      try { switchRightWingTab('notes'); } catch (_) {}
+      appendTerminalLog(`Note pad: loaded ${title || 'document'} (${value.length} chars).`);
+    }
+    function toggleViewToolOn(name) {
+      if (!viewToolState[name]) setToolVisibility(name, true);
+    }
+    async function readDocumentText(path) {
+      return JSON.parse(await invoke('read_document_text', { path }));
+    }
+    async function loadDocumentIntoNotePad(path, { append = false } = {}) {
+      try {
+        const doc = await readDocumentText(path);
+        sendToNotePad(doc.content, doc.name, { append });
+        return doc;
+      } catch (err) {
+        appendTerminalLog(`Note pad load failed: ${err}`);
+        return null;
+      }
+    }
+    async function openDocumentFromDialog(target = 'editor') {
+      let selected;
+      try {
+        selected = await window.__TAURI__.dialog.open({
+          multiple: false,
+          defaultPath: currentWorkspacePath || undefined,
+          filters: [{ name: 'Documents', extensions: ['md', 'markdown', 'txt', 'pdf', 'tex', 'py', 'json', 'csv'] }]
+        });
+      } catch (err) { appendTerminalLog(`Open dialog failed: ${err}`); return; }
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path) return;
+      if (target === 'notepad') await loadDocumentIntoNotePad(path);
+      else await openDocEditor({ path });
+    }
+
+    // ---- session docs ----
+    async function appendToSessionDoc(kind, markdown, btn) {
+      const cmd = kind === 'equations' ? 'append_session_equation' : 'append_session_note';
+      try {
+        const result = JSON.parse(await invoke(cmd, { markdown, date: localDateStamp() }));
+        appendTerminalLog(`Session ${kind}: ${result.action} ${result.relative_path} (+${result.bytes} bytes).`);
+        if (btn) flashButtonLabel(btn, 'Saved');
+        if (result.action === 'created') { try { await refreshFileTree(); } catch (_) {} }
+        return result;
+      } catch (err) {
+        appendTerminalLog(`Session ${kind} failed: ${err}`);
+        if (btn) flashButtonLabel(btn, 'Failed');
+        return null;
+      }
+    }
+    async function openSessionDoc(kind) {
+      try {
+        const result = JSON.parse(await invoke('ensure_session_doc', { kind, date: localDateStamp() }));
+        if (result.action === 'created') { try { await refreshFileTree(); } catch (_) {} }
+        await openDocEditor({ path: result.path });
+      } catch (err) {
+        appendTerminalLog(`Open session ${kind} failed: ${err}`);
+      }
+    }
+    function sessionSectionMarkdown(title, body) {
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      return `## ${pad(now.getHours())}:${pad(now.getMinutes())} — ${title}\n\n${convertMathForMarkdownNotes(body)}`;
+    }
+    async function appendEquationPanelToSessionEquations(btn) {
+      const latex = document.getElementById('latex-input')?.value?.trim() || '';
+      if (!latex) { appendTerminalLog('Session equations: equation panel is empty.'); return; }
+      const body = /^\$\$[\s\S]*\$\$$/.test(latex) || latex.includes('\\begin{') ? latex : `$$\n${latex}\n$$`;
+      await appendToSessionDoc('equations', sessionSectionMarkdown('Equation', body), btn);
+    }
+
+    // ---- external open ----
+    function externalOpenConfig() {
+      return { editor: currentConfig?.editor || '', terminalApp: currentConfig?.terminal_app || 'gnome-terminal' };
+    }
+    async function openPathExternally(path, mode) {
+      const cfg = externalOpenConfig();
+      try {
+        appendTerminalLog(await invoke('open_document_externally', { path, mode, editor: cfg.editor, terminalApp: cfg.terminalApp }));
+      } catch (err) { appendTerminalLog(`External open failed: ${err}`); }
+    }
+    async function openTextExternally(content, title, mode) {
+      const cfg = externalOpenConfig();
+      try {
+        const result = JSON.parse(await invoke('open_text_externally', { content, title, mode, editor: cfg.editor, terminalApp: cfg.terminalApp }));
+        appendTerminalLog(result.message);
+      } catch (err) { appendTerminalLog(`External open failed: ${err}`); }
+    }
+
+    // ---- doc specs: {title, path?, getText(): Promise<string>, notesTitle?} ----
+    function fileTreeDocSpec(entry) { return { title: entry.name, path: entry.path }; }
+    function recallDocSpec() {
+      const save = recallViewerState?.save;
+      return { title: save ? `Recalled: ${save.title}` : 'Recalled session', getText: async () => save ? recallTranscriptToMarkdown(save) : '' };
+    }
+    function helpDocSpec() {
+      return { title: document.getElementById('help-doc-title')?.textContent || 'Help', getText: async () => {
+        const r = JSON.parse(await invoke('get_help_doc', { docId: activeHelpDocId }));
+        return r?.content || '';
+      } };
+    }
+    function markdownDocsSpec() {
+      const path = markdownDocsState?.selectedPath || markdownDocsState?.activePath || '';
+      const title = document.getElementById('markdown-docs-title')?.textContent || 'Markdown document';
+      return { title, path };
+    }
+    function notePadSpec() {
+      return { title: 'Note pad', getText: async () => document.getElementById('scratchpad-content')?.innerText || '', isNotePad: true };
+    }
+    function equationPanelSpec() {
+      return { title: 'Equation panel', getText: async () => document.getElementById('latex-input')?.value || '' };
+    }
+    function bubbleDocSpec(btn) {
+      const bubble = btn.closest('.chat-bubble');
+      const where = bubble?._pane ? ` (${threadTitle(bubble._pane, bubble._index)})` : '';
+      return { title: `${bubble?._sender || 'Message'}${where}`, getText: async () => bubble?._rawText ?? bubble?.innerText ?? '' };
+    }
+    function docEditorSpec() {
+      return { title: docEditorState.title || 'Document', path: docEditorState.path || '', getText: async () => document.getElementById('doc-editor-textarea')?.value || '', isDocEditor: true };
+    }
+    async function specText(spec) {
+      if (typeof spec.getText === 'function') return await spec.getText();
+      if (spec.path) return (await readDocumentText(spec.path)).content;
+      return '';
+    }
+    function specIsPdf(spec) { return /\.pdf$/i.test(spec.path || ''); }
+
+    let docActionsMenuEl = null;
+    function closeDocActionsMenu() {
+      if (docActionsMenuEl) { docActionsMenuEl.remove(); docActionsMenuEl = null; }
+      document.removeEventListener('mousedown', onDocActionsOutside, true);
+      document.removeEventListener('keydown', onDocActionsKey, true);
+    }
+    function onDocActionsOutside(e) { if (docActionsMenuEl && !docActionsMenuEl.contains(e.target)) closeDocActionsMenu(); }
+    function onDocActionsKey(e) { if (e.key === 'Escape') closeDocActionsMenu(); }
+    function openDocActionsMenu(anchor, spec) {
+      closeDocActionsMenu();
+      if (!spec) return;
+      const menu = document.createElement('div');
+      menu.className = 'doc-actions-menu doc-glass';
+      const title = document.createElement('div');
+      title.className = 'doc-actions-title';
+      title.textContent = spec.path || spec.title || 'Document';
+      title.title = spec.path || spec.title || '';
+      menu.appendChild(title);
+      const add = (label, handler, { disabled = false, tip = '' } = {}) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = label; b.disabled = disabled; if (tip) b.title = tip;
+        b.onclick = async (e) => { e.stopPropagation(); closeDocActionsMenu(); try { await handler(); } catch (err) { appendTerminalLog(`Document action failed: ${err}`); } };
+        menu.appendChild(b);
+      };
+      const hr = () => menu.appendChild(document.createElement('hr'));
+      const notesMd = async () => sessionSectionMarkdown(spec.title || 'Document', await specText(spec));
+
+      if (!spec.isNotePad) {
+        add('Send to note pad (replace)', async () => sendToNotePad(await specText(spec), spec.title));
+        add('Append to note pad', async () => sendToNotePad(await specText(spec), spec.title, { append: true }));
+      }
+      if (!spec.isDocEditor) {
+        add('Open in built-in editor', async () => spec.path ? openDocEditor({ path: spec.path }) : openDocEditor({ text: await specText(spec), title: spec.title }));
+      }
+      hr();
+      add('Save to session notes', async () => appendToSessionDoc('notes', await notesMd()));
+      add('Save to session equations', async () => appendToSessionDoc('equations', await notesMd()));
+      hr();
+      add('Copy to app buffer', async () => { const t = await specText(spec); setAppBuffer(t); appendTerminalLog(`App buffer: copied ${t.length} chars.`); });
+      add('Copy raw text to clipboard', async () => { await copyTextToClipboard(await specText(spec)); appendTerminalLog('Copied to clipboard.'); });
+      hr();
+      const cfg = externalOpenConfig();
+      const editorLabel = cfg.editor ? `Open in text editor (${cfg.editor})` : 'Open in text editor (system default)';
+      if (spec.path) {
+        add(editorLabel, () => openPathExternally(spec.path, 'editor'));
+        add(specIsPdf(spec) ? 'Open in PDF viewer / default app' : 'Open in word processor / default app', () => openPathExternally(spec.path, 'default'));
+      } else {
+        add(editorLabel, async () => openTextExternally(await specText(spec), spec.title, 'editor'), { tip: 'Writes a scratch .md copy and opens it' });
+        add('Open in word processor / default app', async () => openTextExternally(await specText(spec), spec.title, 'default'), { tip: 'Writes a scratch .md copy and opens it' });
+      }
+
+      document.body.appendChild(menu);
+      docActionsMenuEl = menu;
+      const rect = anchor?.getBoundingClientRect?.() || { left: 40, bottom: 40, top: 40 };
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let left = Math.min(rect.left, window.innerWidth - mw - 8);
+      let top = rect.bottom + 4;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
+      menu.style.left = `${Math.max(8, left)}px`;
+      menu.style.top = `${top}px`;
+      setTimeout(() => {
+        document.addEventListener('mousedown', onDocActionsOutside, true);
+        document.addEventListener('keydown', onDocActionsKey, true);
+      }, 0);
+    }
+
+    // ---- recall extras ----
+    async function sendRecallToNotePad() {
+      if (!recallViewerState) return;
+      sendToNotePad(recallTranscriptToMarkdown(recallViewerState.save), `Recalled: ${recallViewerState.save.title}`);
+    }
+
+    // ---- built-in document editor ----
+    const docEditorState = { path: '', title: '', dirty: false, editable: true };
+    function setDocEditorStatus(msg) { const el = document.getElementById('doc-editor-status'); if (el) el.textContent = msg || ''; }
+    function markDocEditorDirty() { docEditorState.dirty = true; setDocEditorStatus('Unsaved changes'); }
+    async function openDocEditor({ path = '', text = null, title = '' } = {}) {
+      const modal = document.getElementById('doc-editor-modal');
+      const ta = document.getElementById('doc-editor-textarea');
+      const titleEl = document.getElementById('doc-editor-title');
+      const metaEl = document.getElementById('doc-editor-meta');
+      const saveBtn = document.getElementById('doc-editor-save-btn');
+      if (!modal || !ta) return;
+      if (docEditorState.dirty && modal.style.display === 'flex') {
+        if (!confirm('Discard unsaved changes in the editor?')) return;
+      }
+      let content = text ?? '';
+      let editable = true;
+      let name = title || 'Untitled';
+      if (path) {
+        try {
+          const doc = await readDocumentText(path);
+          content = doc.content; editable = doc.editable !== false; name = doc.name || path;
+        } catch (err) { appendTerminalLog(`Editor load failed: ${err}`); return; }
+      }
+      docEditorState.path = editable ? path : '';
+      docEditorState.title = name;
+      docEditorState.dirty = false;
+      docEditorState.editable = editable;
+      ta.value = content;
+      ta.readOnly = false;
+      titleEl.textContent = name;
+      metaEl.textContent = path ? (editable ? path : `${path} — PDF text extracted; Save As to keep edits as Markdown`) : 'Unsaved document — use Save As to write it into the project';
+      if (saveBtn) saveBtn.disabled = !docEditorState.path;
+      setDocEditorStatus(`${content.length} chars`);
+      modal.style.display = 'flex';
+      ta.focus();
+      ta.setSelectionRange(0, 0);
+    }
+    function closeDocEditor() {
+      const modal = document.getElementById('doc-editor-modal');
+      if (docEditorState.dirty && !confirm('Discard unsaved changes?')) return;
+      docEditorState.dirty = false;
+      if (modal) modal.style.display = 'none';
+    }
+    async function saveDocEditor(asNew = false) {
+      const ta = document.getElementById('doc-editor-textarea');
+      if (!ta) return;
+      let path = docEditorState.path;
+      if (asNew || !path) {
+        try {
+          const suggested = docEditorState.title && /\.(md|txt|markdown|tex)$/i.test(docEditorState.title) ? docEditorState.title : `${sanitizeFileStem(docEditorState.title || 'document')}.md`;
+          path = await window.__TAURI__.dialog.save({
+            defaultPath: currentWorkspacePath ? `${currentWorkspacePath}/${suggested}` : suggested,
+            filters: [{ name: 'Markdown / text', extensions: ['md', 'txt', 'markdown', 'tex'] }]
+          });
+        } catch (err) { appendTerminalLog(`Save dialog failed: ${err}`); return; }
+        if (!path) return;
+      }
+      try {
+        const result = JSON.parse(await invoke('write_document_text', { path, content: ta.value }));
+        docEditorState.path = result.path;
+        docEditorState.title = result.path.split(/[\\/]/).pop();
+        docEditorState.dirty = false;
+        document.getElementById('doc-editor-title').textContent = docEditorState.title;
+        document.getElementById('doc-editor-meta').textContent = result.path;
+        const saveBtn = document.getElementById('doc-editor-save-btn'); if (saveBtn) saveBtn.disabled = false;
+        setDocEditorStatus(`Saved ${result.bytes} bytes`);
+        appendTerminalLog(`Saved ${result.path}`);
+        if (asNew) { try { await refreshFileTree(); } catch (_) {} }
+      } catch (err) {
+        setDocEditorStatus(`Save failed: ${err}`);
+        appendTerminalLog(`Editor save failed: ${err}`);
+      }
+    }
+    function sanitizeFileStem(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'document'; }
+    function docEditorEdit(action) {
+      const ta = document.getElementById('doc-editor-textarea');
+      if (!ta) return;
+      const start = ta.selectionStart, end = ta.selectionEnd;
+      const selected = ta.value.slice(start, end);
+      switch (action) {
+        case 'copy': if (selected) setAppBuffer(selected); break;
+        case 'cut': if (selected) { setAppBuffer(selected); ta.setRangeText('', start, end, 'end'); markDocEditorDirty(); } break;
+        case 'paste': { const t = getAppBuffer(); if (t) { insertTextIntoTextarea(ta, t); markDocEditorDirty(); } else appendTerminalLog('App buffer is empty.'); break; }
+        case 'delete': if (start !== end) { ta.setRangeText('', start, end, 'end'); markDocEditorDirty(); } break;
+        case 'selectAll': ta.select(); break;
+        case 'undo': document.execCommand('undo'); break;
+        case 'redo': document.execCommand('redo'); break;
+      }
+      ta.focus();
+    }
+    function docEditorWrapMath(delim) {
+      const ta = document.getElementById('doc-editor-textarea');
+      if (!ta) return;
+      const start = ta.selectionStart, end = ta.selectionEnd;
+      const sel = ta.value.slice(start, end);
+      const wrapped = delim === '$$' ? `$$\n${sel}\n$$` : `$${sel}$`;
+      ta.setRangeText(wrapped, start, end, 'select');
+      markDocEditorDirty();
+      ta.focus();
+    }
+    function docEditorToggleFind() {
+      const bar = document.getElementById('doc-editor-find');
+      if (!bar) return;
+      bar.style.display = bar.style.display === 'flex' ? 'none' : 'flex';
+      if (bar.style.display === 'flex') document.getElementById('doc-editor-find-input')?.focus();
+    }
+    function docEditorFindNext() {
+      const ta = document.getElementById('doc-editor-textarea');
+      const q = document.getElementById('doc-editor-find-input')?.value || '';
+      if (!ta || !q) return;
+      const hay = ta.value.toLowerCase(), needle = q.toLowerCase();
+      let idx = hay.indexOf(needle, ta.selectionEnd);
+      if (idx < 0) idx = hay.indexOf(needle);
+      if (idx < 0) { setDocEditorStatus(`"${q}" not found`); return; }
+      ta.focus();
+      ta.setSelectionRange(idx, idx + q.length);
+      setDocEditorStatus('');
+    }
+    document.addEventListener('keydown', (e) => {
+      const modal = document.getElementById('doc-editor-modal');
+      if (!modal || modal.style.display !== 'flex') return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveDocEditor(e.shiftKey); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); docEditorToggleFind(); }
+      else if (e.key === 'Escape' && !docActionsMenuEl) { closeDocEditor(); }
     });
 
     function openEditor(filePath) {
