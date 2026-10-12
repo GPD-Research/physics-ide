@@ -23,6 +23,21 @@ The version 8 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-10-11)
+
+- added Local AI (Ollama) as a third per-pane provider alongside Gemini and OpenAI, configured through the same AI Configuration dialog, with non-streaming `/api/chat` requests, 16K context, and local token-usage reporting;
+- added a "Check Hardware Specs" probe (CPU, RAM, VRAM via `nvidia-smi`/`rocm-smi`, free disk on the Ollama model volume) and a curated model catalog that estimates per-query response time against a ~9K-token primer prompt, shows a quick↔deep spectrum marker, and marks models "Unusable" when they exceed 60 s, do not fit memory, or would fill the disk to 95%;
+- added one-click model installation that launches the configured terminal with the Ollama install/pull commands, and shows downloaded models in green with Left/Right pane assignment;
+- added macOS support to the Local AI subsystem: `sysctl`/`vm_stat` hardware probing, Apple Silicon unified-memory estimates by chip tier, Homebrew-based install, and `open -a Terminal` launching, so a Mac build can run local models;
+- added a unified "Document ▾" actions menu (note pad, built-in editor, session notes, session equations, app buffer, external text editor or word processor) on the file tree, chat bubbles, recall viewer, note pad, equation panel, and document modals, plus a glass-styled built-in editor and a "Session Docs" top menu;
+- added PDF text extraction for the note pad and editor, and an in-app document buffer so equations survive copy/paste without clipboard mangling;
+- added SQLite thread autosave with a per-pane "Recall session" dropdown that opens the three most recent saves in a read-only viewer (no tokens spent) with Close / Copy to session notes / Load into thread;
+- added a manual ⟳ file-tree refresh (no background watcher), code-fence rendering with Copy buttons, per-message Copy and "Add to notes" (`session_notes_YYYY-MM-DD.md` in the project root), and a token-limit freeze banner so a thread is preserved instead of lost;
+- added a Math Fixer mode to Manuscript Tools that scans a file, directory, or the whole project for Unicode math symbols, spelled-out Greek letters (with upper/lower-case choice), bare identifiers outside math, Python/shorthand notation, and malformed delimiters, with per-finding review, `.bak` backups, and dry run; PDF export now prefers `xelatex` → `lualatex` → `pdflatex`;
+- rewrote master-axiom generation as a deterministic LaTeX compilation of every governing equation with labels and variable definitions (no provider rewrite, no placeholder prose), injected whole into the startup primer, with the manuscript itself delivered by bounded per-message retrieval;
+- attached the budgeted local retrieval packet to every chat message and weighted file names and headings in ranking so a directly named appendix wins;
+- gave the AI a `<<<FILE path="...">>>` protocol for creating and writing files inside the project root when read/write access is enabled, with OK/FAILED reports fed back to the model.
+
 ### Latest progress (2026-08-16)
 
 - completed v9 prompt assembly work with deterministic stable-to-dynamic ordering, preserved provider roles, source provenance, per-thread token estimates, and provider-reported usage diagnostics;
@@ -104,10 +119,10 @@ The project has moved from a simple desktop shell toward a more practical theory
 
 ### Current focus
 
-- add a local embedding model and SQLite vector extension over the existing stable chunk/index contract;
-- combine vector similarity, FTS5 lexical matching, and structural graph neighbors within explicit retrieval budgets;
-- benchmark retrieval-selected structural context against concise prose before replacing any primer content;
-- consolidate or deprecate manual primer controls only after automated awareness proves equivalent and preserves user-authored notes;
+- smoke-test the document-management and Local AI subsystems, then cut the first release candidate as a `.deb` with a tag-driven release workflow and a download link on gpd-research.com;
+- make local Ollama models the normal operating mode, with cloud providers as the high-capacity option;
+- add a Table Fixer and an HTML/KaTeX PDF export route for table-heavy manuscripts;
+- extend the AI file protocol with append/edit/read/run operations under the project-root permission layer;
 - implement lazy directory token-cost guidance and complete the v9 production release audit.
 
 ## Version 8 Implementation Order
