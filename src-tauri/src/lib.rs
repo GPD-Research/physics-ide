@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+mod ai_file_ops;
 mod local_ai;
 mod math_fixer;
 
@@ -190,6 +191,14 @@ fn default_ollama_host() -> String {
 
 fn default_ai_file_access_mode() -> String {
     "disabled".to_string()
+}
+
+fn default_ai_run_allowlist() -> String {
+    ai_file_ops::DEFAULT_RUN_ALLOWLIST.to_string()
+}
+
+fn default_ai_run_timeout_seconds() -> u64 {
+    ai_file_ops::DEFAULT_RUN_TIMEOUT_SECONDS
 }
 
 const ENCRYPTED_SECRET_PREFIX: &str = "enc:v1:";
@@ -387,6 +396,12 @@ pub struct AppConfig {
     right_preserve_thread_history: bool,
     #[serde(default = "default_ai_file_access_mode")]
     ai_file_access_mode: String,
+    #[serde(default)]
+    ai_run_enabled: bool,
+    #[serde(default = "default_ai_run_allowlist")]
+    ai_run_allowlist: String,
+    #[serde(default = "default_ai_run_timeout_seconds")]
+    ai_run_timeout_seconds: u64,
     #[serde(default = "default_ollama_host")]
     ollama_host: String,
     reuse_notes_next_session: bool,
@@ -423,6 +438,9 @@ impl Default for AppConfig {
             left_preserve_thread_history: true,
             right_preserve_thread_history: true,
             ai_file_access_mode: default_ai_file_access_mode(),
+            ai_run_enabled: false,
+            ai_run_allowlist: default_ai_run_allowlist(),
+            ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
             ollama_host: default_ollama_host(),
             reuse_notes_next_session: false,
             first_session_completed: false,
@@ -481,6 +499,12 @@ pub struct SaveUserSettingsPayload {
     pub right_preserve_thread_history: bool,
     #[serde(default = "default_ai_file_access_mode", alias = "aiFileAccessMode")]
     pub ai_file_access_mode: String,
+    #[serde(default, alias = "aiRunEnabled")]
+    pub ai_run_enabled: bool,
+    #[serde(default = "default_ai_run_allowlist", alias = "aiRunAllowlist")]
+    pub ai_run_allowlist: String,
+    #[serde(default = "default_ai_run_timeout_seconds", alias = "aiRunTimeoutSeconds")]
+    pub ai_run_timeout_seconds: u64,
     #[serde(default = "default_ollama_host", alias = "ollamaHost")]
     pub ollama_host: String,
 }
@@ -1066,24 +1090,73 @@ fn build_project_awareness_markdown(
 const AI_FILE_BLOCK_OPEN: &str = "<<<FILE";
 const AI_FILE_BLOCK_CLOSE: &str = "<<<END FILE>>>";
 
+const AI_READ_BLOCK_OPEN: &str = "<<<READ";
+const AI_APPEND_BLOCK_OPEN: &str = "<<<APPEND";
+const AI_APPEND_BLOCK_CLOSE: &str = "<<<END APPEND>>>";
+const AI_EDIT_BLOCK_OPEN: &str = "<<<EDIT";
+const AI_EDIT_BLOCK_CLOSE: &str = "<<<END EDIT>>>";
+const AI_RUN_BLOCK_OPEN: &str = "<<<RUN";
+
+fn ai_file_read_protocol_instructions() -> String {
+    format!(
+        "To read a file inside the project root, emit on its own line:\n  {read} path=\"relative/path.py\">>>\n  The app replies with the file contents in a System message; use it before editing so your SEARCH text matches exactly.",
+        read = AI_READ_BLOCK_OPEN
+    )
+}
+
 fn ai_file_write_protocol_instructions() -> String {
     format!(
-        "To create or overwrite a file inside the project root, emit exactly this block in your reply (the app writes it to disk and reports the result back to you):\n  {open} path=\"relative/path/from/project/root.py\">>>\n  <complete file contents>\n  {close}\n  Rules: one block per file; paths are relative to the project root and may not leave it; always give the complete file contents (no diffs or ellipses); do not wrap the block in a markdown code fence.",
+        "To create or overwrite a file inside the project root, emit exactly this block in your reply (the app writes it to disk and reports the result back to you):\n  {open} path=\"relative/path/from/project/root.py\">>>\n  <complete file contents>\n  {close}\n  To add to the end of an existing file:\n  {aopen} path=\"relative/path.py\">>>\n  <text to append>\n  {aclose}\n  To change part of an existing file (preferred for code you already wrote), use one or more exact SEARCH/REPLACE hunks:\n  {eopen} path=\"relative/path.py\">>>\n  <<<<< SEARCH\n  <lines copied exactly from the current file>\n  =====\n  <replacement lines>\n  >>>>> REPLACE\n  {eclose}\n  Rules: paths are relative to the project root and may not leave it; FILE must contain the complete file (no diffs or ellipses); each SEARCH text must match the current file exactly once, otherwise the edit is rejected and you will be told why; do not wrap any block in a markdown code fence (fences are for display only and are never written to disk); results of every block are reported back to you as a System message, so check them and repair failures.",
         open = AI_FILE_BLOCK_OPEN,
-        close = AI_FILE_BLOCK_CLOSE
+        close = AI_FILE_BLOCK_CLOSE,
+        aopen = AI_APPEND_BLOCK_OPEN,
+        aclose = AI_APPEND_BLOCK_CLOSE,
+        eopen = AI_EDIT_BLOCK_OPEN,
+        eclose = AI_EDIT_BLOCK_CLOSE
+    )
+}
+
+fn ai_run_protocol_instructions(allowlist: &str, timeout_seconds: u64) -> String {
+    format!(
+        "AI script execution is enabled. To run a program inside the project root, emit on its own line:\n  {run} cmd=\"python3 relative/script.py --arg value\" timeout=\"{timeout}\">>>\n  Allowed programs: {allow}. No shell operators (pipes, redirects, &&, ;) and no paths outside the project root. The command runs with the project root as working directory and is killed after the timeout (default {timeout}s). stdout, stderr and the exit code come back to you in a System message; read them and fix the script if it failed.",
+        run = AI_RUN_BLOCK_OPEN,
+        allow = allowlist,
+        timeout = timeout_seconds
     )
 }
 
 fn describe_ai_file_access_mode(mode: &str) -> String {
+    describe_ai_file_access(mode, false, ai_file_ops::DEFAULT_RUN_ALLOWLIST, ai_file_ops::DEFAULT_RUN_TIMEOUT_SECONDS)
+}
+
+fn describe_ai_file_access(mode: &str, run_enabled: bool, run_allowlist: &str, run_timeout_seconds: u64) -> String {
     let normalized = mode.trim().to_ascii_lowercase();
-    match normalized.as_str() {
+    let mut text = match normalized.as_str() {
         "read_write" => format!(
-            "AI file access status: enabled for read/write access within the active workspace root only. {}",
+            "AI file access status: enabled for read/write access within the active workspace root only. {} {}",
+            ai_file_read_protocol_instructions(),
             ai_file_write_protocol_instructions()
         ),
-        "read" | "read_only" => "AI file access status: enabled for read-only access within the active workspace root only.".to_string(),
+        "read" | "read_only" => format!(
+            "AI file access status: enabled for read-only access within the active workspace root only. {}",
+            ai_file_read_protocol_instructions()
+        ),
         _ => "AI file access status: disabled. The AI may reason over project context but cannot read or edit workspace files unless access is enabled in Settings.".to_string(),
+    };
+    if run_enabled && normalized != "disabled" {
+        text.push(' ');
+        text.push_str(&ai_run_protocol_instructions(run_allowlist, run_timeout_seconds));
     }
+    text
+}
+
+fn describe_ai_file_access_for_config(config: &AppConfig) -> String {
+    describe_ai_file_access(
+        &config.ai_file_access_mode,
+        config.ai_run_enabled,
+        &config.ai_run_allowlist,
+        config.ai_run_timeout_seconds,
+    )
 }
 
 fn build_session_recap_markdown(
@@ -4130,16 +4203,17 @@ fn canonical_tier(entry: &serde_json::Value, index: usize, last_index: usize) ->
 }
 
 fn with_file_write_protocol(mut messages: Vec<serde_json::Value>, config: &AppConfig) -> Vec<serde_json::Value> {
-    if config.ai_file_access_mode.trim().to_ascii_lowercase() != "read_write" {
+    let mode = config.ai_file_access_mode.trim().to_ascii_lowercase();
+    if !matches!(mode.as_str(), "read_write" | "read" | "read_only") {
         return messages;
     }
     let already_present = messages
         .iter()
-        .any(|message| message.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.contains(AI_FILE_BLOCK_OPEN)));
+        .any(|message| message.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.contains(AI_READ_BLOCK_OPEN)));
     if already_present {
         return messages;
     }
-    messages.insert(0, serde_json::json!({"role": "system", "content": describe_ai_file_access_mode("read_write")}));
+    messages.insert(0, serde_json::json!({"role": "system", "content": describe_ai_file_access_for_config(config)}));
     messages
 }
 
@@ -8815,7 +8889,10 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "summary": summary,
         "diagnostics": diagnostics,
         "ai_file_access_mode": config.ai_file_access_mode,
-        "ai_file_access_status": describe_ai_file_access_mode(&config.ai_file_access_mode),
+        "ai_file_access_status": describe_ai_file_access_for_config(&config),
+        "ai_run_enabled": config.ai_run_enabled,
+        "ai_run_allowlist": config.ai_run_allowlist,
+        "ai_run_timeout_seconds": config.ai_run_timeout_seconds,
         "primer": primer_payload,
         "session_recap": recap_payload,
         "workspace_tree": tree_payload,
@@ -9980,6 +10057,134 @@ fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -
     .to_string())
 }
 
+fn ai_project_target(app: &tauri::AppHandle, action: &str, path: &str) -> Result<(AppConfig, PathBuf, PathBuf, String), String> {
+    let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let project_root = config.project_root_dir.trim();
+    if project_root.is_empty() {
+        return Err(format!("AI file {action} blocked: no project root is configured. Set the project root in Customize first."));
+    }
+    let workspace_path = PathBuf::from(project_root);
+    if !workspace_path.is_dir() {
+        return Err(format!("AI file {action} blocked: project root does not exist: {project_root}"));
+    }
+    let requested = path.trim();
+    if requested.is_empty() {
+        return Err(format!("AI file {action} blocked: empty file path."));
+    }
+    let target_path = normalize_path_for_scope_check(Path::new(requested), &workspace_path);
+    let gate = if action == "read" { "read" } else { "write" };
+    ensure_ai_file_access(&config, gate, &target_path, &workspace_path)?;
+    if target_path.is_dir() {
+        return Err(format!("AI file {action} blocked: {} is a directory.", target_path.to_string_lossy()));
+    }
+    let relative_path = target_path
+        .strip_prefix(workspace_path.canonicalize().unwrap_or(workspace_path.clone()))
+        .unwrap_or(&target_path)
+        .to_string_lossy()
+        .to_string();
+    Ok((config, workspace_path, target_path, relative_path))
+}
+
+#[tauri::command]
+fn read_ai_project_file(path: String, app: tauri::AppHandle) -> Result<String, String> {
+    let (_config, _root, target_path, relative_path) = ai_project_target(&app, "read", &path)?;
+    if !target_path.is_file() {
+        return Err(format!("File not found: {relative_path}"));
+    }
+    let bytes = fs::read(&target_path).map_err(|e| format!("Failed to read {relative_path}: {e}"))?;
+    let total_bytes = bytes.len();
+    let mut content = String::from_utf8_lossy(&bytes).to_string();
+    let truncated = content.len() > ai_file_ops::MAX_READ_BYTES;
+    if truncated {
+        let mut cut = ai_file_ops::MAX_READ_BYTES;
+        while !content.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        content.truncate(cut);
+    }
+    let line_count = content.lines().count();
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "relative_path": relative_path,
+        "bytes": total_bytes,
+        "lines": line_count,
+        "truncated": truncated,
+        "content": content,
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn append_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+    let (_config, _root, target_path, relative_path) = ai_project_target(&app, "append", &path)?;
+    let existed = target_path.exists();
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
+    }
+    let mut existing = if existed { fs::read_to_string(&target_path).map_err(|e| format!("Failed to read {relative_path}: {e}"))? } else { String::new() };
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str(&content);
+    if !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    fs::write(&target_path, existing.as_bytes()).map_err(|e| format!("Failed to write {relative_path}: {e}"))?;
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "relative_path": relative_path,
+        "bytes": content.len(),
+        "action": if existed { "appended" } else { "created" },
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn edit_ai_project_file(path: String, hunks: String, app: tauri::AppHandle) -> Result<String, String> {
+    let (_config, _root, target_path, relative_path) = ai_project_target(&app, "edit", &path)?;
+    if !target_path.is_file() {
+        return Err(format!("File not found: {relative_path}. Use a FILE block to create it first."));
+    }
+    let parsed = ai_file_ops::parse_edit_hunks(&hunks)?;
+    let original = fs::read_to_string(&target_path).map_err(|e| format!("Failed to read {relative_path}: {e}"))?;
+    let updated = ai_file_ops::apply_edit_hunks(&original, &parsed)?;
+    fs::write(&target_path, updated.as_bytes()).map_err(|e| format!("Failed to write {relative_path}: {e}"))?;
+    Ok(serde_json::json!({
+        "path": target_path.to_string_lossy().to_string(),
+        "relative_path": relative_path,
+        "hunks": parsed.len(),
+        "bytes": updated.len(),
+        "action": "edited",
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+    let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    if !config.ai_run_enabled {
+        return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Customize to allow RUN blocks.".to_string());
+    }
+    if config.ai_file_access_mode.trim().eq_ignore_ascii_case("disabled") {
+        return Err("AI file access is disabled; enable at least read-only access to allow RUN blocks.".to_string());
+    }
+    let project_root = config.project_root_dir.trim();
+    if project_root.is_empty() {
+        return Err("AI run blocked: no project root is configured.".to_string());
+    }
+    let workspace_path = PathBuf::from(project_root);
+    if !workspace_path.is_dir() {
+        return Err(format!("AI run blocked: project root does not exist: {project_root}"));
+    }
+    let root = workspace_path.canonicalize().unwrap_or(workspace_path.clone());
+    let allowlist = ai_file_ops::parse_allowlist(&config.ai_run_allowlist);
+    let argv = ai_file_ops::validate_run_command(&cmd, &allowlist, &root)?;
+    let limit = config.ai_run_timeout_seconds.clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS);
+    let timeout = timeout_seconds.unwrap_or(limit).clamp(1, limit);
+    let outcome = ai_file_ops::run_in_project(&argv, &root, std::time::Duration::from_secs(timeout))?;
+    serde_json::to_string(&outcome).map_err(|e| e.to_string())
+}
+
 /// PDF engines in preference order: Unicode-capable engines first so manuscripts with
 /// Greek letters, arrows, or typographic dashes still render; pdflatex as the last resort.
 const PDF_ENGINE_PREFERENCE: &[&str] = &["xelatex", "lualatex", "pdflatex"];
@@ -10215,6 +10420,9 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.left_preserve_thread_history = payload.left_preserve_thread_history;
     config.right_preserve_thread_history = payload.right_preserve_thread_history;
     config.ai_file_access_mode = payload.ai_file_access_mode;
+    config.ai_run_enabled = payload.ai_run_enabled;
+    config.ai_run_allowlist = ai_file_ops::parse_allowlist(&payload.ai_run_allowlist).join(",");
+    config.ai_run_timeout_seconds = payload.ai_run_timeout_seconds.clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS);
     config.ollama_host = local_ai::normalize_host(&payload.ollama_host);
 
     if !config.project_root_dir.trim().is_empty() {
@@ -10308,7 +10516,14 @@ mod tests {
         assert!(status.contains(AI_FILE_BLOCK_OPEN));
         assert!(status.contains(AI_FILE_BLOCK_CLOSE));
         assert!(!describe_ai_file_access_mode("read_only").contains(AI_FILE_BLOCK_OPEN));
+        assert!(describe_ai_file_access_mode("read_only").contains(AI_READ_BLOCK_OPEN));
         assert!(!describe_ai_file_access_mode("disabled").contains(AI_FILE_BLOCK_OPEN));
+        assert!(!describe_ai_file_access_mode("disabled").contains(AI_READ_BLOCK_OPEN));
+        assert!(status.contains(AI_EDIT_BLOCK_OPEN) && status.contains(AI_APPEND_BLOCK_OPEN));
+        assert!(!status.contains(AI_RUN_BLOCK_OPEN));
+        let with_run = describe_ai_file_access("read_write", true, "python3,node", 45);
+        assert!(with_run.contains(AI_RUN_BLOCK_OPEN) && with_run.contains("python3,node") && with_run.contains("45"));
+        assert!(!describe_ai_file_access("disabled", true, "python3", 60).contains(AI_RUN_BLOCK_OPEN));
     }
 
     #[test]
@@ -11920,6 +12135,10 @@ pub fn run() {
             save_equation_to_md,
             save_scratchpad_content,
             write_ai_project_file,
+            read_ai_project_file,
+            append_ai_project_file,
+            edit_ai_project_file,
+            run_ai_project_command,
             append_session_note,
             append_session_equation,
             ensure_session_doc,
