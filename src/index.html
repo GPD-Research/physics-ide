@@ -1757,7 +1757,20 @@
                     <option value="read_write">Read/write</option>
                   </select>
                   <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
-                    When enabled, the AI can only operate within the active workspace root and only for the selected access level. If you change the project root in Customize, the AI can modify and create/delete files within that selected root directory.
+                    When enabled, the AI can only operate within the active workspace root and only for the selected access level. If you change the project root in Customize, the AI can modify and create/delete files within that selected root directory. Read-only allows READ blocks; read/write adds FILE, APPEND and EDIT blocks.
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="settings-ai-run-enabled">
+                    AI may run scripts (RUN blocks) inside the project root
+                  </label>
+                  <label for="settings-ai-run-allowlist" style="margin-top: 6px;">Allowed programs (comma-separated)</label>
+                  <input type="text" id="settings-ai-run-allowlist" placeholder="python3,python,bash,sh,node">
+                  <label for="settings-ai-run-timeout" style="margin-top: 6px;">Run timeout (seconds, max 600)</label>
+                  <input type="number" id="settings-ai-run-timeout" min="1" max="600" step="1" placeholder="60">
+                  <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
+                    Commands run with the project root as working directory, without a shell (no pipes or redirects), are killed at the timeout, and their stdout/stderr/exit code are fed back to the AI so it can fix failures. Requires file access to be at least read-only.
                   </div>
                 </div>
               </div>
@@ -3478,6 +3491,9 @@
 
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-ai-file-access').value = currentConfig.ai_file_access_mode || 'disabled';
+        document.getElementById('settings-ai-run-enabled').checked = Boolean(currentConfig.ai_run_enabled);
+        document.getElementById('settings-ai-run-allowlist').value = currentConfig.ai_run_allowlist || 'python3,python,bash,sh,node';
+        document.getElementById('settings-ai-run-timeout').value = Number(currentConfig.ai_run_timeout_seconds) || 60;
         const ollamaHostInput = document.getElementById('settings-ollama-host');
         if (ollamaHostInput) ollamaHostInput.value = currentConfig.ollama_host || 'http://127.0.0.1:11434';
         if (leftProvider === 'ollama' || rightProvider === 'ollama') {
@@ -3986,7 +4002,21 @@
         recordThreadTranscript(pane, index, 'assistant', getProviderDisplayName(provider), reply);
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
         scheduleThreadAutosave(pane, index);
-        await applyAssistantFileBlocks(pane, index, reply);
+        const fileOps = await applyAssistantFileBlocks(pane, index, reply);
+        const depth = Number(provenance.autoContinueDepth) || 0;
+        if (fileOps.needsFollowUp && depth < AI_FILE_OPS_MAX_AUTO_CONTINUE) {
+          appendTerminalLog(`AI file ops [${pane}]: results need a follow-up; auto-continuing (${depth + 1}/${AI_FILE_OPS_MAX_AUTO_CONTINUE}).`);
+          return dispatchPromptToPane(
+            pane,
+            'The file operation results above are in. Continue with the task: inspect the output, repair any failures, and finish your reply. Only emit further file or RUN blocks if they are still needed.',
+            'System',
+            [],
+            { source: 'file_ops_follow_up', trigger: 'assistant_file_block', autoContinueDepth: depth + 1 }
+          );
+        }
+        if (fileOps.needsFollowUp) {
+          appendTerminalLog(`AI file ops [${pane}]: auto-continue limit reached; send a message to let the AI proceed.`);
+        }
         return reply;
       } catch (err) {
         appendTerminalLog(`LLM Pipeline Fault: ${err}`);
@@ -4003,47 +4033,123 @@
     }
 
     const AI_FILE_BLOCK_PATTERN = /<<<FILE\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END FILE>>>/g;
+    const AI_APPEND_BLOCK_PATTERN = /<<<APPEND\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END APPEND>>>/g;
+    const AI_EDIT_BLOCK_PATTERN = /<<<EDIT\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END EDIT>>>/g;
+    const AI_READ_BLOCK_PATTERN = /<<<READ\s+path="([^"\n]+)"\s*>>>/g;
+    const AI_RUN_BLOCK_PATTERN = /<<<RUN\s+cmd="([^"\n]+)"(?:\s+timeout="?(\d+)"?)?\s*>>>/g;
+    const AI_FILE_OPS_MAX_AUTO_CONTINUE = 3;
 
     function parseAssistantFileBlocks(text) {
-      const blocks = [];
       const source = String(text || '');
-      let match;
-      AI_FILE_BLOCK_PATTERN.lastIndex = 0;
-      while ((match = AI_FILE_BLOCK_PATTERN.exec(source)) !== null) {
-        blocks.push({ path: match[1].trim(), content: match[2] });
+      const ops = [];
+      const collect = (pattern, build) => {
+        pattern.lastIndex = 0;
+        let match;
+        while ((match = pattern.exec(source)) !== null) {
+          ops.push({ position: match.index, ...build(match) });
+        }
+      };
+      collect(AI_FILE_BLOCK_PATTERN, (m) => ({ op: 'write', path: m[1].trim(), content: m[2] }));
+      collect(AI_APPEND_BLOCK_PATTERN, (m) => ({ op: 'append', path: m[1].trim(), content: m[2] }));
+      collect(AI_EDIT_BLOCK_PATTERN, (m) => ({ op: 'edit', path: m[1].trim(), hunks: m[2] }));
+      collect(AI_READ_BLOCK_PATTERN, (m) => ({ op: 'read', path: m[1].trim() }));
+      collect(AI_RUN_BLOCK_PATTERN, (m) => ({ op: 'run', cmd: m[1].trim(), timeout: m[2] ? parseInt(m[2], 10) : null }));
+      ops.sort((a, b) => a.position - b.position);
+      return ops;
+    }
+
+    function formatRunOutcome(outcome) {
+      const status = outcome.timed_out
+        ? 'TIMED OUT'
+        : outcome.exit_code === 0 ? 'exit 0' : `exit ${outcome.exit_code == null ? 'signal' : outcome.exit_code}`;
+      const lines = [`- RUN \`${outcome.command}\` → ${status} (${outcome.elapsed_seconds}s)`];
+      if (outcome.stdout) {
+        lines.push(`  stdout${outcome.stdout_truncated ? ' (truncated)' : ''}:\n\`\`\`text\n${outcome.stdout.replace(/\n$/, '')}\n\`\`\``);
       }
-      return blocks;
+      if (outcome.stderr) {
+        lines.push(`  stderr${outcome.stderr_truncated ? ' (truncated)' : ''}:\n\`\`\`text\n${outcome.stderr.replace(/\n$/, '')}\n\`\`\``);
+      }
+      if (!outcome.stdout && !outcome.stderr) lines.push('  (no output)');
+      return lines.join('\n');
+    }
+
+    async function executeAssistantFileOp(pane, op) {
+      switch (op.op) {
+        case 'write': {
+          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content }));
+          const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)`;
+          appendTerminalLog(`AI file write [${pane}]: ${line}`);
+          return { text: `- OK: ${line}`, needsFollowUp: false };
+        }
+        case 'append': {
+          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content }));
+          const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)`;
+          appendTerminalLog(`AI file append [${pane}]: ${line}`);
+          return { text: `- OK: ${line}`, needsFollowUp: false };
+        }
+        case 'edit': {
+          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks }));
+          const line = `edited ${outcome.relative_path} (${outcome.hunks} hunk${outcome.hunks === 1 ? '' : 's'}, now ${outcome.bytes} bytes)`;
+          appendTerminalLog(`AI file edit [${pane}]: ${line}`);
+          return { text: `- OK: ${line}`, needsFollowUp: false };
+        }
+        case 'read': {
+          const outcome = JSON.parse(await invoke('read_ai_project_file', { path: op.path }));
+          appendTerminalLog(`AI file read [${pane}]: ${outcome.relative_path} (${outcome.bytes} bytes)`);
+          const note = outcome.truncated ? ` — truncated to the first ${outcome.content.length} characters` : '';
+          return {
+            text: `- READ ${outcome.relative_path} (${outcome.lines} lines, ${outcome.bytes} bytes${note}):\n\`\`\`text\n${outcome.content.replace(/\n$/, '')}\n\`\`\``,
+            needsFollowUp: true
+          };
+        }
+        case 'run': {
+          appendTerminalLog(`AI run [${pane}]: ${op.cmd}`);
+          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout }));
+          if (outcome.stdout) appendTerminalLog(outcome.stdout.replace(/\n$/, ''));
+          if (outcome.stderr) appendTerminalLog(outcome.stderr.replace(/\n$/, ''));
+          appendTerminalLog(`AI run [${pane}] finished: ${outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
+          return { text: formatRunOutcome(outcome), needsFollowUp: true };
+        }
+        default:
+          return { text: `- SKIPPED: unknown operation ${op.op}`, needsFollowUp: false };
+      }
+    }
+
+    function describeAssistantFileOp(op) {
+      if (op.op === 'run') return `RUN ${op.cmd}`;
+      return `${op.op.toUpperCase()} ${op.path}`;
     }
 
     async function applyAssistantFileBlocks(pane, index, reply) {
-      const blocks = parseAssistantFileBlocks(reply);
-      if (blocks.length === 0) return;
+      const ops = parseAssistantFileBlocks(reply);
+      if (ops.length === 0) return { needsFollowUp: false };
 
       const results = [];
-      for (const block of blocks) {
+      let needsFollowUp = false;
+      let touchedFiles = false;
+      for (const op of ops) {
         try {
-          const outcome = JSON.parse(await invoke('write_ai_project_file', {
-            path: block.path,
-            content: block.content
-          }));
-          const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)`;
-          appendTerminalLog(`AI file write [${pane}]: ${line}`);
-          results.push(`- OK: ${line}`);
-        } catch (writeError) {
-          appendTerminalLog(`AI file write failed [${pane}] for ${block.path}: ${writeError}`);
-          results.push(`- FAILED: ${block.path} — ${writeError}`);
+          const outcome = await executeAssistantFileOp(pane, op);
+          results.push(outcome.text);
+          needsFollowUp = needsFollowUp || outcome.needsFollowUp;
+          touchedFiles = touchedFiles || op.op === 'write' || op.op === 'append' || op.op === 'edit';
+        } catch (opError) {
+          appendTerminalLog(`AI ${op.op} failed [${pane}] for ${describeAssistantFileOp(op)}: ${opError}`);
+          results.push(`- FAILED: ${describeAssistantFileOp(op)} — ${opError}`);
+          needsFollowUp = true;
         }
       }
 
-      const summary = `File write results:\n${results.join('\n')}`;
+      const summary = `File operation results:\n${results.join('\n')}`;
       injectSystemPrimerMessage(pane, index, 'File System', summary, {
         source: 'file_write_result',
         trigger: 'assistant_file_block',
         volatility: 'dynamic'
       });
-      if (typeof refreshFileTree === 'function') {
+      if (touchedFiles && typeof refreshFileTree === 'function') {
         try { await refreshFileTree(); } catch (_) { /* tree refresh is best-effort */ }
       }
+      return { needsFollowUp };
     }
 
     function evaluateProbeReply(reply, expectedToken) {
@@ -8429,6 +8535,9 @@ async function restoreVersion() {
       const leftPreserveThreadHistory = document.getElementById('settings-left-preserve-thread-history').checked;
       const rightPreserveThreadHistory = document.getElementById('settings-right-preserve-thread-history').checked;
       const aiFileAccessMode = document.getElementById('settings-ai-file-access').value || 'disabled';
+      const aiRunEnabled = document.getElementById('settings-ai-run-enabled').checked;
+      const aiRunAllowlist = (document.getElementById('settings-ai-run-allowlist').value || '').trim() || 'python3,python,bash,sh,node';
+      const aiRunTimeoutSeconds = Math.max(1, Math.min(600, parseInt(document.getElementById('settings-ai-run-timeout').value, 10) || 60));
 
       const payload = {
         editor,
@@ -8450,7 +8559,10 @@ async function restoreVersion() {
         custom_bg_panel: customBgPanel,
         left_preserve_thread_history: leftPreserveThreadHistory,
         right_preserve_thread_history: rightPreserveThreadHistory,
-        ai_file_access_mode: aiFileAccessMode
+        ai_file_access_mode: aiFileAccessMode,
+        ai_run_enabled: aiRunEnabled,
+        ai_run_allowlist: aiRunAllowlist,
+        ai_run_timeout_seconds: aiRunTimeoutSeconds
       };
 
       const ollamaHost = getOllamaHostFromUi();
@@ -8494,6 +8606,9 @@ async function restoreVersion() {
         currentConfig.left_preserve_thread_history = leftPreserveThreadHistory;
         currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
         currentConfig.ai_file_access_mode = aiFileAccessMode;
+        currentConfig.ai_run_enabled = aiRunEnabled;
+        currentConfig.ai_run_allowlist = aiRunAllowlist;
+        currentConfig.ai_run_timeout_seconds = aiRunTimeoutSeconds;
         currentConfig.ollama_host = ollamaHost;
 
         const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
