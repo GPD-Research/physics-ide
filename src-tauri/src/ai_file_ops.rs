@@ -417,8 +417,12 @@ pub fn run_calc(
 
 #[cfg(test)]
 mod tests {
+    /// The cancel flag is process-global, so tests that spawn child processes must not overlap.
+    static PROCESS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn calc_runs_in_scratch_and_collects_new_images() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let root = std::env::temp_dir().join(format!("ai_calc_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -444,6 +448,7 @@ mod tests {
 
     #[test]
     fn cancel_request_kills_running_command() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("ai_run_cancel_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let argv = vec!["sleep".to_string(), "30".to_string()];
@@ -499,6 +504,7 @@ mod tests {
 
     #[test]
     fn runs_and_times_out() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir();
         let argv: Vec<String> = ["sh", "-c", "echo out; echo err 1>&2; exit 3"].iter().map(|s| s.to_string()).collect();
         let out = run_in_project(&argv, &dir, Duration::from_secs(10)).unwrap();
