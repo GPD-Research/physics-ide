@@ -1096,6 +1096,29 @@ const AI_APPEND_BLOCK_CLOSE: &str = "<<<END APPEND>>>";
 const AI_EDIT_BLOCK_OPEN: &str = "<<<EDIT";
 const AI_EDIT_BLOCK_CLOSE: &str = "<<<END EDIT>>>";
 const AI_RUN_BLOCK_OPEN: &str = "<<<RUN";
+const AI_SEARCH_BLOCK_OPEN: &str = "<<<SEARCH";
+const AI_REMEMBER_BLOCK_OPEN: &str = "<<<REMEMBER";
+const AI_REMEMBER_BLOCK_CLOSE: &str = "<<<END REMEMBER>>>";
+const PROJECT_MEMORY_FILE: &str = "project_memory.md";
+const PROJECT_MEMORY_PRIMER_MAX_CHARS: usize = 8_000;
+const PROJECT_MEMORY_ENTRY_MAX_CHARS: usize = 2_000;
+const AI_SEARCH_MAX_RESULTS: usize = 12;
+
+fn ai_retrieval_protocol_instructions() -> String {
+    format!(
+        "Theory retrieval tool: besides the evidence packet attached to each message, you may query the project's local hybrid (FTS + vector) index yourself whenever you need a chapter, appendix, definition, or derivation that is not in front of you. Emit on its own line:\n  {search} query=\"natural-language or keyword query\" limit=\"6\">>>\n  The app answers with a bounded packet of source-grounded chunks (project-relative paths) in a System message; cite those paths. Use several focused queries rather than one broad one, and do not search for things already present in the master axiom or in the packet you were given.",
+        search = AI_SEARCH_BLOCK_OPEN
+    )
+}
+
+fn ai_memory_protocol_instructions() -> String {
+    format!(
+        "Project memory: {file} in the project root is a durable, user-editable log of decisions, conventions, open questions, and failed approaches; its most recent entries are injected into your startup primer in every session. When something is worth remembering across sessions (a decision and its reasoning, a dead end, a naming convention, a result the user accepted), record it with:\n  {open}\n  <one to three concise sentences>\n  {close}\n  The app appends it as a dated bullet. Keep entries terse and factual; never record secrets or transient task state.",
+        file = PROJECT_MEMORY_FILE,
+        open = AI_REMEMBER_BLOCK_OPEN,
+        close = AI_REMEMBER_BLOCK_CLOSE
+    )
+}
 
 fn ai_file_read_protocol_instructions() -> String {
     format!(
@@ -1147,6 +1170,10 @@ fn describe_ai_file_access(mode: &str, run_enabled: bool, run_allowlist: &str, r
         text.push(' ');
         text.push_str(&ai_run_protocol_instructions(run_allowlist, run_timeout_seconds));
     }
+    text.push('\n');
+    text.push_str(&ai_retrieval_protocol_instructions());
+    text.push('\n');
+    text.push_str(&ai_memory_protocol_instructions());
     text
 }
 
@@ -4203,13 +4230,9 @@ fn canonical_tier(entry: &serde_json::Value, index: usize, last_index: usize) ->
 }
 
 fn with_file_write_protocol(mut messages: Vec<serde_json::Value>, config: &AppConfig) -> Vec<serde_json::Value> {
-    let mode = config.ai_file_access_mode.trim().to_ascii_lowercase();
-    if !matches!(mode.as_str(), "read_write" | "read" | "read_only") {
-        return messages;
-    }
     let already_present = messages
         .iter()
-        .any(|message| message.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.contains(AI_READ_BLOCK_OPEN)));
+        .any(|message| message.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.contains(AI_SEARCH_BLOCK_OPEN)));
     if already_present {
         return messages;
     }
@@ -6164,6 +6187,7 @@ fn refresh_retrieval_index_value(root: &Path, index_path: &Path) -> Result<serde
                 | "session_recap.md"
                 | "workspace_tree.md"
                 | "next_session_notes.md"
+                | "project_memory.md"
                 | "first_session_startup_guide.md"
         ) {
             continue;
@@ -8868,6 +8892,11 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
 
     let (awareness_payload, awareness_diag) = read_source_payload("project_awareness", &awareness_path, 12_000);
     let (briefing_payload, briefing_diag) = read_source_payload("ai_briefing", &briefing_path, 12_000);
+    let (project_memory_payload, project_memory_diag) =
+        read_project_memory_payload(&project_root.join(PROJECT_MEMORY_FILE), PROJECT_MEMORY_PRIMER_MAX_CHARS);
+    if let Some(diag) = project_memory_diag {
+        diagnostics.push(diag);
+    }
     if let Some(diag) = awareness_diag {
         diagnostics.push(diag);
     }
@@ -8899,6 +8928,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "master_axiom": axiom_payload,
         "project_awareness": awareness_payload,
         "ai_briefing": briefing_payload,
+        "project_memory": project_memory_payload,
         "structural_context": structural_context_payload,
         "generated_files": {
             "session_recap": recap_path.to_string_lossy().to_string(),
@@ -10013,6 +10043,168 @@ fn append_session_doc(kind: &str, markdown: &str, date: &str, app: &tauri::AppHa
     .to_string())
 }
 
+fn append_project_memory_entry(path: &Path, entry: &str, date: &str) -> Result<usize, String> {
+    let flattened = entry
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if flattened.is_empty() {
+        return Err("Project memory blocked: entry is empty.".to_string());
+    }
+    if flattened.chars().count() > PROJECT_MEMORY_ENTRY_MAX_CHARS {
+        return Err(format!(
+            "Project memory blocked: entry is {} characters; keep entries under {}.",
+            flattened.chars().count(),
+            PROJECT_MEMORY_ENTRY_MAX_CHARS
+        ));
+    }
+    let safe_date = date.trim();
+    let safe_date = if safe_date.is_empty() { "undated" } else { safe_date };
+    let existed = path.exists();
+    let mut content = String::new();
+    if !existed {
+        content.push_str("# Project Memory\n\nDurable notes the AI and the user keep across sessions: decisions and their reasoning, conventions, open questions, dead ends. Recent entries are injected into the startup primer; edit or prune freely.\n\n");
+    } else {
+        let existing = fs::read_to_string(path).unwrap_or_default();
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            content.push('\n');
+        }
+    }
+    content.push_str(&format!("- [{safe_date}] {flattened}\n"));
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open {}: {e}", path.to_string_lossy()))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to append to {}: {e}", path.to_string_lossy()))?;
+    Ok(content.len())
+}
+
+fn read_project_memory_payload(path: &Path, max_chars: usize) -> (serde_json::Value, Option<String>) {
+    let base = serde_json::json!({
+        "name": "project_memory",
+        "path": path.to_string_lossy().to_string(),
+        "exists": false,
+        "content": "",
+        "bytes": 0,
+        "lines": 0,
+        "truncated": false
+    });
+    if !path.exists() {
+        return (base, None);
+    }
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let total = raw.chars().count();
+            let truncated = total > max_chars;
+            let content = if truncated {
+                let tail: String = raw.chars().skip(total - max_chars).collect();
+                let tail = match tail.find('\n') {
+                    Some(cut) if cut + 1 < tail.len() => tail[cut + 1..].to_string(),
+                    _ => tail,
+                };
+                format!(
+                    "[...{} older characters of project memory omitted; open {} for the full log...]\n{}",
+                    total.saturating_sub(tail.chars().count()),
+                    PROJECT_MEMORY_FILE,
+                    tail
+                )
+            } else {
+                raw
+            };
+            (
+                serde_json::json!({
+                    "name": "project_memory",
+                    "path": path.to_string_lossy().to_string(),
+                    "exists": true,
+                    "content": content,
+                    "bytes": fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+                    "lines": content.lines().count(),
+                    "truncated": truncated
+                }),
+                None,
+            )
+        }
+        Err(e) => (base, Some(format!("Project memory unreadable: {e}"))),
+    }
+}
+
+fn configured_project_root(app: &tauri::AppHandle, action: &str) -> Result<PathBuf, String> {
+    let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let project_root = config.project_root_dir.trim();
+    if project_root.is_empty() {
+        return Err(format!("{action} blocked: no project root is configured. Set the project root in Customize first."));
+    }
+    let root = PathBuf::from(project_root);
+    if !root.is_dir() {
+        return Err(format!("{action} blocked: project root does not exist: {project_root}"));
+    }
+    Ok(root)
+}
+
+#[tauri::command]
+fn append_project_memory(entry: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    let root = configured_project_root(&app, "Project memory")?;
+    let path = root.join(PROJECT_MEMORY_FILE);
+    let existed = path.exists();
+    let bytes = append_project_memory_entry(&path, &entry, &date)?;
+    Ok(serde_json::json!({
+        "path": path.to_string_lossy().to_string(),
+        "relative_path": PROJECT_MEMORY_FILE,
+        "bytes": bytes,
+        "action": if existed { "appended" } else { "created" },
+    })
+    .to_string())
+}
+
+#[tauri::command]
+fn read_project_memory(app: tauri::AppHandle) -> Result<String, String> {
+    let root = configured_project_root(&app, "Project memory")?;
+    let (payload, _diag) = read_project_memory_payload(&root.join(PROJECT_MEMORY_FILE), PROJECT_MEMORY_PRIMER_MAX_CHARS);
+    Ok(payload.to_string())
+}
+
+#[tauri::command]
+async fn search_ai_retrieval(
+    query: String,
+    limit: Option<usize>,
+    evidence_budget_characters: Option<usize>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let query_text = query.trim().to_string();
+    if query_text.is_empty() {
+        return Err("AI search blocked: empty query.".to_string());
+    }
+    let root = configured_project_root(&app, "AI search")?;
+    let result_limit = limit.unwrap_or(6).clamp(1, AI_SEARCH_MAX_RESULTS);
+    let raw = query_retrieval_index(
+        root.to_string_lossy().to_string(),
+        query_text.clone(),
+        Some(result_limit),
+        evidence_budget_characters,
+        app,
+    )
+    .await?;
+    let result: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("AI search result unreadable: {e}"))?;
+    let packet = &result["evidence_packet"];
+    let provider_text = packet["provider_text"].as_str().unwrap_or("").to_string();
+    let sources = packet["diagnostics"]["included_sources"]
+        .as_array()
+        .map(|rows| rows.iter().filter_map(|v| v.as_str().map(str::to_string)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    Ok(serde_json::json!({
+        "query": query_text,
+        "limit": result_limit,
+        "sources": sources,
+        "provider_text": provider_text,
+        "diagnostics": packet["diagnostics"].clone(),
+    })
+    .to_string())
+}
+
 #[tauri::command]
 fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
@@ -10507,7 +10699,42 @@ mod tests {
         assert_eq!(again.len(), 2);
 
         let ro = AppConfig { ai_file_access_mode: "read_only".to_string(), ..AppConfig::default() };
-        assert_eq!(with_file_write_protocol(history, &ro).len(), 1);
+        let ro_injected = with_file_write_protocol(history.clone(), &ro);
+        assert_eq!(ro_injected.len(), 2);
+        assert!(!ro_injected[0]["content"].as_str().unwrap().contains(AI_FILE_BLOCK_OPEN));
+
+        let off = AppConfig { ai_file_access_mode: "disabled".to_string(), ..AppConfig::default() };
+        let off_injected = with_file_write_protocol(history, &off);
+        assert_eq!(off_injected.len(), 2);
+        let text = off_injected[0]["content"].as_str().unwrap();
+        assert!(!text.contains(AI_READ_BLOCK_OPEN));
+        assert!(text.contains(AI_SEARCH_BLOCK_OPEN) && text.contains(AI_REMEMBER_BLOCK_OPEN));
+    }
+
+    #[test]
+    fn project_memory_append_and_tail() {
+        let root = std::env::temp_dir().join("physics_ide_project_memory_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(PROJECT_MEMORY_FILE);
+        append_project_memory_entry(&path, "  First decision.\nsecond line  ", "2026-10-12").unwrap();
+        append_project_memory_entry(&path, "Second", "2026-10-13").unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# Project Memory"));
+        assert!(text.contains("- [2026-10-12] First decision. second line\n"));
+        assert!(text.contains("- [2026-10-13] Second\n"));
+        assert!(append_project_memory_entry(&path, "   ", "2026-10-13").is_err());
+        let long = "x".repeat(PROJECT_MEMORY_ENTRY_MAX_CHARS + 10);
+        assert!(append_project_memory_entry(&path, &long, "2026-10-13").is_err());
+
+        let (payload, diag) = read_project_memory_payload(&path, 40);
+        assert!(diag.is_none());
+        assert_eq!(payload["truncated"], true);
+        let content = payload["content"].as_str().unwrap();
+        assert!(content.contains("Second") && !content.contains("First decision"));
+        let (missing, diag) = read_project_memory_payload(&root.join("nope.md"), 40);
+        assert_eq!(missing["exists"], false);
+        assert!(diag.is_none());
     }
 
     #[test]
@@ -12139,6 +12366,9 @@ pub fn run() {
             append_ai_project_file,
             edit_ai_project_file,
             run_ai_project_command,
+            search_ai_retrieval,
+            append_project_memory,
+            read_project_memory,
             append_session_note,
             append_session_equation,
             ensure_session_doc,
