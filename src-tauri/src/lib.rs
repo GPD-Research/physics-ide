@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager};
 use std::os::unix::fs::PermissionsExt;
 
 mod ai_file_ops;
+mod checkpoints;
 mod local_ai;
 mod math_fixer;
 
@@ -402,6 +403,8 @@ pub struct AppConfig {
     ai_run_allowlist: String,
     #[serde(default = "default_ai_run_timeout_seconds")]
     ai_run_timeout_seconds: u64,
+    #[serde(default = "default_true")]
+    ai_checkpoints_enabled: bool,
     #[serde(default = "default_ollama_host")]
     ollama_host: String,
     reuse_notes_next_session: bool,
@@ -441,6 +444,7 @@ impl Default for AppConfig {
             ai_run_enabled: false,
             ai_run_allowlist: default_ai_run_allowlist(),
             ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
+            ai_checkpoints_enabled: true,
             ollama_host: default_ollama_host(),
             reuse_notes_next_session: false,
             first_session_completed: false,
@@ -503,6 +507,8 @@ pub struct SaveUserSettingsPayload {
     pub ai_run_enabled: bool,
     #[serde(default = "default_ai_run_allowlist", alias = "aiRunAllowlist")]
     pub ai_run_allowlist: String,
+    #[serde(default = "default_true", alias = "aiCheckpointsEnabled")]
+    pub ai_checkpoints_enabled: bool,
     #[serde(default = "default_ai_run_timeout_seconds", alias = "aiRunTimeoutSeconds")]
     pub ai_run_timeout_seconds: u64,
     #[serde(default = "default_ollama_host", alias = "ollamaHost")]
@@ -8920,6 +8926,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "ai_file_access_mode": config.ai_file_access_mode,
         "ai_file_access_status": describe_ai_file_access_for_config(&config),
         "ai_run_enabled": config.ai_run_enabled,
+        "ai_checkpoints_enabled": config.ai_checkpoints_enabled,
         "ai_run_allowlist": config.ai_run_allowlist,
         "ai_run_timeout_seconds": config.ai_run_timeout_seconds,
         "primer": primer_payload,
@@ -10205,6 +10212,36 @@ async fn search_ai_retrieval(
     .to_string())
 }
 
+fn checkpoint_repo(app: &tauri::AppHandle) -> Result<checkpoints::ShadowRepo, String> {
+    let root = configured_project_root(app, "Checkpoint")?;
+    let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    Ok(checkpoints::ShadowRepo::new(checkpoints::shadow_git_dir(&data_dir, &root), root))
+}
+
+#[tauri::command]
+fn create_project_checkpoint(subject: String, app: tauri::AppHandle) -> Result<String, String> {
+    let outcome = checkpoint_repo(&app)?.create(&subject)?;
+    serde_json::to_string(&outcome).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_project_checkpoints(limit: Option<usize>, app: tauri::AppHandle) -> Result<String, String> {
+    let rows = checkpoint_repo(&app)?.list(limit.unwrap_or(checkpoints::DEFAULT_LIST_LIMIT))?;
+    serde_json::to_string(&rows).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn describe_project_checkpoint(sha: String, app: tauri::AppHandle) -> Result<String, String> {
+    let files = checkpoint_repo(&app)?.files_in(&sha)?;
+    serde_json::to_string(&files).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn revert_project_checkpoint(sha: String, app: tauri::AppHandle) -> Result<String, String> {
+    let outcome = checkpoint_repo(&app)?.revert_to(&sha)?;
+    serde_json::to_string(&outcome).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
@@ -10613,6 +10650,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.right_preserve_thread_history = payload.right_preserve_thread_history;
     config.ai_file_access_mode = payload.ai_file_access_mode;
     config.ai_run_enabled = payload.ai_run_enabled;
+    config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_run_allowlist = ai_file_ops::parse_allowlist(&payload.ai_run_allowlist).join(",");
     config.ai_run_timeout_seconds = payload.ai_run_timeout_seconds.clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS);
     config.ollama_host = local_ai::normalize_host(&payload.ollama_host);
@@ -12370,6 +12408,10 @@ pub fn run() {
             append_project_memory,
             read_project_memory,
             append_session_note,
+            create_project_checkpoint,
+            list_project_checkpoints,
+            describe_project_checkpoint,
+            revert_project_checkpoint,
             append_session_equation,
             ensure_session_doc,
             read_document_text,
