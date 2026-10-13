@@ -660,6 +660,9 @@
       .task-plan li { opacity: 0.7; }
       .task-plan li.current { opacity: 1; font-weight: bold; color: var(--accent); }
       .task-plan li.done { opacity: 0.55; text-decoration: line-through; }
+      .calc-figure { margin: 6px 0 0; }
+      .calc-figure img { max-width: 100%; max-height: 360px; border: 1px solid var(--border-color); border-radius: 4px; background: #fff; cursor: zoom-in; }
+      .calc-figure figcaption { font-size: 0.72rem; opacity: 0.7; }
       .recall-body .chat-bubble { margin-bottom: 8px; }
 
       .chat-bubble .katex-display,
@@ -1855,7 +1858,7 @@
                   <label for="settings-ai-task-tokens" style="margin-top: 6px;">Task mode: token budget per task (0 = unlimited)</label>
                   <input type="number" id="settings-ai-task-tokens" min="0" step="1000" placeholder="150000">
                   <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
-                    Commands run with the project root as working directory, without a shell (no pipes or redirects), are killed at the timeout, and their stdout/stderr/exit code are fed back to the AI so it can fix failures. Requires file access to be at least read-only.
+                    Commands run with the project root as working directory, without a shell (no pipes or redirects), are killed at the timeout, and their stdout/stderr/exit code are fed back to the AI so it can fix failures. Requires file access to be at least read-only. This also enables CALC scratch snippets, which run with python in <code>.scratch/</code> under the project root (120 s cap) and show any plots they save in the chat.
                   </div>
                 </div>
               </div>
@@ -4347,6 +4350,7 @@
     const AI_READ_BLOCK_PATTERN = /<<<READ\s+path="([^"\n]+)"\s*>>>/g;
     const AI_RUN_BLOCK_PATTERN = /<<<RUN\s+cmd="([^"\n]+)"(?:\s+timeout="?(\d+)"?)?\s*>>>/g;
     const AI_SEARCH_BLOCK_PATTERN = /<<<SEARCH\s+query="([^"\n]+)"(?:\s+limit="?(\d+)"?)?\s*>>>/g;
+    const AI_CALC_BLOCK_PATTERN = /<<<CALC(?:\s+timeout="?(\d+)"?)?\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END CALC>>>/g;
     const AI_REMEMBER_BLOCK_PATTERN = /<<<REMEMBER\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END REMEMBER>>>/g;
     const AI_FILE_OPS_MAX_AUTO_CONTINUE = 3;
 
@@ -4367,6 +4371,7 @@
       collect(AI_RUN_BLOCK_PATTERN, (m) => ({ op: 'run', cmd: m[1].trim(), timeout: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_SEARCH_BLOCK_PATTERN, (m) => ({ op: 'search', query: m[1].trim(), limit: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_REMEMBER_BLOCK_PATTERN, (m) => ({ op: 'remember', entry: m[1] }));
+      collect(AI_CALC_BLOCK_PATTERN, (m) => ({ op: 'calc', code: m[2].replace(/^```[a-z]*\r?\n|\r?\n```\s*$/g, ''), timeout: m[1] ? parseInt(m[1], 10) : null }));
       ops.sort((a, b) => a.position - b.position);
       return ops;
     }
@@ -4434,6 +4439,17 @@
           const body = String(outcome.provider_text || '').trim() || 'No matching theory chunks were found; try a different query or rebuild the retrieval index.';
           return { text: `- SEARCH "${outcome.query}" (${sources.length} sources):\n${body}`, needsFollowUp: true };
         }
+        case 'calc': {
+          appendTerminalLog(`AI calc [${pane}]: ${op.code.split('\n').length} line snippet`);
+          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout }));
+          const run = outcome.run || {};
+          if (run.stdout) appendTerminalLog(run.stdout.replace(/\n$/, ''));
+          if (run.stderr) appendTerminalLog(run.stderr.replace(/\n$/, ''));
+          appendTerminalLog(`AI calc [${pane}] finished: ${run.cancelled ? 'cancelled' : run.timed_out ? 'timed out' : `exit ${run.exit_code}`} in ${run.elapsed_seconds}s; ${(outcome.artifacts || []).length} image(s)`);
+          const index = pane === 'left' ? leftIndex : rightIndex;
+          showCalcArtifacts(pane, index, outcome);
+          return { text: formatCalcOutcome(outcome), needsFollowUp: true };
+        }
         case 'remember': {
           const outcome = JSON.parse(await invoke('append_project_memory', { entry: op.entry, date: localDateStamp() }));
           const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)`;
@@ -4445,7 +4461,48 @@
       }
     }
 
+    function formatCalcOutcome(outcome) {
+      const runText = formatRunOutcome({ ...(outcome.run || {}), command: `CALC ${outcome.script_relative_path}` });
+      const artifacts = Array.isArray(outcome.artifacts) ? outcome.artifacts : [];
+      const lines = [runText];
+      if (artifacts.length) {
+        lines.push(`  images produced (shown to the user): ${artifacts.map((a) => `${a.relative_path} (${a.bytes} bytes)`).join(', ')}`);
+      }
+      if (outcome.skipped_artifacts) lines.push(`  (${outcome.skipped_artifacts} more image(s) not listed)`);
+      return lines.join('\n');
+    }
+
+    function showCalcArtifacts(pane, index, outcome) {
+      const artifacts = (Array.isArray(outcome.artifacts) ? outcome.artifacts : []).filter((a) => a.data_base64);
+      if (!artifacts.length) return;
+      const strip = document.getElementById(pane === 'left' ? 'left-strip' : 'right-strip');
+      const slot = strip?.children[index];
+      if (!slot) return;
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble calc-artifacts';
+      const title = document.createElement('strong');
+      title.textContent = `Scratch output (${outcome.script_relative_path}):`;
+      bubble.appendChild(title);
+      for (const art of artifacts) {
+        const fig = document.createElement('figure');
+        fig.className = 'calc-figure';
+        const img = document.createElement('img');
+        img.src = `data:${art.mime};base64,${art.data_base64}`;
+        img.alt = art.name;
+        img.title = `${art.relative_path} — click to open full size`;
+        img.onclick = () => window.open(img.src, '_blank');
+        const cap = document.createElement('figcaption');
+        cap.textContent = art.relative_path;
+        fig.appendChild(img);
+        fig.appendChild(cap);
+        bubble.appendChild(fig);
+      }
+      slot.appendChild(bubble);
+      slot.scrollTop = slot.scrollHeight;
+    }
+
     function describeAssistantFileOp(op) {
+      if (op.op === 'calc') return `CALC ${op.code.split('\n')[0].slice(0, 60)}`;
       if (op.op === 'run') return `RUN ${op.cmd}`;
       if (op.op === 'search') return `SEARCH ${op.query}`;
       if (op.op === 'remember') return 'REMEMBER project_memory.md';

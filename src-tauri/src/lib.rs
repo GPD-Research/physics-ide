@@ -1113,6 +1113,8 @@ const AI_EDIT_BLOCK_OPEN: &str = "<<<EDIT";
 const AI_EDIT_BLOCK_CLOSE: &str = "<<<END EDIT>>>";
 const AI_RUN_BLOCK_OPEN: &str = "<<<RUN";
 const AI_SEARCH_BLOCK_OPEN: &str = "<<<SEARCH";
+const AI_CALC_BLOCK_OPEN: &str = "<<<CALC>>>";
+const AI_CALC_BLOCK_CLOSE: &str = "<<<END CALC>>>";
 const AI_REMEMBER_BLOCK_OPEN: &str = "<<<REMEMBER";
 const AI_REMEMBER_BLOCK_CLOSE: &str = "<<<END REMEMBER>>>";
 const PROJECT_MEMORY_FILE: &str = "project_memory.md";
@@ -1190,6 +1192,16 @@ fn ai_run_protocol_instructions(allowlist: &str, timeout_seconds: u64) -> String
     )
 }
 
+fn ai_calc_protocol_instructions() -> String {
+    format!(
+        "Scratch computation is enabled. For a quick numeric or symbolic check that should NOT become a project file, emit a Python snippet between {open} and {close} on their own lines. It is saved under {dir}/ inside the project root and run there with the project root's python (NumPy/SciPy/SymPy/Matplotlib if installed), with a {timeout}s cap. Print what you need to see; save plots with plt.savefig('name.png') and new images in {dir}/ are shown to the user and listed back to you. Use CALC for verification (dimensional checks, numeric evaluation, consistency of equations); do not write to manuscript files from it, and never paste SymPy/Python output into documentation — translate verified results into plain LaTeX.",
+        open = AI_CALC_BLOCK_OPEN,
+        close = AI_CALC_BLOCK_CLOSE,
+        dir = ai_file_ops::SCRATCH_DIR,
+        timeout = ai_file_ops::MAX_CALC_TIMEOUT_SECONDS
+    )
+}
+
 fn describe_ai_file_access_mode(mode: &str) -> String {
     describe_ai_file_access(mode, false, ai_file_ops::DEFAULT_RUN_ALLOWLIST, ai_file_ops::DEFAULT_RUN_TIMEOUT_SECONDS)
 }
@@ -1211,6 +1223,8 @@ fn describe_ai_file_access(mode: &str, run_enabled: bool, run_allowlist: &str, r
     if run_enabled && normalized != "disabled" {
         text.push(' ');
         text.push_str(&ai_run_protocol_instructions(run_allowlist, run_timeout_seconds));
+        text.push(' ');
+        text.push_str(&ai_calc_protocol_instructions());
     }
     text.push('\n');
     text.push_str(&ai_retrieval_protocol_instructions());
@@ -1621,6 +1635,7 @@ fn collect_markdown_files_recursive(root: &Path) -> Result<Vec<PathBuf>, String>
     fn scan(dir: &Path, acc: &mut Vec<PathBuf>) -> Result<(), String> {
         let skip_dirs = [
             ".git",
+            ".scratch",
             "node_modules",
             "target",
             "dist",
@@ -2765,7 +2780,7 @@ fn restore_version(tag: String, rootPath: String) -> Result<String, String> {
     fn should_skip_version_copy(name: &str) -> bool {
         matches!(
             name,
-            ".git" | "versions" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode"
+            ".git" | ".scratch" | "versions" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode"
         )
     }
 
@@ -9621,7 +9636,7 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy();
 
-            if matches!(name.as_ref(), ".git" | "versions" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode") {
+            if matches!(name.as_ref(), ".git" | ".scratch" | "versions" | "target" | "node_modules" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".idea" | ".vscode") {
                 continue;
             }
 
@@ -10259,6 +10274,34 @@ fn checkpoint_repo(app: &tauri::AppHandle) -> Result<checkpoints::ShadowRepo, St
 }
 
 #[tauri::command]
+fn run_ai_calc(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+    let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    if !config.ai_run_enabled {
+        return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Customize to allow CALC blocks.".to_string());
+    }
+    if config.ai_file_access_mode.trim().eq_ignore_ascii_case("disabled") {
+        return Err("AI file access is disabled; enable at least read-only access to allow CALC blocks.".to_string());
+    }
+    let root = configured_project_root(&app, "AI calc")?;
+    let root = root.canonicalize().unwrap_or(root);
+    let allowlist = ai_file_ops::parse_allowlist(&config.ai_run_allowlist);
+    let interpreter = ai_file_ops::calc_interpreter(&allowlist)?;
+    let limit = config
+        .ai_run_timeout_seconds
+        .clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS)
+        .min(ai_file_ops::MAX_CALC_TIMEOUT_SECONDS);
+    let timeout = timeout_seconds.unwrap_or(limit).clamp(1, limit);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let stem = format!("calc_{stamp}");
+    let encode = |raw: &[u8]| base64::encode(raw);
+    let outcome = ai_file_ops::run_calc(&root, &code, &interpreter, &stem, std::time::Duration::from_secs(timeout), &encode)?;
+    serde_json::to_string(&outcome).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn cancel_ai_project_command() -> Result<String, String> {
     ai_file_ops::request_run_cancel();
     Ok("cancel requested".to_string())
@@ -10836,6 +10879,8 @@ mod tests {
         assert!(!status.contains(AI_RUN_BLOCK_OPEN));
         let with_run = describe_ai_file_access("read_write", true, "python3,node", 45);
         assert!(with_run.contains(AI_RUN_BLOCK_OPEN) && with_run.contains("python3,node") && with_run.contains("45"));
+        assert!(with_run.contains(AI_CALC_BLOCK_OPEN) && with_run.contains(AI_CALC_BLOCK_CLOSE));
+        assert!(!status.contains(AI_CALC_BLOCK_OPEN));
         assert!(!describe_ai_file_access("disabled", true, "python3", 60).contains(AI_RUN_BLOCK_OPEN));
     }
 
@@ -12472,6 +12517,7 @@ pub fn run() {
             describe_project_checkpoint,
             revert_project_checkpoint,
             cancel_ai_project_command,
+            run_ai_calc,
             append_session_equation,
             ensure_session_doc,
             read_document_text,
