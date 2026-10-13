@@ -1197,6 +1197,8 @@
         <div class="menu-section">Today</div>
         <a href="#" onclick="openSessionDoc('notes'); return false;" title="Open today's session_notes_YYYY-MM-DD.md in the built-in editor (created if missing)">Open Session Notes</a>
         <a href="#" onclick="openSessionDoc('equations'); return false;" title="Open today's session_equations_YYYY-MM-DD.md in the built-in editor (created if missing)">Open Session Equations</a>
+        <div class="menu-section">Project</div>
+        <a href="#" onclick="openCheckpointsModal(); return false;" title="Git checkpoints taken before AI file edits — inspect or revert the project root to any of them">Checkpoints...</a>
         <div class="menu-section">Documents</div>
         <a href="#" onclick="openDocumentFromDialog('editor'); return false;" title="Choose any .md/.txt/.pdf file and open it in the built-in editor">Open Document in Editor...</a>
         <a href="#" onclick="openDocumentFromDialog('notepad'); return false;" title="Choose any .md/.txt/.pdf file and load its text into the note pad">Load Document into Note Pad...</a>
@@ -1571,6 +1573,18 @@
     </div>
   </div>
 
+  <div id="checkpoints-modal" class="modal" style="z-index: 1120;">
+    <div class="modal-content doc-glass" style="width: min(820px, 90vw); max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header">Project checkpoints</div>
+      <div id="checkpoints-meta" style="font-size: 0.8rem; opacity: 0.75; margin-bottom: 8px;"></div>
+      <div id="checkpoints-body" class="recall-body"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap;">
+        <button onclick="closeCheckpointsModal()">Close</button>
+        <button onclick="createCheckpointNow(this)" title="Snapshot the project root right now">Checkpoint now</button>
+        <button onclick="loadCheckpoints()" title="Reload the list">Refresh</button>
+      </div>
+    </div>
+  </div>
   <div id="recall-modal" class="modal" style="z-index: 1120;">
     <div class="modal-content doc-glass" style="width: min(900px, 90vw); max-height: 85vh; display: flex; flex-direction: column;">
       <div class="modal-header" id="recall-modal-title">Recall session</div>
@@ -1758,6 +1772,15 @@
                   </select>
                   <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
                     When enabled, the AI can only operate within the active workspace root and only for the selected access level. If you change the project root in Customize, the AI can modify and create/delete files within that selected root directory. Read-only allows READ blocks; read/write adds FILE, APPEND and EDIT blocks.
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="settings-ai-checkpoints-enabled">
+                    Git checkpoint before each batch of AI file edits (Session Docs ▸ Checkpoints to revert)
+                  </label>
+                  <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
+                    Snapshots are kept in a shadow repository under the app data folder; your project's own .git history is never touched. Requires git on the PATH.
                   </div>
                 </div>
                 <div class="form-group">
@@ -3492,6 +3515,7 @@
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-ai-file-access').value = currentConfig.ai_file_access_mode || 'disabled';
         document.getElementById('settings-ai-run-enabled').checked = Boolean(currentConfig.ai_run_enabled);
+        document.getElementById('settings-ai-checkpoints-enabled').checked = currentConfig.ai_checkpoints_enabled !== false;
         document.getElementById('settings-ai-run-allowlist').value = currentConfig.ai_run_allowlist || 'python3,python,bash,sh,node';
         document.getElementById('settings-ai-run-timeout').value = Number(currentConfig.ai_run_timeout_seconds) || 60;
         const ollamaHostInput = document.getElementById('settings-ollama-host');
@@ -4127,6 +4151,18 @@
       const results = [];
       let needsFollowUp = false;
       let touchedFiles = false;
+      const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit');
+      if (mutating.length > 0 && currentConfig?.ai_checkpoints_enabled !== false) {
+        const label = `Before AI edits [${pane}]: ${mutating.map(describeAssistantFileOp).join(', ')}`;
+        try {
+          const ck = JSON.parse(await invoke('create_project_checkpoint', { subject: label }));
+          appendTerminalLog(ck.action === 'created'
+            ? `Checkpoint ${ck.short_sha} saved (${ck.files_changed} file${ck.files_changed === 1 ? '' : 's'} since last checkpoint).`
+            : 'Checkpoint: project unchanged since last checkpoint.');
+        } catch (ckError) {
+          appendTerminalLog(`Checkpoint failed (continuing without it): ${ckError}`);
+        }
+      }
       for (const op of ops) {
         try {
           const outcome = await executeAssistantFileOp(pane, op);
@@ -5244,6 +5280,110 @@
         body.appendChild(bubble);
       });
       document.getElementById('recall-modal').style.display = 'flex';
+    }
+
+    function formatCheckpointTime(ts) {
+      const d = new Date(Number(ts) * 1000);
+      return Number.isFinite(d.getTime()) ? d.toLocaleString() : '';
+    }
+
+    async function openCheckpointsModal() {
+      document.getElementById('checkpoints-modal').style.display = 'flex';
+      await loadCheckpoints();
+    }
+
+    function closeCheckpointsModal() {
+      document.getElementById('checkpoints-modal').style.display = 'none';
+    }
+
+    async function loadCheckpoints() {
+      const body = document.getElementById('checkpoints-body');
+      const meta = document.getElementById('checkpoints-meta');
+      body.innerHTML = '';
+      meta.textContent = 'Snapshots of the project root taken before AI file edits (shadow git repo in app data; your own .git is untouched). Reverting first saves a checkpoint of the current state, so nothing is lost.';
+      let rows = [];
+      try {
+        rows = JSON.parse(await invoke('list_project_checkpoints', { limit: 50 }));
+      } catch (err) {
+        body.textContent = `Checkpoints unavailable: ${err}`;
+        return;
+      }
+      if (!Array.isArray(rows) || rows.length === 0) {
+        body.textContent = 'No checkpoints yet. One is taken automatically before each batch of AI file edits, or use "Checkpoint now".';
+        return;
+      }
+      rows.forEach((row, i) => {
+        const line = document.createElement('div');
+        line.className = 'chat-bubble';
+        line.style.display = 'flex';
+        line.style.alignItems = 'center';
+        line.style.gap = '10px';
+        line.style.flexWrap = 'wrap';
+        const text = document.createElement('span');
+        text.style.flex = '1 1 300px';
+        text.innerHTML = `<code>${escapeHelpHtml(row.short_sha)}</code> · ${escapeHelpHtml(formatCheckpointTime(row.timestamp))}` +
+          (i === 0 ? ' <em>(latest)</em>' : '') + `<br>${escapeHelpHtml(row.subject || '')}`;
+        const files = document.createElement('button');
+        files.textContent = 'Files';
+        files.title = 'List the files recorded in this checkpoint';
+        files.onclick = () => showCheckpointFiles(row, line);
+        const revert = document.createElement('button');
+        revert.textContent = 'Revert to this';
+        revert.title = 'Restore the project root to the state recorded at this checkpoint';
+        revert.onclick = () => revertToCheckpoint(row, revert);
+        line.appendChild(text);
+        line.appendChild(files);
+        line.appendChild(revert);
+        body.appendChild(line);
+      });
+    }
+
+    async function showCheckpointFiles(row, container) {
+      const existing = container.querySelector('.checkpoint-files');
+      if (existing) { existing.remove(); return; }
+      const pre = document.createElement('pre');
+      pre.className = 'checkpoint-files';
+      pre.style.flexBasis = '100%';
+      pre.style.margin = '6px 0 0';
+      pre.style.whiteSpace = 'pre-wrap';
+      pre.style.fontSize = '0.78rem';
+      try {
+        const files = JSON.parse(await invoke('describe_project_checkpoint', { sha: row.sha }));
+        pre.textContent = files.length ? files.join('\n') : '(no file changes recorded)';
+      } catch (err) {
+        pre.textContent = `Could not list files: ${err}`;
+      }
+      container.appendChild(pre);
+    }
+
+    async function revertToCheckpoint(row, btn) {
+      const ok = window.confirm(`Revert the project root to checkpoint ${row.short_sha}?\n\n"${row.subject}"\n\nFiles added since then are removed and edited files are restored. The current state is checkpointed first so you can undo this.`);
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        const outcome = JSON.parse(await invoke('revert_project_checkpoint', { sha: row.sha }));
+        appendTerminalLog(outcome.action === 'created'
+          ? `Reverted to ${row.short_sha}; new checkpoint ${outcome.short_sha} (${outcome.files_changed} files changed).`
+          : `Project already matched checkpoint ${row.short_sha}; nothing changed.`);
+        try { await refreshFileTree(); } catch (_) { /* best-effort */ }
+        await loadCheckpoints();
+      } catch (err) {
+        appendTerminalLog(`Revert failed: ${err}`);
+        window.alert(`Revert failed: ${err}`);
+        btn.disabled = false;
+      }
+    }
+
+    async function createCheckpointNow(btn) {
+      try {
+        const ck = JSON.parse(await invoke('create_project_checkpoint', { subject: 'Manual checkpoint' }));
+        appendTerminalLog(ck.action === 'created' ? `Checkpoint ${ck.short_sha} saved (${ck.files_changed} files).` : 'Checkpoint: project unchanged since last checkpoint.');
+        flashButtonLabel(btn, ck.action === 'created' ? 'Saved' : 'Unchanged');
+        await loadCheckpoints();
+      } catch (err) {
+        appendTerminalLog(`Checkpoint failed: ${err}`);
+        flashButtonLabel(btn, 'Failed');
+      }
     }
 
     function closeRecallViewer() {
@@ -8536,6 +8676,7 @@ async function restoreVersion() {
       const rightPreserveThreadHistory = document.getElementById('settings-right-preserve-thread-history').checked;
       const aiFileAccessMode = document.getElementById('settings-ai-file-access').value || 'disabled';
       const aiRunEnabled = document.getElementById('settings-ai-run-enabled').checked;
+      const aiCheckpointsEnabled = document.getElementById('settings-ai-checkpoints-enabled').checked;
       const aiRunAllowlist = (document.getElementById('settings-ai-run-allowlist').value || '').trim() || 'python3,python,bash,sh,node';
       const aiRunTimeoutSeconds = Math.max(1, Math.min(600, parseInt(document.getElementById('settings-ai-run-timeout').value, 10) || 60));
 
@@ -8561,6 +8702,7 @@ async function restoreVersion() {
         right_preserve_thread_history: rightPreserveThreadHistory,
         ai_file_access_mode: aiFileAccessMode,
         ai_run_enabled: aiRunEnabled,
+        ai_checkpoints_enabled: aiCheckpointsEnabled,
         ai_run_allowlist: aiRunAllowlist,
         ai_run_timeout_seconds: aiRunTimeoutSeconds
       };
@@ -8607,6 +8749,7 @@ async function restoreVersion() {
         currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
         currentConfig.ai_file_access_mode = aiFileAccessMode;
         currentConfig.ai_run_enabled = aiRunEnabled;
+        currentConfig.ai_checkpoints_enabled = aiCheckpointsEnabled;
         currentConfig.ai_run_allowlist = aiRunAllowlist;
         currentConfig.ai_run_timeout_seconds = aiRunTimeoutSeconds;
         currentConfig.ollama_host = ollamaHost;
