@@ -5,7 +5,15 @@ use serde::Serialize;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+/// Set by the UI Stop button; checked by the run loop so a running script can be killed.
+pub static RUN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+pub fn request_run_cancel() {
+    RUN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 pub const DEFAULT_RUN_ALLOWLIST: &str = "python3,python,bash,sh,node";
 pub const DEFAULT_RUN_TIMEOUT_SECONDS: u64 = 60;
@@ -185,6 +193,7 @@ pub fn validate_run_command(cmd: &str, allowlist: &[String], project_root: &Path
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RunOutcome {
+    pub cancelled: bool,
     pub command: String,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
@@ -220,6 +229,7 @@ fn truncate_output(bytes: &[u8]) -> (String, bool) {
 /// `timeout`. Output is drained on reader threads so large output can't block.
 pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -> Result<RunOutcome, String> {
     let started = Instant::now();
+    RUN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(project_root)
@@ -247,10 +257,17 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
     });
 
     let mut timed_out = false;
+    let mut cancelled = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
+                if RUN_CANCEL_REQUESTED.swap(false, Ordering::SeqCst) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    cancelled = true;
+                    break None;
+                }
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -272,6 +289,7 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
         command: argv.join(" "),
         exit_code: status.and_then(|s| s.code()),
         timed_out,
+        cancelled,
         stdout,
         stderr,
         stdout_truncated,
@@ -282,6 +300,22 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancel_request_kills_running_command() {
+        let dir = std::env::temp_dir().join(format!("ai_run_cancel_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let argv = vec!["sleep".to_string(), "30".to_string()];
+        let root = dir.clone();
+        let handle = std::thread::spawn(move || super::run_in_project(&argv, &root, std::time::Duration::from_secs(20)));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        super::request_run_cancel();
+        let outcome = handle.join().unwrap().unwrap();
+        assert!(outcome.cancelled);
+        assert!(!outcome.timed_out);
+        assert!(outcome.elapsed_seconds < 10.0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]

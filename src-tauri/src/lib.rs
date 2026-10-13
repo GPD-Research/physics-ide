@@ -405,6 +405,10 @@ pub struct AppConfig {
     ai_run_timeout_seconds: u64,
     #[serde(default = "default_true")]
     ai_checkpoints_enabled: bool,
+    #[serde(default = "default_ai_task_max_rounds")]
+    ai_task_max_rounds: u32,
+    #[serde(default = "default_ai_task_token_budget")]
+    ai_task_token_budget: u64,
     #[serde(default = "default_ollama_host")]
     ollama_host: String,
     reuse_notes_next_session: bool,
@@ -445,6 +449,8 @@ impl Default for AppConfig {
             ai_run_allowlist: default_ai_run_allowlist(),
             ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
             ai_checkpoints_enabled: true,
+            ai_task_max_rounds: default_ai_task_max_rounds(),
+            ai_task_token_budget: default_ai_task_token_budget(),
             ollama_host: default_ollama_host(),
             reuse_notes_next_session: false,
             first_session_completed: false,
@@ -509,6 +515,10 @@ pub struct SaveUserSettingsPayload {
     pub ai_run_allowlist: String,
     #[serde(default = "default_true", alias = "aiCheckpointsEnabled")]
     pub ai_checkpoints_enabled: bool,
+    #[serde(default = "default_ai_task_max_rounds", alias = "aiTaskMaxRounds")]
+    pub ai_task_max_rounds: u32,
+    #[serde(default = "default_ai_task_token_budget", alias = "aiTaskTokenBudget")]
+    pub ai_task_token_budget: u64,
     #[serde(default = "default_ai_run_timeout_seconds", alias = "aiRunTimeoutSeconds")]
     pub ai_run_timeout_seconds: u64,
     #[serde(default = "default_ollama_host", alias = "ollamaHost")]
@@ -1117,6 +1127,32 @@ fn ai_retrieval_protocol_instructions() -> String {
     )
 }
 
+const AI_TASK_MAX_ROUNDS_LIMIT: u32 = 100;
+const AI_TASK_PLAN_OPEN: &str = "<<<PLAN>>>";
+const AI_TASK_PLAN_CLOSE: &str = "<<<END PLAN>>>";
+const AI_TASK_STEP_OPEN: &str = "<<<STEP";
+const AI_TASK_DONE: &str = "<<<DONE>>>";
+const AI_TASK_BLOCKED: &str = "<<<BLOCKED>>>";
+
+fn default_ai_task_max_rounds() -> u32 {
+    12
+}
+
+fn default_ai_task_token_budget() -> u64 {
+    150_000
+}
+
+fn ai_task_protocol_instructions() -> String {
+    format!(
+        "Task mode: a user message that begins with \"TASK:\" starts a goal-driven task. Respond first with a short numbered plan between {plan_open} and {plan_close} (one step per line, \"1. ...\"), then begin executing. Mark the start of each step's work with {step_open} n>>> on its own line, use file, RUN, and SEARCH blocks as needed, and check your own results (run the script, read the output, compare numbers) before moving on. The app automatically prompts you to continue after each round until you finish; when the goal is met, end your reply with {done} followed by a brief summary of what was produced and verified. If you cannot proceed without the user, write {blocked} followed by the exact question. Keep each round focused on one or two steps; the task has a round and token budget set by the user.",
+        plan_open = AI_TASK_PLAN_OPEN,
+        plan_close = AI_TASK_PLAN_CLOSE,
+        step_open = AI_TASK_STEP_OPEN,
+        done = AI_TASK_DONE,
+        blocked = AI_TASK_BLOCKED
+    )
+}
+
 fn ai_memory_protocol_instructions() -> String {
     format!(
         "Project memory: {file} in the project root is a durable, user-editable log of decisions, conventions, open questions, and failed approaches; its most recent entries are injected into your startup primer in every session. When something is worth remembering across sessions (a decision and its reasoning, a dead end, a naming convention, a result the user accepted), record it with:\n  {open}\n  <one to three concise sentences>\n  {close}\n  The app appends it as a dated bullet. Keep entries terse and factual; never record secrets or transient task state.",
@@ -1180,6 +1216,8 @@ fn describe_ai_file_access(mode: &str, run_enabled: bool, run_allowlist: &str, r
     text.push_str(&ai_retrieval_protocol_instructions());
     text.push('\n');
     text.push_str(&ai_memory_protocol_instructions());
+    text.push('\n');
+    text.push_str(&ai_task_protocol_instructions());
     text
 }
 
@@ -8927,6 +8965,8 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "ai_file_access_status": describe_ai_file_access_for_config(&config),
         "ai_run_enabled": config.ai_run_enabled,
         "ai_checkpoints_enabled": config.ai_checkpoints_enabled,
+        "ai_task_max_rounds": config.ai_task_max_rounds,
+        "ai_task_token_budget": config.ai_task_token_budget,
         "ai_run_allowlist": config.ai_run_allowlist,
         "ai_run_timeout_seconds": config.ai_run_timeout_seconds,
         "primer": primer_payload,
@@ -10219,6 +10259,12 @@ fn checkpoint_repo(app: &tauri::AppHandle) -> Result<checkpoints::ShadowRepo, St
 }
 
 #[tauri::command]
+fn cancel_ai_project_command() -> Result<String, String> {
+    ai_file_ops::request_run_cancel();
+    Ok("cancel requested".to_string())
+}
+
+#[tauri::command]
 fn create_project_checkpoint(subject: String, app: tauri::AppHandle) -> Result<String, String> {
     let outcome = checkpoint_repo(&app)?.create(&subject)?;
     serde_json::to_string(&outcome).map_err(|e| e.to_string())
@@ -10651,6 +10697,8 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.ai_file_access_mode = payload.ai_file_access_mode;
     config.ai_run_enabled = payload.ai_run_enabled;
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
+    config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
+    config.ai_task_token_budget = payload.ai_task_token_budget;
     config.ai_run_allowlist = ai_file_ops::parse_allowlist(&payload.ai_run_allowlist).join(",");
     config.ai_run_timeout_seconds = payload.ai_run_timeout_seconds.clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS);
     config.ollama_host = local_ai::normalize_host(&payload.ollama_host);
@@ -10789,6 +10837,17 @@ mod tests {
         let with_run = describe_ai_file_access("read_write", true, "python3,node", 45);
         assert!(with_run.contains(AI_RUN_BLOCK_OPEN) && with_run.contains("python3,node") && with_run.contains("45"));
         assert!(!describe_ai_file_access("disabled", true, "python3", 60).contains(AI_RUN_BLOCK_OPEN));
+    }
+
+    #[test]
+    fn describe_ai_file_access_always_includes_task_protocol() {
+        for mode in ["read_write", "read", "disabled"] {
+            let text = describe_ai_file_access(mode, false, "python3", 60);
+            assert!(text.contains(AI_TASK_PLAN_OPEN) && text.contains(AI_TASK_PLAN_CLOSE), "{mode}");
+            assert!(text.contains(AI_TASK_DONE) && text.contains(AI_TASK_BLOCKED) && text.contains("<<<STEP n>>>"), "{mode}");
+        }
+        assert_eq!(default_ai_task_max_rounds(), 12);
+        assert!(default_ai_task_token_budget() > 0);
     }
 
     #[test]
@@ -12412,6 +12471,7 @@ pub fn run() {
             list_project_checkpoints,
             describe_project_checkpoint,
             revert_project_checkpoint,
+            cancel_ai_project_command,
             append_session_equation,
             ensure_session_doc,
             read_document_text,
