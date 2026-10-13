@@ -3,15 +3,29 @@
 
 use serde::Serialize;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+/// Set by the UI Stop button; checked by the run loop so a running script can be killed.
+pub static RUN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+pub fn request_run_cancel() {
+    RUN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 pub const DEFAULT_RUN_ALLOWLIST: &str = "python3,python,bash,sh,node";
 pub const DEFAULT_RUN_TIMEOUT_SECONDS: u64 = 60;
 pub const MAX_RUN_TIMEOUT_SECONDS: u64 = 600;
 /// Per-stream cap on captured output returned to the model.
 pub const MAX_OUTPUT_BYTES: usize = 12_000;
+/// Scratch directory (relative to the project root) used by CALC blocks.
+pub const SCRATCH_DIR: &str = ".scratch";
+pub const MAX_CALC_TIMEOUT_SECONDS: u64 = 120;
+pub const MAX_CALC_ARTIFACTS: usize = 6;
+/// Per-artifact cap on image bytes returned inline to the UI.
+pub const MAX_CALC_ARTIFACT_BYTES: u64 = 2_000_000;
 /// Cap on file contents returned by READ.
 pub const MAX_READ_BYTES: usize = 48_000;
 
@@ -185,6 +199,7 @@ pub fn validate_run_command(cmd: &str, allowlist: &[String], project_root: &Path
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RunOutcome {
+    pub cancelled: bool,
     pub command: String,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
@@ -220,6 +235,7 @@ fn truncate_output(bytes: &[u8]) -> (String, bool) {
 /// `timeout`. Output is drained on reader threads so large output can't block.
 pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -> Result<RunOutcome, String> {
     let started = Instant::now();
+    RUN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(project_root)
@@ -247,10 +263,17 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
     });
 
     let mut timed_out = false;
+    let mut cancelled = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
+                if RUN_CANCEL_REQUESTED.swap(false, Ordering::SeqCst) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    cancelled = true;
+                    break None;
+                }
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -272,6 +295,7 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
         command: argv.join(" "),
         exit_code: status.and_then(|s| s.code()),
         timed_out,
+        cancelled,
         stdout,
         stderr,
         stdout_truncated,
@@ -280,8 +304,165 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcArtifact {
+    pub name: String,
+    pub relative_path: String,
+    pub bytes: u64,
+    pub mime: String,
+    pub data_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalcOutcome {
+    pub script_relative_path: String,
+    pub run: RunOutcome,
+    pub artifacts: Vec<CalcArtifact>,
+    pub skipped_artifacts: usize,
+}
+
+fn image_mime(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_string_lossy().to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "svg" => Some("image/svg+xml"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn snapshot_images(dir: &Path) -> std::collections::HashMap<PathBuf, std::time::SystemTime> {
+    let mut out = std::collections::HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if image_mime(&path).is_none() {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                out.insert(path, meta.modified().unwrap_or(std::time::UNIX_EPOCH));
+            }
+        }
+    }
+    out
+}
+
+/// Pick the interpreter for CALC snippets: the first python on the allowlist.
+pub fn calc_interpreter(allowlist: &[String]) -> Result<String, String> {
+    ["python3", "python"]
+        .iter()
+        .find(|p| allowlist.iter().any(|a| a.eq_ignore_ascii_case(p)))
+        .map(|p| p.to_string())
+        .ok_or_else(|| "CALC blocks need python3 (or python) on the AI run allowlist.".to_string())
+}
+
+/// Write `code` into `<root>/.scratch/<stem>.py`, run it there, and collect image files
+/// created or modified by the run (base64-encoded via `encode` so this module stays dependency-free).
+pub fn run_calc(
+    project_root: &Path,
+    code: &str,
+    interpreter: &str,
+    stem: &str,
+    timeout: Duration,
+    encode: &dyn Fn(&[u8]) -> String,
+) -> Result<CalcOutcome, String> {
+    if code.trim().is_empty() {
+        return Err("CALC block is empty.".to_string());
+    }
+    let scratch = project_root.join(SCRATCH_DIR);
+    std::fs::create_dir_all(&scratch).map_err(|e| format!("Failed to create {}: {e}", scratch.display()))?;
+    let safe_stem: String = stem.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+    let safe_stem = if safe_stem.is_empty() { "calc".to_string() } else { safe_stem };
+    let script_name = format!("{safe_stem}.py");
+    let script_path = scratch.join(&script_name);
+    let mut body = code.replace("\r\n", "\n");
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    std::fs::write(&script_path, body).map_err(|e| format!("Failed to write {}: {e}", script_path.display()))?;
+
+    let before = snapshot_images(&scratch);
+    let argv = vec![interpreter.to_string(), script_name.clone()];
+    let run = run_in_project(&argv, &scratch, timeout)?;
+
+    let mut changed: Vec<(PathBuf, std::time::SystemTime)> = snapshot_images(&scratch)
+        .into_iter()
+        .filter(|(path, modified)| before.get(path).map(|old| old < modified).unwrap_or(true))
+        .collect();
+    changed.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let skipped_artifacts = changed.len().saturating_sub(MAX_CALC_ARTIFACTS);
+    let artifacts = changed
+        .into_iter()
+        .take(MAX_CALC_ARTIFACTS)
+        .map(|(path, _)| {
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let mime = image_mime(&path).unwrap_or("application/octet-stream").to_string();
+            let data_base64 = if bytes <= MAX_CALC_ARTIFACT_BYTES {
+                std::fs::read(&path).ok().map(|raw| encode(&raw))
+            } else {
+                None
+            };
+            CalcArtifact { relative_path: format!("{SCRATCH_DIR}/{name}"), name, bytes, mime, data_base64 }
+        })
+        .collect();
+    Ok(CalcOutcome {
+        script_relative_path: format!("{SCRATCH_DIR}/{script_name}"),
+        run,
+        artifacts,
+        skipped_artifacts,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    /// The cancel flag is process-global, so tests that spawn child processes must not overlap.
+    static PROCESS_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn calc_runs_in_scratch_and_collects_new_images() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let root = std::env::temp_dir().join(format!("ai_calc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let code = "import os\nprint('cwd', os.path.basename(os.getcwd()))\nopen('plot.png','wb').write(b'\\x89PNG fake')\nopen('old.txt','w').write('x')\n";
+        let enc = |b: &[u8]| format!("len{}", b.len());
+        let outcome = super::run_calc(&root, code, "python3", "calc_1", std::time::Duration::from_secs(20), &enc).unwrap();
+        assert_eq!(outcome.run.exit_code, Some(0));
+        assert!(outcome.run.stdout.contains("cwd .scratch"), "{}", outcome.run.stdout);
+        assert_eq!(outcome.script_relative_path, ".scratch/calc_1.py");
+        assert_eq!(outcome.artifacts.len(), 1);
+        assert_eq!(outcome.artifacts[0].relative_path, ".scratch/plot.png");
+        assert_eq!(outcome.artifacts[0].mime, "image/png");
+        assert_eq!(outcome.artifacts[0].data_base64.as_deref(), Some("len9"));
+        // a second run that touches nothing reports no artifacts
+        let again = super::run_calc(&root, "print(1)", "python3", "calc_2", std::time::Duration::from_secs(20), &enc).unwrap();
+        assert!(again.artifacts.is_empty());
+        assert!(super::run_calc(&root, "  ", "python3", "x", std::time::Duration::from_secs(5), &enc).is_err());
+        let al = vec!["python".to_string()];
+        assert_eq!(super::calc_interpreter(&al).unwrap(), "python");
+        assert!(super::calc_interpreter(&["node".to_string()]).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cancel_request_kills_running_command() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("ai_run_cancel_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let argv = vec!["sleep".to_string(), "30".to_string()];
+        let root = dir.clone();
+        let handle = std::thread::spawn(move || super::run_in_project(&argv, &root, std::time::Duration::from_secs(20)));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        super::request_run_cancel();
+        let outcome = handle.join().unwrap().unwrap();
+        assert!(outcome.cancelled);
+        assert!(!outcome.timed_out);
+        assert!(outcome.elapsed_seconds < 10.0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]
@@ -323,6 +504,7 @@ mod tests {
 
     #[test]
     fn runs_and_times_out() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir();
         let argv: Vec<String> = ["sh", "-c", "echo out; echo err 1>&2; exit 3"].iter().map(|s| s.to_string()).collect();
         let out = run_in_project(&argv, &dir, Duration::from_secs(10)).unwrap();

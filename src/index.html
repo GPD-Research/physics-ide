@@ -647,6 +647,22 @@
       }
       .recall-select:hover { opacity: 1; }
       .recall-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px; }
+      .task-panel { border-bottom: 1px solid var(--border-color); padding: 6px 10px; background: var(--bg-dark); font-size: 0.8rem; }
+      .task-panel-row { display: flex; gap: 8px; align-items: stretch; }
+      .task-input { flex: 1; min-width: 0; resize: vertical; font-size: 0.8rem; background: var(--bg-panel, transparent); color: inherit; border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 6px; }
+      .task-panel-buttons { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+      .task-approve-label { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; opacity: 0.85; white-space: nowrap; }
+      .task-status { margin-top: 6px; }
+      .task-status-line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .task-status-line > span:first-child { font-weight: bold; color: var(--accent); }
+      .task-controls { margin-left: auto; display: flex; gap: 4px; }
+      .task-plan { margin: 4px 0 0; padding-left: 20px; max-height: 110px; overflow-y: auto; }
+      .task-plan li { opacity: 0.7; }
+      .task-plan li.current { opacity: 1; font-weight: bold; color: var(--accent); }
+      .task-plan li.done { opacity: 0.55; text-decoration: line-through; }
+      .calc-figure { margin: 6px 0 0; }
+      .calc-figure img { max-width: 100%; max-height: 360px; border: 1px solid var(--border-color); border-radius: 4px; background: #fff; cursor: zoom-in; }
+      .calc-figure figcaption { font-size: 0.72rem; opacity: 0.7; }
       .recall-body .chat-bubble { margin-bottom: 8px; }
 
       .chat-bubble .katex-display,
@@ -1306,6 +1322,28 @@
           </div>
         </div>
 
+        <div class="task-panel" id="left-task-panel">
+          <div class="task-panel-row">
+            <textarea id="left-task-input" class="task-input" rows="2" placeholder="Task goal, e.g. 'Write a script that evaluates eq. (3.4) for the ledger parameters and compare with the quoted value.'" title="A goal the AI plans and executes step by step with file/RUN/SEARCH blocks until it reports DONE"></textarea>
+            <div class="task-panel-buttons">
+              <button id="left-task-start" onclick="startTask('left')" title="Start the task (the AI replies with a plan, then executes it round by round)">Start task</button>
+              <label class="task-approve-label" title="Pause after every round so you can approve the next step"><input type="checkbox" id="left-task-approve"> approve each step</label>
+            </div>
+          </div>
+          <div class="task-status" id="left-task-status" style="display: none;">
+            <div class="task-status-line">
+              <span id="left-task-state">idle</span>
+              <span id="left-task-budget"></span>
+              <span class="task-controls">
+                <button id="left-task-pause" onclick="toggleTaskPause('left')" title="Pause after the current round; Resume continues">Pause</button>
+                <button id="left-task-approve-next" onclick="approveTaskStep('left')" style="display: none;" title="Let the AI run the next round">Approve next</button>
+                <button onclick="stopTask('left')" title="Stop the task: halts auto-continue and kills a running RUN">Stop</button>
+              </span>
+            </div>
+            <ol class="task-plan" id="left-task-plan"></ol>
+          </div>
+        </div>
+
         <div class="stack-viewport">
           <div class="stack-strip" id="left-strip">
             
@@ -1354,6 +1392,28 @@
           <div>
             <button onclick="rotateRight(-1)" title="Previous creative slot">▲</button>
             <button onclick="rotateRight(1)" title="Next creative slot">▼</button>
+          </div>
+        </div>
+
+        <div class="task-panel" id="right-task-panel">
+          <div class="task-panel-row">
+            <textarea id="right-task-input" class="task-input" rows="2" placeholder="Task goal, e.g. 'Write a script that evaluates eq. (3.4) for the ledger parameters and compare with the quoted value.'" title="A goal the AI plans and executes step by step with file/RUN/SEARCH blocks until it reports DONE"></textarea>
+            <div class="task-panel-buttons">
+              <button id="right-task-start" onclick="startTask('right')" title="Start the task (the AI replies with a plan, then executes it round by round)">Start task</button>
+              <label class="task-approve-label" title="Pause after every round so you can approve the next step"><input type="checkbox" id="right-task-approve"> approve each step</label>
+            </div>
+          </div>
+          <div class="task-status" id="right-task-status" style="display: none;">
+            <div class="task-status-line">
+              <span id="right-task-state">idle</span>
+              <span id="right-task-budget"></span>
+              <span class="task-controls">
+                <button id="right-task-pause" onclick="toggleTaskPause('right')" title="Pause after the current round; Resume continues">Pause</button>
+                <button id="right-task-approve-next" onclick="approveTaskStep('right')" style="display: none;" title="Let the AI run the next round">Approve next</button>
+                <button onclick="stopTask('right')" title="Stop the task: halts auto-continue and kills a running RUN">Stop</button>
+              </span>
+            </div>
+            <ol class="task-plan" id="right-task-plan"></ol>
           </div>
         </div>
 
@@ -1793,8 +1853,12 @@
                   <input type="text" id="settings-ai-run-allowlist" placeholder="python3,python,bash,sh,node">
                   <label for="settings-ai-run-timeout" style="margin-top: 6px;">Run timeout (seconds, max 600)</label>
                   <input type="number" id="settings-ai-run-timeout" min="1" max="600" step="1" placeholder="60">
+                  <label for="settings-ai-task-rounds" style="margin-top: 6px;">Task mode: max rounds per task (1–100)</label>
+                  <input type="number" id="settings-ai-task-rounds" min="1" max="100" step="1" placeholder="12">
+                  <label for="settings-ai-task-tokens" style="margin-top: 6px;">Task mode: token budget per task (0 = unlimited)</label>
+                  <input type="number" id="settings-ai-task-tokens" min="0" step="1000" placeholder="150000">
                   <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
-                    Commands run with the project root as working directory, without a shell (no pipes or redirects), are killed at the timeout, and their stdout/stderr/exit code are fed back to the AI so it can fix failures. Requires file access to be at least read-only.
+                    Commands run with the project root as working directory, without a shell (no pipes or redirects), are killed at the timeout, and their stdout/stderr/exit code are fed back to the AI so it can fix failures. Requires file access to be at least read-only. This also enables CALC scratch snippets, which run with python in <code>.scratch/</code> under the project root (120 s cap) and show any plots they save in the chat.
                   </div>
                 </div>
               </div>
@@ -3519,6 +3583,8 @@
         document.getElementById('settings-ai-checkpoints-enabled').checked = currentConfig.ai_checkpoints_enabled !== false;
         document.getElementById('settings-ai-run-allowlist').value = currentConfig.ai_run_allowlist || 'python3,python,bash,sh,node';
         document.getElementById('settings-ai-run-timeout').value = Number(currentConfig.ai_run_timeout_seconds) || 60;
+        document.getElementById('settings-ai-task-rounds').value = Number(currentConfig.ai_task_max_rounds) || 12;
+        document.getElementById('settings-ai-task-tokens').value = Number.isFinite(Number(currentConfig.ai_task_token_budget)) ? Number(currentConfig.ai_task_token_budget) : 150000;
         const ollamaHostInput = document.getElementById('settings-ollama-host');
         if (ollamaHostInput) ollamaHostInput.value = currentConfig.ollama_host || 'http://127.0.0.1:11434';
         if (leftProvider === 'ollama' || rightProvider === 'ollama') {
@@ -4006,6 +4072,7 @@
             threadId: String(index)
           }));
           const last = reported.last || {};
+          noteTaskUsage(pane, index, last);
           if (reported.request_count > 0 && last.input_tokens != null) {
             const cached = last.cached_input_tokens == null ? 'unavailable' : last.cached_input_tokens;
             const cacheRatio = last.cached_input_tokens == null || !last.input_tokens
@@ -4034,6 +4101,17 @@
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
         scheduleThreadAutosave(pane, index);
         const fileOps = await applyAssistantFileBlocks(pane, index, reply);
+        const taskDecision = updateTaskAfterReply(pane, index, reply, fileOps);
+        if (taskDecision.handled) {
+          if (taskDecision.continuePrompt) {
+            return dispatchPromptToPane(pane, taskDecision.continuePrompt, 'System', [], {
+              source: 'task_follow_up',
+              trigger: 'task_round',
+              autoContinueDepth: 0
+            });
+          }
+          return reply;
+        }
         const depth = Number(provenance.autoContinueDepth) || 0;
         if (fileOps.needsFollowUp && depth < AI_FILE_OPS_MAX_AUTO_CONTINUE) {
           appendTerminalLog(`AI file ops [${pane}]: results need a follow-up; auto-continuing (${depth + 1}/${AI_FILE_OPS_MAX_AUTO_CONTINUE}).`);
@@ -4054,13 +4132,216 @@
         if (isUsageLimitError(err)) {
           freezeThread(pane, index, err);
           scheduleThreadAutosave(pane, index, 0);
+          if (taskStateFor(pane, index)) finishTask(pane, 'stopped', 'thread frozen at the usage limit; progress so far is kept in the thread');
           return '';
         }
+        if (taskStateFor(pane, index)) finishTask(pane, 'failed', String(err));
         appendChatBubble(pane, index, "System Error", err);
         throw err;
       } finally {
         setPaneBusy(pane, false);
       }
+    }
+
+    // ---- Task mode: goal-driven loop over the existing file/RUN/SEARCH ops ----
+    const TASK_PLAN_PATTERN = /<<<PLAN>>>\r?\n([\s\S]*?)\r?\n?<<<END PLAN>>>/;
+    const TASK_STEP_PATTERN = /<<<STEP\s+(\d+)\s*>>>/g;
+    const TASK_DONE_MARK = '<<<DONE>>>';
+    const TASK_BLOCKED_MARK = '<<<BLOCKED>>>';
+    const taskStates = { left: null, right: null };
+
+    function taskStateFor(pane, index) {
+      const st = taskStates[pane];
+      return st && st.active && st.index === index ? st : null;
+    }
+
+    function renderTaskPanel(pane) {
+      const st = taskStates[pane];
+      const status = document.getElementById(`${pane}-task-status`);
+      const startBtn = document.getElementById(`${pane}-task-start`);
+      if (!status || !startBtn) return;
+      if (!st) {
+        status.style.display = 'none';
+        startBtn.disabled = false;
+        return;
+      }
+      status.style.display = 'block';
+      startBtn.disabled = Boolean(st.active);
+      const stateEl = document.getElementById(`${pane}-task-state`);
+      let label = st.phase;
+      if (st.active && st.paused) label = st.awaitingApproval ? 'waiting for approval' : 'paused';
+      stateEl.textContent = `Task: ${label}`;
+      const tokenPart = st.tokenBudget > 0 ? `${st.tokens.toLocaleString()}/${st.tokenBudget.toLocaleString()} tokens` : `${st.tokens.toLocaleString()} tokens`;
+      document.getElementById(`${pane}-task-budget`).textContent = `round ${st.rounds}/${st.maxRounds} · ${tokenPart}` + (st.currentStep ? ` · step ${st.currentStep}` : '');
+      const pauseBtn = document.getElementById(`${pane}-task-pause`);
+      pauseBtn.textContent = st.paused && !st.awaitingApproval ? 'Resume' : 'Pause';
+      pauseBtn.style.display = st.active ? '' : 'none';
+      document.getElementById(`${pane}-task-approve-next`).style.display = st.active && st.awaitingApproval ? '' : 'none';
+      const plan = document.getElementById(`${pane}-task-plan`);
+      plan.innerHTML = '';
+      st.plan.forEach((text, i) => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        const n = i + 1;
+        if (st.currentStep && n < st.currentStep) li.classList.add('done');
+        if (st.currentStep === n && st.active) li.classList.add('current');
+        if (st.phase === 'done') li.classList.add('done');
+        plan.appendChild(li);
+      });
+    }
+
+    async function startTask(pane) {
+      if (!currentConfig) return;
+      const inputEl = document.getElementById(`${pane}-task-input`);
+      const goal = (inputEl?.value || '').trim();
+      if (!goal) { appendTerminalLog('Task: enter a goal first.'); return; }
+      if (taskStates[pane]?.active) { appendTerminalLog(`Task already running in ${pane} pane.`); return; }
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      taskStates[pane] = {
+        active: true,
+        index,
+        goal,
+        phase: 'planning',
+        paused: false,
+        awaitingApproval: false,
+        approveEach: Boolean(document.getElementById(`${pane}-task-approve`)?.checked),
+        rounds: 0,
+        maxRounds: Math.max(1, Number(currentConfig.ai_task_max_rounds) || 12),
+        tokens: 0,
+        tokenBudget: Math.max(0, Number(currentConfig.ai_task_token_budget) || 0),
+        plan: [],
+        currentStep: 0,
+        pendingPrompt: null,
+        haltFollowUp: false
+      };
+      renderTaskPanel(pane);
+      appendTerminalLog(`Task started [${pane}]: ${goal}`);
+      const retrievalEvidenceLines = await buildChatRetrievalEvidenceLines(goal);
+      await dispatchPromptToPane(pane, `TASK: ${goal}`, 'Gregory', [], {
+        source: 'current_request',
+        trigger: 'task_start',
+        retrievalEvidenceLines,
+        retrievalBudgetCharacters: latestRetrievalDiagnostics?.budget_characters
+      });
+    }
+
+    function noteTaskUsage(pane, index, last) {
+      const st = taskStateFor(pane, index);
+      if (!st || !last) return;
+      const total = Number(last.total_tokens);
+      const fallback = (Number(last.input_tokens) || 0) + (Number(last.output_tokens) || 0);
+      st.tokens += Number.isFinite(total) && total > 0 ? total : fallback;
+    }
+
+    function finishTask(pane, phase, note) {
+      const st = taskStates[pane];
+      if (!st) return;
+      st.active = false;
+      st.paused = false;
+      st.awaitingApproval = false;
+      st.pendingPrompt = null;
+      st.phase = phase;
+      appendTerminalLog(`Task ${phase} [${pane}]${note ? `: ${note}` : ''}`);
+      renderTaskPanel(pane);
+    }
+
+    function updateTaskAfterReply(pane, index, reply, fileOps) {
+      const stopped = taskStates[pane];
+      if (stopped && stopped.haltFollowUp && stopped.index === index) {
+        stopped.haltFollowUp = false;
+        return { handled: true, continuePrompt: null };
+      }
+      const st = taskStateFor(pane, index);
+      if (!st) return { handled: false };
+      st.rounds += 1;
+      st.approveEach = Boolean(document.getElementById(`${pane}-task-approve`)?.checked);
+      const text = String(reply || '');
+      const planMatch = text.match(TASK_PLAN_PATTERN);
+      if (planMatch) {
+        st.plan = planMatch[1].split(/\r?\n/).map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+      }
+      let lastStep = 0;
+      TASK_STEP_PATTERN.lastIndex = 0;
+      let m;
+      while ((m = TASK_STEP_PATTERN.exec(text)) !== null) lastStep = Math.max(lastStep, parseInt(m[1], 10) || 0);
+      if (lastStep) st.currentStep = lastStep;
+      st.phase = st.plan.length ? 'running' : 'planning';
+
+      if (text.includes(TASK_DONE_MARK)) {
+        finishTask(pane, 'done', `${st.rounds} rounds, ~${st.tokens} tokens`);
+        return { handled: true, continuePrompt: null };
+      }
+      if (text.includes(TASK_BLOCKED_MARK)) {
+        finishTask(pane, 'blocked', 'the AI needs your input; answer in the chat and start a new task or continue manually');
+        return { handled: true, continuePrompt: null };
+      }
+      if (st.rounds >= st.maxRounds) {
+        finishTask(pane, 'stopped', `round budget (${st.maxRounds}) reached; raise it in Customize or send "continue" in chat`);
+        return { handled: true, continuePrompt: null };
+      }
+      if (st.tokenBudget > 0 && st.tokens >= st.tokenBudget) {
+        finishTask(pane, 'stopped', `token budget (${st.tokenBudget}) reached`);
+        return { handled: true, continuePrompt: null };
+      }
+
+      const prompt = fileOps.needsFollowUp
+        ? 'The operation results above are in. Continue the task: check the output, repair failures, and proceed to the next step. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.'
+        : 'Continue the task with the next step from your plan. Verify your results as you go. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.';
+      if (st.paused || st.approveEach) {
+        st.paused = true;
+        st.awaitingApproval = true;
+        st.pendingPrompt = prompt;
+        renderTaskPanel(pane);
+        appendTerminalLog(`Task paused [${pane}] after round ${st.rounds}; press Approve next or Resume.`);
+        return { handled: true, continuePrompt: null };
+      }
+      renderTaskPanel(pane);
+      return { handled: true, continuePrompt: prompt };
+    }
+
+    function resumeTaskRound(pane) {
+      const st = taskStates[pane];
+      if (!st || !st.active || !st.pendingPrompt) return;
+      const prompt = st.pendingPrompt;
+      st.pendingPrompt = null;
+      st.paused = false;
+      st.awaitingApproval = false;
+      renderTaskPanel(pane);
+      dispatchPromptToPane(pane, prompt, 'System', [], { source: 'task_follow_up', trigger: 'task_round', autoContinueDepth: 0 })
+        .catch((err) => finishTask(pane, 'failed', String(err)));
+    }
+
+    function toggleTaskPause(pane) {
+      const st = taskStates[pane];
+      if (!st || !st.active) return;
+      if (st.paused) {
+        if (st.pendingPrompt) {
+          resumeTaskRound(pane);
+        } else {
+          st.paused = false;
+          st.awaitingApproval = false;
+          renderTaskPanel(pane);
+        }
+        return;
+      }
+      st.paused = true;
+      renderTaskPanel(pane);
+      appendTerminalLog(`Task [${pane}] will pause after the current round.`);
+    }
+
+    function approveTaskStep(pane) {
+      const st = taskStates[pane];
+      if (!st || !st.active) return;
+      st.paused = Boolean(st.approveEach);
+      resumeTaskRound(pane);
+    }
+
+    async function stopTask(pane) {
+      const st = taskStates[pane];
+      if (!st || !st.active) return;
+      st.haltFollowUp = true;
+      finishTask(pane, 'stopped', 'by user');
+      try { await invoke('cancel_ai_project_command'); } catch (_) { /* no run in flight */ }
     }
 
     const AI_FILE_BLOCK_PATTERN = /<<<FILE\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END FILE>>>/g;
@@ -4069,6 +4350,7 @@
     const AI_READ_BLOCK_PATTERN = /<<<READ\s+path="([^"\n]+)"\s*>>>/g;
     const AI_RUN_BLOCK_PATTERN = /<<<RUN\s+cmd="([^"\n]+)"(?:\s+timeout="?(\d+)"?)?\s*>>>/g;
     const AI_SEARCH_BLOCK_PATTERN = /<<<SEARCH\s+query="([^"\n]+)"(?:\s+limit="?(\d+)"?)?\s*>>>/g;
+    const AI_CALC_BLOCK_PATTERN = /<<<CALC(?:\s+timeout="?(\d+)"?)?\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END CALC>>>/g;
     const AI_REMEMBER_BLOCK_PATTERN = /<<<REMEMBER\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END REMEMBER>>>/g;
     const AI_FILE_OPS_MAX_AUTO_CONTINUE = 3;
 
@@ -4089,12 +4371,15 @@
       collect(AI_RUN_BLOCK_PATTERN, (m) => ({ op: 'run', cmd: m[1].trim(), timeout: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_SEARCH_BLOCK_PATTERN, (m) => ({ op: 'search', query: m[1].trim(), limit: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_REMEMBER_BLOCK_PATTERN, (m) => ({ op: 'remember', entry: m[1] }));
+      collect(AI_CALC_BLOCK_PATTERN, (m) => ({ op: 'calc', code: m[2].replace(/^```[a-z]*\r?\n|\r?\n```\s*$/g, ''), timeout: m[1] ? parseInt(m[1], 10) : null }));
       ops.sort((a, b) => a.position - b.position);
       return ops;
     }
 
     function formatRunOutcome(outcome) {
-      const status = outcome.timed_out
+      const status = outcome.cancelled
+        ? 'CANCELLED by user'
+        : outcome.timed_out
         ? 'TIMED OUT'
         : outcome.exit_code === 0 ? 'exit 0' : `exit ${outcome.exit_code == null ? 'signal' : outcome.exit_code}`;
       const lines = [`- RUN \`${outcome.command}\` → ${status} (${outcome.elapsed_seconds}s)`];
@@ -4142,7 +4427,7 @@
           const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout }));
           if (outcome.stdout) appendTerminalLog(outcome.stdout.replace(/\n$/, ''));
           if (outcome.stderr) appendTerminalLog(outcome.stderr.replace(/\n$/, ''));
-          appendTerminalLog(`AI run [${pane}] finished: ${outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
+          appendTerminalLog(`AI run [${pane}] finished: ${outcome.cancelled ? 'cancelled' : outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
           return { text: formatRunOutcome(outcome), needsFollowUp: true };
         }
         case 'search': {
@@ -4153,6 +4438,17 @@
           appendTerminalLog(`AI search [${pane}] returned ${sources.length} source${sources.length === 1 ? '' : 's'}: ${sources.join(', ') || 'none'}`);
           const body = String(outcome.provider_text || '').trim() || 'No matching theory chunks were found; try a different query or rebuild the retrieval index.';
           return { text: `- SEARCH "${outcome.query}" (${sources.length} sources):\n${body}`, needsFollowUp: true };
+        }
+        case 'calc': {
+          appendTerminalLog(`AI calc [${pane}]: ${op.code.split('\n').length} line snippet`);
+          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout }));
+          const run = outcome.run || {};
+          if (run.stdout) appendTerminalLog(run.stdout.replace(/\n$/, ''));
+          if (run.stderr) appendTerminalLog(run.stderr.replace(/\n$/, ''));
+          appendTerminalLog(`AI calc [${pane}] finished: ${run.cancelled ? 'cancelled' : run.timed_out ? 'timed out' : `exit ${run.exit_code}`} in ${run.elapsed_seconds}s; ${(outcome.artifacts || []).length} image(s)`);
+          const index = pane === 'left' ? leftIndex : rightIndex;
+          showCalcArtifacts(pane, index, outcome);
+          return { text: formatCalcOutcome(outcome), needsFollowUp: true };
         }
         case 'remember': {
           const outcome = JSON.parse(await invoke('append_project_memory', { entry: op.entry, date: localDateStamp() }));
@@ -4165,7 +4461,48 @@
       }
     }
 
+    function formatCalcOutcome(outcome) {
+      const runText = formatRunOutcome({ ...(outcome.run || {}), command: `CALC ${outcome.script_relative_path}` });
+      const artifacts = Array.isArray(outcome.artifacts) ? outcome.artifacts : [];
+      const lines = [runText];
+      if (artifacts.length) {
+        lines.push(`  images produced (shown to the user): ${artifacts.map((a) => `${a.relative_path} (${a.bytes} bytes)`).join(', ')}`);
+      }
+      if (outcome.skipped_artifacts) lines.push(`  (${outcome.skipped_artifacts} more image(s) not listed)`);
+      return lines.join('\n');
+    }
+
+    function showCalcArtifacts(pane, index, outcome) {
+      const artifacts = (Array.isArray(outcome.artifacts) ? outcome.artifacts : []).filter((a) => a.data_base64);
+      if (!artifacts.length) return;
+      const strip = document.getElementById(pane === 'left' ? 'left-strip' : 'right-strip');
+      const slot = strip?.children[index];
+      if (!slot) return;
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble calc-artifacts';
+      const title = document.createElement('strong');
+      title.textContent = `Scratch output (${outcome.script_relative_path}):`;
+      bubble.appendChild(title);
+      for (const art of artifacts) {
+        const fig = document.createElement('figure');
+        fig.className = 'calc-figure';
+        const img = document.createElement('img');
+        img.src = `data:${art.mime};base64,${art.data_base64}`;
+        img.alt = art.name;
+        img.title = `${art.relative_path} — click to open full size`;
+        img.onclick = () => window.open(img.src, '_blank');
+        const cap = document.createElement('figcaption');
+        cap.textContent = art.relative_path;
+        fig.appendChild(img);
+        fig.appendChild(cap);
+        bubble.appendChild(fig);
+      }
+      slot.appendChild(bubble);
+      slot.scrollTop = slot.scrollHeight;
+    }
+
     function describeAssistantFileOp(op) {
+      if (op.op === 'calc') return `CALC ${op.code.split('\n')[0].slice(0, 60)}`;
       if (op.op === 'run') return `RUN ${op.cmd}`;
       if (op.op === 'search') return `SEARCH ${op.query}`;
       if (op.op === 'remember') return 'REMEMBER project_memory.md';
@@ -8707,6 +9044,8 @@ async function restoreVersion() {
       const aiCheckpointsEnabled = document.getElementById('settings-ai-checkpoints-enabled').checked;
       const aiRunAllowlist = (document.getElementById('settings-ai-run-allowlist').value || '').trim() || 'python3,python,bash,sh,node';
       const aiRunTimeoutSeconds = Math.max(1, Math.min(600, parseInt(document.getElementById('settings-ai-run-timeout').value, 10) || 60));
+      const aiTaskMaxRounds = Math.max(1, Math.min(100, parseInt(document.getElementById('settings-ai-task-rounds').value, 10) || 12));
+      const aiTaskTokenBudget = Math.max(0, parseInt(document.getElementById('settings-ai-task-tokens').value, 10) || 0);
 
       const payload = {
         editor,
@@ -8732,7 +9071,9 @@ async function restoreVersion() {
         ai_run_enabled: aiRunEnabled,
         ai_checkpoints_enabled: aiCheckpointsEnabled,
         ai_run_allowlist: aiRunAllowlist,
-        ai_run_timeout_seconds: aiRunTimeoutSeconds
+        ai_run_timeout_seconds: aiRunTimeoutSeconds,
+        ai_task_max_rounds: aiTaskMaxRounds,
+        ai_task_token_budget: aiTaskTokenBudget
       };
 
       const ollamaHost = getOllamaHostFromUi();
@@ -8780,6 +9121,8 @@ async function restoreVersion() {
         currentConfig.ai_checkpoints_enabled = aiCheckpointsEnabled;
         currentConfig.ai_run_allowlist = aiRunAllowlist;
         currentConfig.ai_run_timeout_seconds = aiRunTimeoutSeconds;
+        currentConfig.ai_task_max_rounds = aiTaskMaxRounds;
+        currentConfig.ai_task_token_budget = aiTaskTokenBudget;
         currentConfig.ollama_host = ollamaHost;
 
         const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
