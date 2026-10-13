@@ -1197,6 +1197,7 @@
         <div class="menu-section">Today</div>
         <a href="#" onclick="openSessionDoc('notes'); return false;" title="Open today's session_notes_YYYY-MM-DD.md in the built-in editor (created if missing)">Open Session Notes</a>
         <a href="#" onclick="openSessionDoc('equations'); return false;" title="Open today's session_equations_YYYY-MM-DD.md in the built-in editor (created if missing)">Open Session Equations</a>
+        <a href="#" onclick="openProjectMemory(); return false;" title="Open project_memory.md — durable cross-session notes the AI and you keep; recent entries are injected into the startup primer">Open Project Memory</a>
         <div class="menu-section">Documents</div>
         <a href="#" onclick="openDocumentFromDialog('editor'); return false;" title="Choose any .md/.txt/.pdf file and open it in the built-in editor">Open Document in Editor...</a>
         <a href="#" onclick="openDocumentFromDialog('notepad'); return false;" title="Choose any .md/.txt/.pdf file and load its text into the note pad">Load Document into Note Pad...</a>
@@ -3560,6 +3561,10 @@
       const masterAxiomContent = (briefing?.master_axiom?.content || '').trim();
       const masterAxiomBlock = masterAxiomContent || 'Master axiom snapshot unavailable; generate it from Customize > Theory Setup.';
       const masterAxiomGuidance = 'Master axiom (compiled mathematical framework: every governing equation extracted from the chapter markdown, with labels, term definitions, and source paths). Treat it as the primary mathematical reference for the model; the chapters\' narrative explanations are not preloaded and arrive per message through the retrieval packet.';
+      const projectMemoryContent = (briefing?.project_memory?.content || '').trim();
+      const projectMemoryBlock = projectMemoryContent
+        ? `Project memory (durable cross-session notes from project_memory.md; honor recorded decisions and conventions, and append new ones with a REMEMBER block):\n${projectMemoryContent}`
+        : 'Project memory: project_memory.md is empty so far; record durable decisions, conventions, and dead ends with a REMEMBER block.';
       const awarenessContent = (briefing?.project_awareness?.content || '').trim();
       const awarenessExcerpt = awarenessContent
         ? (awarenessContent.length > 2200
@@ -3575,9 +3580,10 @@
       const stableContextBlock = useStructuralCore
         ? ['Structural context core:', structuralPrompt.content]
         : contextMode === 'legacy'
-          ? [`${masterAxiomGuidance}\n${masterAxiomBlock}`, 'Project awareness excerpt:', awarenessExcerpt]
+          ? [`${masterAxiomGuidance}\n${masterAxiomBlock}`, projectMemoryBlock, 'Project awareness excerpt:', awarenessExcerpt]
           : [
               `${masterAxiomGuidance}\n${masterAxiomBlock}`,
+              projectMemoryBlock,
               'Manuscript corpus transport: omitted from the automatic primer.',
               'Each chat message arrives with a bounded local hybrid retrieval packet of source-grounded theory chunks (project-relative paths); use it for the literary explanations and chapter-specific details behind the equations above, answer from that evidence, and cite its paths. Request explicit legacy context only for recovery or comparison.'
             ];
@@ -3658,6 +3664,7 @@
       const candidates = [
         ['structural_context', String(briefing?.structural_context?.prompt_core?.content || '').trim()],
         ['master_axiom', (briefing?.master_axiom?.content || '').trim()],
+        ['project_memory', (briefing?.project_memory?.content || '').trim()],
         ['project_awareness', (briefing?.project_awareness?.content || '').trim().slice(0, 2200)],
         ['session_summary', String(briefing?.summary || '').trim()],
         ['current_hypothesis', String(briefing?.hypothesis_candidates?.[0] || '').trim()],
@@ -4037,6 +4044,8 @@
     const AI_EDIT_BLOCK_PATTERN = /<<<EDIT\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END EDIT>>>/g;
     const AI_READ_BLOCK_PATTERN = /<<<READ\s+path="([^"\n]+)"\s*>>>/g;
     const AI_RUN_BLOCK_PATTERN = /<<<RUN\s+cmd="([^"\n]+)"(?:\s+timeout="?(\d+)"?)?\s*>>>/g;
+    const AI_SEARCH_BLOCK_PATTERN = /<<<SEARCH\s+query="([^"\n]+)"(?:\s+limit="?(\d+)"?)?\s*>>>/g;
+    const AI_REMEMBER_BLOCK_PATTERN = /<<<REMEMBER\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END REMEMBER>>>/g;
     const AI_FILE_OPS_MAX_AUTO_CONTINUE = 3;
 
     function parseAssistantFileBlocks(text) {
@@ -4054,6 +4063,8 @@
       collect(AI_EDIT_BLOCK_PATTERN, (m) => ({ op: 'edit', path: m[1].trim(), hunks: m[2] }));
       collect(AI_READ_BLOCK_PATTERN, (m) => ({ op: 'read', path: m[1].trim() }));
       collect(AI_RUN_BLOCK_PATTERN, (m) => ({ op: 'run', cmd: m[1].trim(), timeout: m[2] ? parseInt(m[2], 10) : null }));
+      collect(AI_SEARCH_BLOCK_PATTERN, (m) => ({ op: 'search', query: m[1].trim(), limit: m[2] ? parseInt(m[2], 10) : null }));
+      collect(AI_REMEMBER_BLOCK_PATTERN, (m) => ({ op: 'remember', entry: m[1] }));
       ops.sort((a, b) => a.position - b.position);
       return ops;
     }
@@ -4110,6 +4121,21 @@
           appendTerminalLog(`AI run [${pane}] finished: ${outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
           return { text: formatRunOutcome(outcome), needsFollowUp: true };
         }
+        case 'search': {
+          appendTerminalLog(`AI search [${pane}]: ${op.query}`);
+          const budget = Math.max(500, Math.min(24000, Number(document.getElementById('retrieval-budget-input')?.value || 6000)));
+          const outcome = JSON.parse(await invoke('search_ai_retrieval', { query: op.query, limit: op.limit, evidenceBudgetCharacters: budget }));
+          const sources = Array.isArray(outcome.sources) ? outcome.sources : [];
+          appendTerminalLog(`AI search [${pane}] returned ${sources.length} source${sources.length === 1 ? '' : 's'}: ${sources.join(', ') || 'none'}`);
+          const body = String(outcome.provider_text || '').trim() || 'No matching theory chunks were found; try a different query or rebuild the retrieval index.';
+          return { text: `- SEARCH "${outcome.query}" (${sources.length} sources):\n${body}`, needsFollowUp: true };
+        }
+        case 'remember': {
+          const outcome = JSON.parse(await invoke('append_project_memory', { entry: op.entry, date: localDateStamp() }));
+          const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)`;
+          appendTerminalLog(`AI project memory [${pane}]: ${line}`);
+          return { text: `- REMEMBERED: ${line}`, needsFollowUp: false };
+        }
         default:
           return { text: `- SKIPPED: unknown operation ${op.op}`, needsFollowUp: false };
       }
@@ -4117,6 +4143,8 @@
 
     function describeAssistantFileOp(op) {
       if (op.op === 'run') return `RUN ${op.cmd}`;
+      if (op.op === 'search') return `SEARCH ${op.query}`;
+      if (op.op === 'remember') return 'REMEMBER project_memory.md';
       return `${op.op.toUpperCase()} ${op.path}`;
     }
 
@@ -4132,7 +4160,7 @@
           const outcome = await executeAssistantFileOp(pane, op);
           results.push(outcome.text);
           needsFollowUp = needsFollowUp || outcome.needsFollowUp;
-          touchedFiles = touchedFiles || op.op === 'write' || op.op === 'append' || op.op === 'edit';
+          touchedFiles = touchedFiles || op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'remember';
         } catch (opError) {
           appendTerminalLog(`AI ${op.op} failed [${pane}] for ${describeAssistantFileOp(op)}: ${opError}`);
           results.push(`- FAILED: ${describeAssistantFileOp(op)} — ${opError}`);
@@ -8935,6 +8963,18 @@ async function restoreVersion() {
         await openDocEditor({ path: result.path });
       } catch (err) {
         appendTerminalLog(`Open session ${kind} failed: ${err}`);
+      }
+    }
+    async function openProjectMemory() {
+      try {
+        const memory = JSON.parse(await invoke('read_project_memory'));
+        if (!memory.exists) {
+          await invoke('append_project_memory', { entry: 'Project memory started from the Session Docs menu.', date: localDateStamp() });
+          try { await refreshFileTree(); } catch (_) {}
+        }
+        await openDocEditor({ path: memory.path });
+      } catch (err) {
+        appendTerminalLog(`Open project memory failed: ${err}`);
       }
     }
     function sessionSectionMarkdown(title, body) {
