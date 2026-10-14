@@ -4628,9 +4628,9 @@
       const results = [];
       let needsFollowUp = false;
       let touchedFiles = false;
-      const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit');
+      const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc');
       if (mutating.length > 0 && currentConfig?.ai_checkpoints_enabled !== false) {
-        const label = `Before AI edits [${pane}]: ${mutating.map(describeAssistantFileOp).join(', ')}`;
+        const label = `Before AI edits/runs [${pane}]: ${mutating.map(describeAssistantFileOp).join(', ')}`;
         try {
           const ck = JSON.parse(await invoke('create_project_checkpoint', { subject: label }));
           appendTerminalLog(ck.action === 'created'
