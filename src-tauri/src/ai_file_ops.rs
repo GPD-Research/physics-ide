@@ -173,6 +173,10 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
 
 /// Validates that the program is on the allowlist and no argument escapes the
 /// project root (absolute paths outside it, or `..` components).
+/// Interpreter flags that execute code given on the command line; they would let any
+/// allowlisted interpreter act as an arbitrary shell (`python3 -c "shutil.rmtree(...)"`).
+const INLINE_CODE_FLAGS: &[&str] = &["-c", "-e", "--eval", "-p", "--print", "-r", "--require", "--import"];
+
 pub fn validate_run_command(cmd: &str, allowlist: &[String], project_root: &Path) -> Result<Vec<String>, String> {
     let argv = split_command(cmd)?;
     let program = Path::new(&argv[0])
@@ -186,6 +190,11 @@ pub fn validate_run_command(cmd: &str, allowlist: &[String], project_root: &Path
         ));
     }
     for arg in &argv[1..] {
+        if INLINE_CODE_FLAGS.iter().any(|f| f.eq_ignore_ascii_case(arg)) {
+            return Err(format!(
+                "Flag '{arg}' runs inline code and is refused; put the code in a project file (or a CALC block) and run that instead."
+            ));
+        }
         let p = Path::new(arg);
         if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
             return Err(format!("Argument '{arg}' uses '..' which may leave the project root."));
@@ -499,6 +508,9 @@ mod tests {
         assert!(validate_run_command("python3 ../escape.py", &allow, root).is_err());
         assert!(validate_run_command("python3 /etc/passwd", &allow, root).is_err());
         assert!(validate_run_command("/usr/bin/python3 /proj/a.py", &allow, root).is_ok());
+        assert!(validate_run_command("python3 -c \"import shutil; shutil.rmtree('tests')\"", &allow, root).is_err());
+        assert!(validate_run_command("node -e \"require('fs').rmSync('tests',{recursive:true})\"", &allow, root).is_err());
+        assert!(validate_run_command("python3 -m pytest tests", &allow, root).is_ok());
         assert_eq!(split_command("python3 -c 'print(\"hi there\")'").unwrap()[2], "print(\"hi there\")");
     }
 
