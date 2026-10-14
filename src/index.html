@@ -7180,7 +7180,15 @@ async function restoreVersion() {
       }
       if (summary) summary.textContent = 'Scanning…';
       if (container) container.innerHTML = '<div style="color:var(--text-muted)">Scanning…</div>';
+      let unlistenProgress = null;
       try {
+        unlistenProgress = await window.__TAURI__.event.listen('math-fixer-progress', (event) => {
+          const { done, total, file } = event.payload || {};
+          if (!summary || !total) return;
+          const pct = Math.round((Number(done) / Number(total)) * 100);
+          summary.innerHTML = `Scanning ${done}/${total} files (${pct}%) <span style="color:var(--text-muted)">${escapeHtml(String(file || ''))}</span>`
+            + `<div style="height:4px;background:var(--border-panel);border-radius:2px;margin-top:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--accent)"></div></div>`;
+        });
         const report = await invoke('scan_math_fixer', { request: { scope, path: path || null } });
         mathFixerReport = typeof report === 'string' ? JSON.parse(report) : report;
         mathFixerChoices = new Map();
@@ -7196,6 +7204,9 @@ async function restoreVersion() {
         if (summary) summary.textContent = `Scan failed: ${err}`;
         if (container) container.innerHTML = `<div style="color:var(--accent)">${escapeMathFixerHtml(err)}</div>`;
         appendTerminalLog(`Math Fixer Error: ${err}`);
+      }
+      finally {
+        if (unlistenProgress) unlistenProgress();
       }
     }
 

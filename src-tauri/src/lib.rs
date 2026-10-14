@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -1820,7 +1820,13 @@ fn compute_markdown_doc_score(title: &str, content: &str, tokens: &[String]) -> 
 }
 
 #[tauri::command]
-fn get_help_doc(doc_id: String) -> Result<String, String> {
+async fn get_help_doc(doc_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || get_help_doc_blocking(doc_id))
+        .await
+        .map_err(|e| format!("get_help_doc task failed: {e}"))?
+}
+
+fn get_help_doc_blocking(doc_id: String) -> Result<String, String> {
     let normalized = doc_id.trim();
     if normalized.is_empty() {
         return Err("Help document id cannot be empty.".to_string());
@@ -1840,7 +1846,13 @@ fn get_help_doc(doc_id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn search_help_docs(query: String) -> Result<String, String> {
+async fn search_help_docs(query: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || search_help_docs_blocking(query))
+        .await
+        .map_err(|e| format!("search_help_docs task failed: {e}"))?
+}
+
+fn search_help_docs_blocking(query: String) -> Result<String, String> {
     let tokens = normalize_help_query_tokens(&query);
     if tokens.is_empty() {
         return Ok(serde_json::json!({
@@ -1883,7 +1895,13 @@ fn search_help_docs(query: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn list_markdown_documents(directory_path: String) -> Result<String, String> {
+async fn list_markdown_documents(directory_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || list_markdown_documents_blocking(directory_path))
+        .await
+        .map_err(|e| format!("list_markdown_documents task failed: {e}"))?
+}
+
+fn list_markdown_documents_blocking(directory_path: String) -> Result<String, String> {
     let root = PathBuf::from(directory_path.trim());
     if !root.exists() || !root.is_dir() {
         return Err(format!("Markdown directory does not exist: {}", directory_path));
@@ -1912,7 +1930,13 @@ fn list_markdown_documents(directory_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn read_markdown_document(directory_path: String, file_path: String) -> Result<String, String> {
+async fn read_markdown_document(directory_path: String, file_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_markdown_document_blocking(directory_path, file_path))
+        .await
+        .map_err(|e| format!("read_markdown_document task failed: {e}"))?
+}
+
+fn read_markdown_document_blocking(directory_path: String, file_path: String) -> Result<String, String> {
     let root = PathBuf::from(directory_path.trim());
     if !root.exists() || !root.is_dir() {
         return Err(format!("Markdown directory does not exist: {}", directory_path));
@@ -2496,7 +2520,13 @@ fn get_master_axiom_snapshot(
 // --- TAURI COMMANDS ---
 
 #[tauri::command]
-fn get_initial_state(app: AppHandle) -> AppConfig {
+async fn get_initial_state(app: AppHandle) -> AppConfig {
+    tauri::async_runtime::spawn_blocking(move || get_initial_state_blocking(app))
+        .await
+        .unwrap_or_default()
+}
+
+fn get_initial_state_blocking(app: AppHandle) -> AppConfig {
     if let Ok(mut config) = load_app_config(&app) {
         apply_unset_path_defaults(&mut config);
         return config;
@@ -2508,7 +2538,13 @@ fn get_initial_state(app: AppHandle) -> AppConfig {
 }
 
 #[tauri::command]
-fn list_theory_profiles(app: AppHandle) -> Result<String, String> {
+async fn list_theory_profiles(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || list_theory_profiles_blocking(app))
+        .await
+        .map_err(|e| format!("list_theory_profiles task failed: {e}"))?
+}
+
+fn list_theory_profiles_blocking(app: AppHandle) -> Result<String, String> {
     let store = load_theory_profiles_store(&app)?;
     let profile_names: Vec<String> = store.profiles.keys().cloned().collect();
 
@@ -2590,7 +2626,13 @@ fn load_theory_profile(profile_name: String, state: tauri::State<AppState>, app:
 }
 
 #[tauri::command]
-fn rename_theory_profile(current_name: String, new_name: String, app: AppHandle) -> Result<String, String> {
+async fn rename_theory_profile(current_name: String, new_name: String, app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || rename_theory_profile_blocking(current_name, new_name, app))
+        .await
+        .map_err(|e| format!("rename_theory_profile task failed: {e}"))?
+}
+
+fn rename_theory_profile_blocking(current_name: String, new_name: String, app: AppHandle) -> Result<String, String> {
     let current_normalized = normalize_profile_name(&current_name)?;
     let new_normalized = normalize_profile_name(&new_name)?;
 
@@ -2635,7 +2677,13 @@ fn rename_theory_profile(current_name: String, new_name: String, app: AppHandle)
 }
 
 #[tauri::command]
-fn delete_theory_profile(profile_name: String, app: AppHandle) -> Result<String, String> {
+async fn delete_theory_profile(profile_name: String, app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || delete_theory_profile_blocking(profile_name, app))
+        .await
+        .map_err(|e| format!("delete_theory_profile task failed: {e}"))?
+}
+
+fn delete_theory_profile_blocking(profile_name: String, app: AppHandle) -> Result<String, String> {
     let normalized_name = normalize_profile_name(&profile_name)?;
     let mut store = load_theory_profiles_store(&app)?;
 
@@ -2694,7 +2742,13 @@ fn close_active_theory(state: tauri::State<AppState>, app: AppHandle) -> Result<
 }
 
 #[tauri::command]
-fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
+async fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || read_directory_blocking(path))
+        .await
+        .map_err(|e| format!("read_directory task failed: {e}"))?
+}
+
+fn read_directory_blocking(path: String) -> Result<Vec<FileEntry>, String> {
     let path_buf = std::path::PathBuf::from(&path);
     
     let entries = fs::read_dir(&path_buf)
@@ -2726,7 +2780,14 @@ fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn export_workspace_tree(rootPath: String, visibleTree: Option<String>) -> Result<String, String> {
+async fn export_workspace_tree(rootPath: String, visibleTree: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || export_workspace_tree_blocking(rootPath, visibleTree))
+        .await
+        .map_err(|e| format!("export_workspace_tree task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn export_workspace_tree_blocking(rootPath: String, visibleTree: Option<String>) -> Result<String, String> {
     let root = std::path::Path::new(&rootPath);
     let tree_string = workspace_tree_for_export(root, visibleTree.as_deref())?;
 
@@ -2772,7 +2833,14 @@ fn git_pull(state: tauri::State<AppState>) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn restore_version(tag: String, rootPath: String) -> Result<String, String> {
+async fn restore_version(tag: String, rootPath: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || restore_version_blocking(tag, rootPath))
+        .await
+        .map_err(|e| format!("restore_version task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn restore_version_blocking(tag: String, rootPath: String) -> Result<String, String> {
     let normalized_tag = normalize_version_tag(&tag)?;
     let root = std::path::Path::new(&rootPath);
 
@@ -2853,7 +2921,14 @@ fn restore_version(tag: String, rootPath: String) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn save_as_hypothesis(name: String, rootPath: String) -> Result<String, String> {
+async fn save_as_hypothesis(name: String, rootPath: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_as_hypothesis_blocking(name, rootPath))
+        .await
+        .map_err(|e| format!("save_as_hypothesis task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn save_as_hypothesis_blocking(name: String, rootPath: String) -> Result<String, String> {
     let branch_name = name.trim();
     if branch_name.is_empty() {
         return Err("Hypothesis branch name cannot be empty.".to_string());
@@ -2884,7 +2959,14 @@ fn save_as_hypothesis(name: String, rootPath: String) -> Result<String, String> 
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn get_current_branch(rootPath: String) -> Result<String, String> {
+async fn get_current_branch(rootPath: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || get_current_branch_blocking(rootPath))
+        .await
+        .map_err(|e| format!("get_current_branch task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn get_current_branch_blocking(rootPath: String) -> Result<String, String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&rootPath)
@@ -2900,7 +2982,14 @@ fn get_current_branch(rootPath: String) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn terminate_hypothesis_branch(rootPath: String, branchName: String, force: bool) -> Result<String, String> {
+async fn terminate_hypothesis_branch(rootPath: String, branchName: String, force: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || terminate_hypothesis_branch_blocking(rootPath, branchName, force))
+        .await
+        .map_err(|e| format!("terminate_hypothesis_branch task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn terminate_hypothesis_branch_blocking(rootPath: String, branchName: String, force: bool) -> Result<String, String> {
     let target_branch = branchName.trim();
     if target_branch.is_empty() {
         return Err("Branch name cannot be empty.".to_string());
@@ -3537,7 +3626,13 @@ mod llm_prompt_tests {
 }
 
 #[tauri::command]
-fn read_attachment_file(path: String) -> Result<String, String> {
+async fn read_attachment_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_attachment_file_blocking(path))
+        .await
+        .map_err(|e| format!("read_attachment_file task failed: {e}"))?
+}
+
+fn read_attachment_file_blocking(path: String) -> Result<String, String> {
     let target_path = std::path::Path::new(&path);
     if !target_path.exists() {
         return Err(format!("Attachment file does not exist: {}", path));
@@ -4690,7 +4785,13 @@ struct InstallLocalModelPayload {
 }
 
 #[tauri::command]
-fn install_local_model(payload: InstallLocalModelPayload) -> Result<String, String> {
+async fn install_local_model(payload: InstallLocalModelPayload) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || install_local_model_blocking(payload))
+        .await
+        .map_err(|e| format!("install_local_model task failed: {e}"))?
+}
+
+fn install_local_model_blocking(payload: InstallLocalModelPayload) -> Result<String, String> {
     let model = payload.model.trim();
     if model.is_empty() || !model.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '-' | '_' | '/')) {
         return Err(format!("Invalid model name '{}'", payload.model));
@@ -7410,7 +7511,14 @@ async fn refresh_retrieval_index(
 }
 
 #[tauri::command]
-fn inspect_retrieval_index(
+async fn inspect_retrieval_index(workspace_path: String,
+    app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_retrieval_index_blocking(workspace_path, app))
+        .await
+        .map_err(|e| format!("inspect_retrieval_index task failed: {e}"))?
+}
+
+fn inspect_retrieval_index_blocking(
     workspace_path: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -7493,7 +7601,13 @@ async fn query_retrieval_index(
 }
 
 #[tauri::command]
-fn delete_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn delete_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || delete_retrieval_index_blocking(workspace_path, app))
+        .await
+        .map_err(|e| format!("delete_retrieval_index task failed: {e}"))?
+}
+
+fn delete_retrieval_index_blocking(workspace_path: String, app: tauri::AppHandle) -> Result<String, String> {
     let root = PathBuf::from(workspace_path.trim());
     if !root.exists() || !root.is_dir() {
         return Err("Workspace path is missing or invalid for retrieval index deletion.".to_string());
@@ -7503,7 +7617,13 @@ fn delete_retrieval_index(workspace_path: String, app: tauri::AppHandle) -> Resu
 }
 
 #[tauri::command]
-fn get_embedding_model_status(app: tauri::AppHandle) -> Result<String, String> {
+async fn get_embedding_model_status(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || get_embedding_model_status_blocking(app))
+        .await
+        .map_err(|e| format!("get_embedding_model_status task failed: {e}"))?
+}
+
+fn get_embedding_model_status_blocking(app: tauri::AppHandle) -> Result<String, String> {
     Ok(embedding_model_status_value(&embedding_model_dir(&app)?).to_string())
 }
 
@@ -9218,7 +9338,13 @@ fn prepare_exit_session(
 }
 
 #[tauri::command]
-fn import_theory_source_command(source_path: String, output_dir: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn import_theory_source_command(source_path: String, output_dir: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || import_theory_source_command_blocking(source_path, output_dir, app))
+        .await
+        .map_err(|e| format!("import_theory_source_command task failed: {e}"))?
+}
+
+fn import_theory_source_command_blocking(source_path: String, output_dir: String, app: tauri::AppHandle) -> Result<String, String> {
     let source_path = PathBuf::from(&source_path);
     let output_dir = PathBuf::from(&output_dir);
     let result = import_theory_source(&source_path, &output_dir)?;
@@ -9285,13 +9411,31 @@ fn generate_master_axiom_from_theory_blocking(theory_dir: String, master_axiom_p
 }
 
 #[tauri::command]
-fn list_markdown_files(directory_path: String) -> Result<String, String> {
+async fn list_markdown_files(directory_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || list_markdown_files_blocking(directory_path))
+        .await
+        .map_err(|e| format!("list_markdown_files task failed: {e}"))?
+}
+
+fn list_markdown_files_blocking(directory_path: String) -> Result<String, String> {
     let files = collect_markdown_files(&directory_path).map_err(|e| e.to_string())?;
     Ok(serde_json::to_string(&files).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
-fn render_manuscript(
+async fn render_manuscript(mode: String,
+    source_file: String,
+    files: Vec<String>,
+    output_dir: String,
+    format: String,
+    use_for_training: bool,
+    source_dir: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || render_manuscript_blocking(mode, source_file, files, output_dir, format, use_for_training, source_dir))
+        .await
+        .map_err(|e| format!("render_manuscript task failed: {e}"))?
+}
+
+fn render_manuscript_blocking(
     mode: String,
     source_file: String,
     files: Vec<String>,
@@ -9305,7 +9449,13 @@ fn render_manuscript(
 }
 
 #[tauri::command]
-fn launch_file_editor(payload: LaunchFileEditorPayload) -> Result<String, String> {
+async fn launch_file_editor(payload: LaunchFileEditorPayload) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || launch_file_editor_blocking(payload))
+        .await
+        .map_err(|e| format!("launch_file_editor task failed: {e}"))?
+}
+
+fn launch_file_editor_blocking(payload: LaunchFileEditorPayload) -> Result<String, String> {
     let (program, args) = build_file_editor_command(&payload)?;
     let mut cmd = std::process::Command::new(&program);
     cmd.args(&args);
@@ -9317,7 +9467,13 @@ fn launch_file_editor(payload: LaunchFileEditorPayload) -> Result<String, String
 }
 
 #[tauri::command]
-fn edit_markdown_document_with_git_save(payload: LaunchFileEditorPayload, workspace_root: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn edit_markdown_document_with_git_save(payload: LaunchFileEditorPayload, workspace_root: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || edit_markdown_document_with_git_save_blocking(payload, workspace_root, app))
+        .await
+        .map_err(|e| format!("edit_markdown_document_with_git_save task failed: {e}"))?
+}
+
+fn edit_markdown_document_with_git_save_blocking(payload: LaunchFileEditorPayload, workspace_root: String, app: tauri::AppHandle) -> Result<String, String> {
     let file_path = payload.file_path.trim();
     if file_path.is_empty() {
         return Err("No markdown file path provided.".to_string());
@@ -9434,7 +9590,13 @@ fn edit_markdown_document_with_git_save(payload: LaunchFileEditorPayload, worksp
 }
 
 #[tauri::command]
-fn get_markdown_git_feedback(workspace_root: String, file_path: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn get_markdown_git_feedback(workspace_root: String, file_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || get_markdown_git_feedback_blocking(workspace_root, file_path, app))
+        .await
+        .map_err(|e| format!("get_markdown_git_feedback task failed: {e}"))?
+}
+
+fn get_markdown_git_feedback_blocking(workspace_root: String, file_path: String, app: tauri::AppHandle) -> Result<String, String> {
     let workspace_root = workspace_root.trim();
     let file_path = file_path.trim();
 
@@ -9597,7 +9759,14 @@ fn detach_terminal_shell(state: tauri::State<AppState>, app: tauri::AppHandle) -
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn get_version_tags(rootPath: String) -> Result<Vec<String>, String> {
+async fn get_version_tags(rootPath: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || get_version_tags_blocking(rootPath))
+        .await
+        .map_err(|e| format!("get_version_tags task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn get_version_tags_blocking(rootPath: String) -> Result<Vec<String>, String> {
     let root = std::path::Path::new(&rootPath);
     if !root.exists() || !root.is_dir() {
         return Err(format!("Workspace path is invalid: {}", rootPath));
@@ -9646,7 +9815,13 @@ fn normalize_version_tag(raw_tag: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
+async fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_as_version_blocking(tag, root_path))
+        .await
+        .map_err(|e| format!("save_as_version task failed: {e}"))?
+}
+
+fn save_as_version_blocking(tag: String, root_path: String) -> Result<String, String> {
     let normalized_tag = normalize_version_tag(&tag)?;
     let src = std::path::Path::new(&root_path);
 
@@ -9728,7 +9903,14 @@ fn save_as_version(tag: String, root_path: String) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn save_equation_to_md(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn save_equation_to_md(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_equation_to_md_blocking(content, path, app))
+        .await
+        .map_err(|e| format!("save_equation_to_md task failed: {e}"))?
+}
+
+#[allow(non_snake_case)]
+fn save_equation_to_md_blocking(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
     let target_path = std::path::PathBuf::from(&path);
     let config = load_app_config(&app)
         .map_err(|e| format!("Failed to load app config: {e}"))?;
@@ -9749,7 +9931,13 @@ fn save_equation_to_md(content: String, path: String, app: tauri::AppHandle) -> 
 }
 
 #[tauri::command]
-fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn save_scratchpad_content(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_scratchpad_content_blocking(content, path, app))
+        .await
+        .map_err(|e| format!("save_scratchpad_content task failed: {e}"))?
+}
+
+fn save_scratchpad_content_blocking(content: String, path: String, app: tauri::AppHandle) -> Result<String, String> {
     let target_path = std::path::PathBuf::from(&path);
     let config = load_app_config(&app)
         .map_err(|e| format!("Failed to load app config: {e}"))?;
@@ -9775,7 +9963,13 @@ fn is_pdf_path(path: &std::path::Path) -> bool {
 
 /// Read a Markdown/text/PDF document as plain text for the note pad or built-in editor.
 #[tauri::command]
-fn read_document_text(path: String) -> Result<String, String> {
+async fn read_document_text(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_document_text_blocking(path))
+        .await
+        .map_err(|e| format!("read_document_text task failed: {e}"))?
+}
+
+fn read_document_text_blocking(path: String) -> Result<String, String> {
     let target = std::path::PathBuf::from(path.trim());
     if !target.is_file() {
         return Err(format!("Document does not exist: {}", target.to_string_lossy()));
@@ -9801,7 +9995,13 @@ fn read_document_text(path: String) -> Result<String, String> {
 
 /// Write text to a file inside the configured project root (built-in editor save).
 #[tauri::command]
-fn write_document_text(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn write_document_text(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || write_document_text_blocking(path, content, app))
+        .await
+        .map_err(|e| format!("write_document_text task failed: {e}"))?
+}
+
+fn write_document_text_blocking(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
     let target_path = PathBuf::from(path.trim());
     if is_pdf_path(&target_path) {
         return Err("Refusing to overwrite a PDF with plain text; save as .md or .txt instead.".to_string());
@@ -9840,7 +10040,13 @@ fn spawn_external_open(path: &str, mode: &str, editor: &str, terminal_app: &str)
 
 /// Open an existing document externally. `mode` is "editor" (configured text editor) or "default" (OS association, e.g. word processor).
 #[tauri::command]
-fn open_document_externally(path: String, mode: String, editor: String, terminal_app: String) -> Result<String, String> {
+async fn open_document_externally(path: String, mode: String, editor: String, terminal_app: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || open_document_externally_blocking(path, mode, editor, terminal_app))
+        .await
+        .map_err(|e| format!("open_document_externally task failed: {e}"))?
+}
+
+fn open_document_externally_blocking(path: String, mode: String, editor: String, terminal_app: String) -> Result<String, String> {
     let target = PathBuf::from(path.trim());
     if !target.is_file() {
         return Err(format!("Document does not exist: {}", target.to_string_lossy()));
@@ -9850,7 +10056,13 @@ fn open_document_externally(path: String, mode: String, editor: String, terminal
 
 /// Write in-app text (recalled transcript, chat message, note pad) to a scratch file and open it externally.
 #[tauri::command]
-fn open_text_externally(content: String, title: String, mode: String, editor: String, terminal_app: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn open_text_externally(content: String, title: String, mode: String, editor: String, terminal_app: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || open_text_externally_blocking(content, title, mode, editor, terminal_app, app))
+        .await
+        .map_err(|e| format!("open_text_externally task failed: {e}"))?
+}
+
+fn open_text_externally_blocking(content: String, title: String, mode: String, editor: String, terminal_app: String, app: tauri::AppHandle) -> Result<String, String> {
     if content.trim().is_empty() {
         return Err("Nothing to open: the document is empty.".to_string());
     }
@@ -10407,7 +10619,13 @@ fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, app: tauri::
 }
 
 #[tauri::command]
-fn cancel_ai_project_command() -> Result<String, String> {
+async fn cancel_ai_project_command() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || cancel_ai_project_command_blocking())
+        .await
+        .map_err(|e| format!("cancel_ai_project_command task failed: {e}"))?
+}
+
+fn cancel_ai_project_command_blocking() -> Result<String, String> {
     ai_file_ops::request_run_cancel();
     Ok("cancel requested".to_string())
 }
@@ -10778,12 +10996,26 @@ fn math_fixer_root(app: &AppHandle, request: &MathFixerScanRequest) -> Result<(P
 }
 
 #[tauri::command]
-fn scan_math_fixer(request: MathFixerScanRequest, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn scan_math_fixer(request: MathFixerScanRequest, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_math_fixer_blocking(request, app))
+        .await
+        .map_err(|e| format!("scan_math_fixer task failed: {e}"))?
+}
+
+fn scan_math_fixer_blocking(request: MathFixerScanRequest, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let (root, paths) = math_fixer_root(&app, &request)?;
     if paths.is_empty() {
         return Err(format!("No markdown files found under {}", root.display()));
     }
-    let report = math_fixer::scan_paths(&root, &paths);
+    let total = paths.len();
+    let _ = app.emit("math-fixer-progress", serde_json::json!({ "done": 0, "total": total, "file": "" }));
+    let mut last_emit = std::time::Instant::now();
+    let report = math_fixer::scan_paths_with_progress(&root, &paths, &mut |done, total, file| {
+        if done == total || last_emit.elapsed() >= std::time::Duration::from_millis(80) {
+            last_emit = std::time::Instant::now();
+            let _ = app.emit("math-fixer-progress", serde_json::json!({ "done": done, "total": total, "file": file }));
+        }
+    });
     println!(
         "Math Fixer scanned {} file(s) under {} and found {} issue(s)",
         report.files_scanned,
@@ -10794,7 +11026,13 @@ fn scan_math_fixer(request: MathFixerScanRequest, app: tauri::AppHandle) -> Resu
 }
 
 #[tauri::command]
-fn apply_math_fixes(selections: Vec<math_fixer::MathFixSelection>, backup: bool) -> Result<serde_json::Value, String> {
+async fn apply_math_fixes(selections: Vec<math_fixer::MathFixSelection>, backup: bool) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || apply_math_fixes_blocking(selections, backup))
+        .await
+        .map_err(|e| format!("apply_math_fixes task failed: {e}"))?
+}
+
+fn apply_math_fixes_blocking(selections: Vec<math_fixer::MathFixSelection>, backup: bool) -> Result<serde_json::Value, String> {
     if selections.is_empty() {
         return Err("No fixes selected.".to_string());
     }
@@ -10851,7 +11089,13 @@ fn build_empirical_analysis_primer(request: &EmpiricalAnalysisRequest) -> String
 }
 
 #[tauri::command]
-fn compute_cosmology_metrics_command(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, z: f64) -> Result<CosmologyMetrics, String> {
+async fn compute_cosmology_metrics_command(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, z: f64) -> Result<CosmologyMetrics, String> {
+    tauri::async_runtime::spawn_blocking(move || compute_cosmology_metrics_command_blocking(h0, omega_m, omega_l, omega_r, z))
+        .await
+        .map_err(|e| format!("compute_cosmology_metrics_command task failed: {e}"))?
+}
+
+fn compute_cosmology_metrics_command_blocking(h0: f64, omega_m: f64, omega_l: f64, omega_r: f64, z: f64) -> Result<CosmologyMetrics, String> {
     compute_cosmology_metrics(h0, omega_m, omega_l, omega_r, z)
 }
 
@@ -10889,7 +11133,13 @@ fn generate_empirical_analysis_primer(
 }
 
 #[tauri::command]
-fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -> Result<String, String> {
+async fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_user_settings_blocking(payload, app))
+        .await
+        .map_err(|e| format!("save_user_settings task failed: {e}"))?
+}
+
+fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -> Result<String, String> {
     let mut config = load_app_config(&app).unwrap_or_default();
 
     config.editor = payload.editor;
@@ -12230,7 +12480,7 @@ mod tests {
         fs::write(source_dir.join("notes.md"), "snapshot me").unwrap();
         fs::write(source_dir.join("build/output/ignored.txt"), "ignore me").unwrap();
 
-        let result = save_as_version("v1.0.0".to_string(), source_dir.to_string_lossy().to_string()).unwrap();
+        let result = save_as_version_blocking("v1.0.0".to_string(), source_dir.to_string_lossy().to_string()).unwrap();
         let snapshot_dir = source_dir.join("versions").join("v1.0.0");
 
         assert!(snapshot_dir.join("notes.md").exists());
@@ -12242,7 +12492,7 @@ mod tests {
 
     #[test]
     fn help_search_matches_common_workspace_typo() {
-        let response = search_help_docs("wokrspaces".to_string()).unwrap();
+        let response = search_help_docs_blocking("wokrspaces".to_string()).unwrap();
         let payload: serde_json::Value = serde_json::from_str(&response).unwrap();
         let results = payload["results"].as_array().unwrap();
 

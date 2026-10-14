@@ -1828,20 +1828,34 @@ pub fn collect_markdown_paths(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+#[cfg(test)]
 pub fn scan_paths(root: &Path, paths: &[PathBuf]) -> MathScanReport {
+    scan_paths_with_progress(root, paths, &mut |_, _, _| {})
+}
+
+/// `progress(done, total, relative_path)` is called after each file is scanned.
+pub fn scan_paths_with_progress(
+    root: &Path,
+    paths: &[PathBuf],
+    progress: &mut dyn FnMut(usize, usize, &str),
+) -> MathScanReport {
     let mut findings = Vec::new();
     let mut files = Vec::new();
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for path in paths {
-        let Ok(text) = fs::read_to_string(path) else { continue };
+    for (i, path) in paths.iter().enumerate() {
         let file = path.to_string_lossy().to_string();
         let relative = path.strip_prefix(root).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| file.clone());
+        let Ok(text) = fs::read_to_string(path) else {
+            progress(i + 1, paths.len(), &relative);
+            continue;
+        };
         let file_findings = scan_text(&text, &file, &relative);
         for finding in &file_findings {
             *counts.entry(finding.rule.clone()).or_insert(0) += 1;
         }
-        files.push(MathScanFileSummary { file: file.clone(), relative_path: relative, findings: file_findings.len() });
+        files.push(MathScanFileSummary { file: file.clone(), relative_path: relative.clone(), findings: file_findings.len() });
         findings.extend(file_findings);
+        progress(i + 1, paths.len(), &relative);
     }
     for (id, finding) in findings.iter_mut().enumerate() {
         finding.id = id + 1;
