@@ -10,9 +10,13 @@ pub const DEFAULT_LOCAL_MODEL: &str = "llama3.1:8b";
 
 /// Prompt size the estimate assumes per query: startup primer (master axiom)
 /// plus retrieval packet plus a few turns of history, and a typical reply.
-const ASSUMED_PROMPT_TOKENS: f64 = 9_000.0;
+/// Per-query prompt tokens actually evaluated: Ollama reuses the KV cache for the
+/// unchanged primer prefix, so only the new turn plus retrieval evidence is processed.
+const ASSUMED_PROMPT_TOKENS: f64 = 2_000.0;
 const ASSUMED_REPLY_TOKENS: f64 = 500.0;
-const MAX_ACCEPTABLE_SECONDS: f64 = 60.0;
+/// Beyond this a model is reported unusable; slower-than-comfortable models are "deep".
+const MAX_ACCEPTABLE_SECONDS: f64 = 300.0;
+const SPECTRUM_MAX_SECONDS: f64 = 120.0;
 const DISK_FULL_FRACTION: f64 = 0.95;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -493,7 +497,7 @@ pub fn estimate_performance(spec: &LocalModelSpec, hw: &HardwareSpecs) -> Perfor
         ("unified".to_string(), apple_unified_bandwidth_gbps(chip), 15.0)
     } else if memory_needed_gb <= ram * 0.8 {
         reasons.push(format!("Runs on CPU from system RAM ({memory_needed_gb} GB needed, {} GB RAM).", hw.ram_total_gb));
-        ("cpu".to_string(), cpu_bandwidth_gbps(hw.cpu_cores), 4.0)
+        ("cpu".to_string(), cpu_bandwidth_gbps(hw.cpu_cores), 6.0)
     } else {
         reasons.push(format!(
             "Needs about {memory_needed_gb} GB of memory but only {} GB RAM / {vram} GB VRAM available.",
@@ -522,21 +526,22 @@ pub fn estimate_performance(spec: &LocalModelSpec, hw: &HardwareSpecs) -> Perfor
         "unusable".to_string()
     } else if est_seconds > MAX_ACCEPTABLE_SECONDS {
         reasons.push(format!(
-            "Estimated {:.0}s per query exceeds the 60s acceptable limit.",
-            est_seconds
+            "Estimated {:.0}s per query exceeds the {:.0}s usable limit.",
+            est_seconds, MAX_ACCEPTABLE_SECONDS
         ));
         "unusable".to_string()
-    } else if est_seconds <= 10.0 {
+    } else if est_seconds <= 15.0 {
         "quick".to_string()
-    } else if est_seconds <= 30.0 {
+    } else if est_seconds <= 45.0 {
         "balanced".to_string()
     } else {
+        reasons.push(format!("Slow on this hardware (~{:.0}s per query) but workable.", est_seconds));
         "deep".to_string()
     };
 
     PerformanceEstimate {
         verdict,
-        spectrum_position: (est_seconds / MAX_ACCEPTABLE_SECONDS).clamp(0.0, 1.0),
+        spectrum_position: (est_seconds / SPECTRUM_MAX_SECONDS).clamp(0.0, 1.0),
         est_response_seconds: round1(est_seconds),
         gen_tokens_per_sec: round1(gen_tps),
         prompt_tokens_per_sec: round1(prompt_tps),
@@ -972,6 +977,17 @@ mod tests {
         assert_eq!(est.runs_on, "cpu");
         assert_eq!(est.verdict, "unusable");
         assert!(est.est_response_seconds > MAX_ACCEPTABLE_SECONDS);
+    }
+
+    #[test]
+    fn mid_size_model_on_laptop_cpu_is_deep_not_unusable() {
+        let mut laptop = hw(16.0, 0.0, 500.0, 300.0);
+        laptop.cpu_cores = 16;
+        let est = estimate_performance(&spec("qwen2.5-coder:7b"), &laptop);
+        assert_eq!(est.runs_on, "cpu");
+        assert_eq!(est.verdict, "deep", "{est:?}");
+        let small = estimate_performance(&spec("qwen2.5:3b"), &laptop);
+        assert_ne!(small.verdict, "unusable", "{small:?}");
     }
 
     #[test]

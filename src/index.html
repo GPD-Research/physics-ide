@@ -5529,7 +5529,7 @@
         const desc = escapeHelpHtml(m.description || '');
         const actions = m.installed
           ? `<button type="button" onclick="useLocalModel('${safeName}', 'left')" title="Load this model into the left pane">Left</button><button type="button" onclick="useLocalModel('${safeName}', 'right')" title="Load this model into the right pane">Right</button>`
-          : `<button type="button" onclick="installLocalModel('${safeName}')" title="Open a terminal that downloads this model with Ollama"${m.estimate?.verdict === 'unusable' ? ' disabled' : ''}>Install</button>`;
+          : `<button type="button" onclick="installLocalModel('${safeName}')" title="${m.estimate?.verdict === 'unusable' ? 'Estimated unusable on this hardware — you can still download it' : 'Open a terminal that downloads this model with Ollama'}">Install</button>`;
         return `<div class="${cls}" title="${desc}"><span class="local-ai-name">${safeName}${m.installed ? ' ✓' : ''}</span><span>${m.params_b ? m.params_b + 'B' : '—'}</span><span>${escapeHelpHtml(m.quant || '—')}</span><span>${m.file_gb ? m.file_gb + ' GB' : '—'}</span>${spectrumMarkup(m.estimate)}<span class="local-ai-actions">${actions}</span></div>`;
       });
       list.innerHTML = `<div class="local-ai-row header"><span>Model</span><span>Params</span><span>Quant</span><span>Size</span><span>Estimate</span><span></span></div>${rows.join('')}`;
@@ -5576,6 +5576,11 @@
 
     async function installLocalModel(modelName) {
       const status = localAiOverview?.status || {};
+      const entry = (localAiOverview?.catalog || []).find((m) => m.name === modelName);
+      if (entry?.estimate?.verdict === 'unusable') {
+        const why = (entry.estimate.reasons || []).join(' ');
+        if (!window.confirm(`${modelName} is estimated unusable on this hardware.\n${why}\nDownload anyway?`)) return;
+      }
       const terminalApp = String(document.getElementById('settings-terminal')?.value || currentConfig?.terminal_app || '').trim();
       try {
         const result = await invoke('install_local_model', {
