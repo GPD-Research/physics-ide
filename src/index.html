@@ -1261,7 +1261,7 @@
         <a href="#" onclick="openHelpDoc('startup-initial-setup-checklist'); return false;" title="Open first-run setup workflow checklist">Startup Setup Checklist</a>
       </div>
     </div>
-    <div class="menu-item" onclick="openSettingsModal()" title="Open settings and preferences">Customize</div>
+    <div class="menu-item" onclick="openSettingsModal()" title="Open settings and preferences">Settings</div>
 
     <!-- Added Project Info Tooltip Elements Here -->
     <div class="project-info-container" onmouseenter="showProjectTooltip()" onmouseleave="hideProjectTooltip()">
@@ -1797,6 +1797,17 @@
 	        <div id="tab-ai" class="settings-tab-panel" style="display: none;">
           <div class="ai-settings-grid">
             <div class="ai-settings-col">
+            <div class="pane-config-block">
+              <h4>AI Routing Summary</h4>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+                Core provider/model routing is available in Advanced options to keep this panel focused.
+              </div>
+              <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
+              <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
+              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
+              </div>
+            </div>
 	          <div style="display: flex; gap: 10px;">
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-gemini-key">Google Gemini API Key</label>
@@ -1811,17 +1822,6 @@
                 <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-openai-key', this)" title="Show or hide the OpenAI API key">Show</button>
 	            </div>
 	          </div>
-            <div class="pane-config-block">
-              <h4>AI Routing Summary</h4>
-              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
-                Core provider/model routing is available in Advanced options to keep this panel focused.
-              </div>
-              <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
-              <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
-              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
-              </div>
-            </div>
               <div class="pane-config-block">
                 <h4>Thread History</h4>
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
@@ -1880,7 +1880,7 @@
                     <option value="read_write">Read/write</option>
                   </select>
                   <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
-                    When enabled, the AI can only operate within the active workspace root and only for the selected access level. If you change the project root in Customize, the AI can modify and create/delete files within that selected root directory. Read-only allows READ blocks; read/write adds FILE, APPEND and EDIT blocks.
+                    When enabled, the AI can only operate within the active workspace root and only for the selected access level. If you change the project root in Settings, the AI can modify and create/delete files within that selected root directory. Read-only allows READ blocks; read/write adds FILE, APPEND and EDIT blocks.
                   </div>
                 </div>
                 <div class="form-group">
@@ -2077,7 +2077,7 @@
       </div>
 
       <div style="font-size: 0.78rem; color: var(--accent-dim); margin-top: 8px;">
-        Backend supports Gemini, OpenAI, and Local AI (Ollama) routes. Local models are managed in Customize &rarr; AI Configuration &rarr; Local AI.
+        Backend supports Gemini, OpenAI, and Local AI (Ollama) routes. Local models are managed in Settings &rarr; AI Configuration &rarr; Local AI.
       </div>
     </div>
   </div>
@@ -2344,7 +2344,7 @@
         <button type="button" onclick="runNextTheorySetupStage()" title="Run the next recommended checklist stage">Run Next Recommended</button>
         <button type="button" onclick="runAllMissingTheorySetupStages()" title="Run all missing automatable checklist stages">Run All Missing</button>
         <button type="button" onclick="refreshTheoryImportSetupChecklist()" title="Re-run checklist verification">Refresh Checklist</button>
-        <button type="button" onclick="openSettingsForTheorySetup()" title="Open location and import controls in Customize settings">Open Locations Controls</button>
+        <button type="button" onclick="openSettingsForTheorySetup()" title="Open location and import controls in Settings settings">Open Locations Controls</button>
       </div>
       <div id="theory-import-setup-action-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; min-height: 18px;">
         Stage actions ready.
@@ -2528,7 +2528,7 @@
       </div>
 
       <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
-        <input id="markdown-docs-directory" type="text" placeholder="Markdown directory (from Customize -> Locations -> Theory Markdown Directory)">
+        <input id="markdown-docs-directory" type="text" placeholder="Markdown directory (from Settings -> Locations -> Theory Markdown Directory)">
         <button type="button" onclick="browseForDirectory('markdown-docs-directory')" title="Select markdown documents directory">Browse</button>
         <button type="button" onclick="refreshMarkdownDocumentsList()" title="Load markdown files from selected directory">Load</button>
       </div>
@@ -3686,7 +3686,7 @@
         ? briefing.hypothesis_candidates[0]
         : 'No explicit hypothesis cue detected yet.';
       const masterAxiomContent = (briefing?.master_axiom?.content || '').trim();
-      const masterAxiomBlock = masterAxiomContent || 'Master axiom snapshot unavailable; generate it from Customize > Theory Setup.';
+      const masterAxiomBlock = masterAxiomContent || 'Master axiom snapshot unavailable; generate it from Settings > Theory Setup.';
       const masterAxiomGuidance = 'Master axiom (compiled mathematical framework: every governing equation extracted from the chapter markdown, with labels, term definitions, and source paths). Treat it as the primary mathematical reference for the model; the chapters\' narrative explanations are not preloaded and arrive per message through the retrieval packet.';
       const projectMemoryContent = (briefing?.project_memory?.content || '').trim();
       const projectMemoryBlock = projectMemoryContent
@@ -4313,7 +4313,7 @@
         return { handled: true, continuePrompt: null };
       }
       if (st.rounds >= st.maxRounds) {
-        finishTask(pane, 'stopped', `round budget (${st.maxRounds}) reached; raise it in Customize or send "continue" in chat`);
+        finishTask(pane, 'stopped', `round budget (${st.maxRounds}) reached; raise it in Settings or send "continue" in chat`);
         return { handled: true, continuePrompt: null };
       }
       if (st.tokenBudget > 0 && st.tokens >= st.tokenBudget) {
@@ -7605,7 +7605,7 @@ async function restoreVersion() {
         const statusLabel = dirty
           ? 'Local-save mode: selected file has unsynchronized local changes.'
           : 'Local-save mode: selected file is currently clean.';
-        return `${statusLabel} GitHub credentials are not configured in Customize, so commits are not auto-created.`;
+        return `${statusLabel} GitHub credentials are not configured in Settings, so commits are not auto-created.`;
       }
 
       const dirty = payload.dirty === true;
@@ -7668,7 +7668,7 @@ async function restoreVersion() {
     async function refreshMarkdownDocumentsList() {
       const directory = getMarkdownDocsDirectory();
       if (!directory) {
-        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customize -> Locations first.');
+        setMarkdownDocsMeta('Set a Theory Markdown Directory in Settings -> Locations first.');
         return;
       }
 
@@ -7746,7 +7746,7 @@ async function restoreVersion() {
       const query = String(document.getElementById('markdown-docs-search-input')?.value || '').trim();
 
       if (!directory) {
-        setMarkdownDocsMeta('Set a Theory Markdown Directory in Customize -> Locations first.');
+        setMarkdownDocsMeta('Set a Theory Markdown Directory in Settings -> Locations first.');
         return;
       }
 
