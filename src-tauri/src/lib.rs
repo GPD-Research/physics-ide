@@ -376,6 +376,8 @@ pub struct AppConfig {
     last_root_dir: String,
     editor: String,
     terminal_app: String,
+    #[serde(default)]
+    word_processor: String,
     gemini_api_key: String,
     openai_api_key: String,
     github_username: String,
@@ -429,6 +431,7 @@ impl Default for AppConfig {
             last_root_dir: String::new(),
             editor: String::new(),
             terminal_app: String::new(),
+            word_processor: String::new(),
             gemini_api_key: String::new(),
             openai_api_key: String::new(),
             github_username: String::new(),
@@ -477,6 +480,8 @@ pub struct SaveUserSettingsPayload {
     pub editor: String,
     #[serde(alias = "terminalApp")]
     pub terminal_app: String,
+    #[serde(default, alias = "wordProcessor")]
+    pub word_processor: String,
     #[serde(alias = "geminiKey")]
     pub gemini_key: String,
     #[serde(alias = "openaiKey")]
@@ -9138,6 +9143,7 @@ fn compile_ai_briefing_blocking(current_path: String, app: tauri::AppHandle) -> 
         "ai_task_max_rounds": config.ai_task_max_rounds,
         "ai_task_token_budget": config.ai_task_token_budget,
         "ollama_models_dir": config.ollama_models_dir,
+        "word_processor": config.word_processor,
         "ai_run_allowlist": config.ai_run_allowlist,
         "ai_run_timeout_seconds": config.ai_run_timeout_seconds,
         "primer": primer_payload,
@@ -10020,7 +10026,75 @@ fn write_document_text_blocking(path: String, content: String, app: tauri::AppHa
     }).to_string())
 }
 
+/// Known GUI word processors, as `(label, command line)`; the first token is the program to probe with `which`.
+const WORD_PROCESSOR_CANDIDATES: &[(&str, &str)] = &[
+    ("LibreOffice Writer", "libreoffice --writer"),
+    ("LibreOffice Writer (soffice)", "soffice --writer"),
+    ("AbiWord", "abiword"),
+    ("ONLYOFFICE Desktop Editors", "onlyoffice-desktopeditors"),
+    ("WPS Writer", "wps"),
+    ("Calligra Words", "calligrawords"),
+    ("FreeOffice TextMaker", "textmaker"),
+    ("Pages (macOS)", "open -a Pages"),
+    ("Microsoft Word (macOS)", "open -a \"Microsoft Word\""),
+];
+
+fn split_command_line(command: &str) -> Option<(String, Vec<String>)> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for ch in command.trim().chars() {
+        match (ch, quote) {
+            (c, Some(q)) if c == q => quote = None,
+            ('"', None) | ('\'', None) => quote = Some(ch),
+            (c, None) if c.is_whitespace() => {
+                if !cur.is_empty() { parts.push(std::mem::take(&mut cur)); }
+            }
+            (c, _) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() { parts.push(cur); }
+    let program = parts.first()?.clone();
+    Some((program, parts[1..].to_vec()))
+}
+
+/// JSON list of `{label, command}` for word processors found on PATH.
+#[tauri::command]
+async fn detect_word_processors() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let found: Vec<serde_json::Value> = WORD_PROCESSOR_CANDIDATES
+            .iter()
+            .filter(|(_, cmd)| {
+                split_command_line(cmd)
+                    .map(|(program, args)| {
+                        if program == "open" {
+                            cfg!(target_os = "macos") && args.get(1).map(|app| Path::new(&format!("/Applications/{app}.app")).exists()).unwrap_or(false)
+                        } else {
+                            local_ai::which(&program).is_some()
+                        }
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|(label, cmd)| serde_json::json!({ "label": label, "command": cmd }))
+            .collect();
+        serde_json::to_string(&found).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("detect_word_processors task failed: {e}"))?
+}
+
+/// `mode` is "editor" (configured CLI editor in a terminal), "word" (configured GUI word processor,
+/// passed in `editor`), or "default" (OS file association).
 fn spawn_external_open(path: &str, mode: &str, editor: &str, terminal_app: &str) -> Result<String, String> {
+    if mode.trim().eq_ignore_ascii_case("word") && !editor.trim().is_empty() {
+        let (program, mut args) = split_command_line(editor).ok_or_else(|| "Word processor command is empty.".to_string())?;
+        args.push(path.to_string());
+        std::process::Command::new(&program)
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("Failed to launch word processor `{}`: {e}. Check Settings ▸ System & Apps.", editor.trim()))?;
+        return Ok(format!("Opened {} in {}", path, editor.trim()));
+    }
     if mode.trim().eq_ignore_ascii_case("editor") && !editor.trim().is_empty() {
         let payload = LaunchFileEditorPayload {
             file_path: path.to_string(),
@@ -11144,6 +11218,7 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
 
     config.editor = payload.editor;
     config.terminal_app = payload.terminal_app;
+    config.word_processor = payload.word_processor.trim().to_string();
     config.gemini_api_key = normalize_api_key(&payload.gemini_key);
     config.openai_api_key = normalize_api_key(&payload.openai_key);
     config.github_username = payload.github_username;
@@ -12822,6 +12897,13 @@ mod tests {
     }
 
     #[test]
+    fn split_command_line_handles_flags_and_quotes() {
+        assert_eq!(split_command_line("libreoffice --writer"), Some(("libreoffice".to_string(), vec!["--writer".to_string()])));
+        assert_eq!(split_command_line("open -a \"Microsoft Word\""), Some(("open".to_string(), vec!["-a".to_string(), "Microsoft Word".to_string()])));
+        assert_eq!(split_command_line("   "), None);
+    }
+
+    #[test]
     fn build_file_editor_command_uses_configured_cli_editor() {
         let payload = LaunchFileEditorPayload {
             file_path: "/tmp/readme.md".to_string(),
@@ -12949,6 +13031,7 @@ pub fn run() {
             write_document_text,
             open_document_externally,
             open_text_externally,
+            detect_word_processors,
             autosave_thread,
             list_thread_saves,
             load_thread_save,

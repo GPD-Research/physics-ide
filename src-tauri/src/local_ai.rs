@@ -525,7 +525,7 @@ fn disk_check(spec: &LocalModelSpec, hw: &HardwareSpecs, reasons: &mut Vec<Strin
     true
 }
 
-fn which(binary: &str) -> Option<String> {
+pub(crate) fn which(binary: &str) -> Option<String> {
     let output = Command::new("which").arg(binary).output().ok()?;
     if !output.status.success() {
         return None;

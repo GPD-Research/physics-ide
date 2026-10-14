@@ -1807,6 +1807,15 @@
                     <input type="text" id="settings-terminal">
                   </div>
                   <div class="form-group">
+                    <label for="settings-word-processor-select">Word Processor</label>
+                    <select id="settings-word-processor-select" onchange="onWordProcessorPick(this.value)">
+                      <option value="">System default application</option>
+                      <option value="__custom__">Custom command…</option>
+                    </select>
+                    <input type="text" id="settings-word-processor" placeholder="e.g. libreoffice --writer" style="margin-top:6px;" oninput="syncWordProcessorSelect()">
+                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Used by “Open in word processor”. Detected apps are listed; the file path is appended to the command.</div>
+                  </div>
+                  <div class="form-group">
                     <label for="settings-github-username">GitHub Username (optional)</label>
                     <input type="text" id="settings-github-username" placeholder="octocat">
                   </div>
@@ -3627,6 +3636,8 @@
         
         document.getElementById('settings-editor').value = currentConfig.editor;
         document.getElementById('settings-terminal').value = currentConfig.terminal_app;
+        document.getElementById('settings-word-processor').value = currentConfig.word_processor || '';
+        populateWordProcessorPicker();
         document.getElementById('settings-github-username').value = currentConfig.github_username || "";
         document.getElementById('settings-github-api-key').value = currentConfig.github_api_key || "";
         const leftProvider = normalizeProviderForV7(currentConfig.left_provider || 'openai');
@@ -9171,6 +9182,7 @@ async function restoreVersion() {
 
       const editor = document.getElementById('settings-editor').value;
       const term = document.getElementById('settings-terminal').value;
+      const wordProcessor = document.getElementById('settings-word-processor').value.trim();
       const geminiKey = normalizeApiKeyValue(document.getElementById('settings-gemini-key').value);
       const openaiKey = normalizeApiKeyValue(document.getElementById('settings-openai-key').value);
       const githubUsername = document.getElementById('settings-github-username').value;
@@ -9201,6 +9213,7 @@ async function restoreVersion() {
       const payload = {
         editor,
         terminal_app: term,
+        word_processor: wordProcessor,
         gemini_key: geminiKey,
         openai_key: openaiKey,
         github_username: githubUsername,
@@ -9252,6 +9265,7 @@ async function restoreVersion() {
         currentConfig = { ...(currentConfig || {}), ...payload };
         currentConfig.editor = editor;
         currentConfig.terminal_app = term;
+        currentConfig.word_processor = wordProcessor;
         currentConfig.gemini_api_key = geminiKey;
         currentConfig.openai_api_key = openaiKey;
         currentConfig.github_username = githubUsername;
@@ -9631,18 +9645,63 @@ async function restoreVersion() {
 
     // ---- external open ----
     function externalOpenConfig() {
-      return { editor: currentConfig?.editor || '', terminalApp: currentConfig?.terminal_app || 'gnome-terminal' };
+      return {
+        editor: currentConfig?.editor || '',
+        terminalApp: currentConfig?.terminal_app || 'gnome-terminal',
+        wordProcessor: String(currentConfig?.word_processor || '').trim()
+      };
+    }
+    // The configured word processor rides in the `editor` slot for mode "word".
+    function externalOpenArgs(cfg, mode) {
+      if (mode === 'word' && cfg.wordProcessor) return { mode: 'word', editor: cfg.wordProcessor, terminalApp: cfg.terminalApp };
+      if (mode === 'word') return { mode: 'default', editor: cfg.editor, terminalApp: cfg.terminalApp };
+      return { mode, editor: cfg.editor, terminalApp: cfg.terminalApp };
+    }
+    function wordProcessorMenuLabel(cfg) {
+      if (!cfg.wordProcessor) return 'Open in word processor / default app';
+      const detected = (wordProcessorChoices || []).find((c) => c.command === cfg.wordProcessor);
+      return `Open in word processor (${detected ? detected.label : cfg.wordProcessor})`;
+    }
+    let wordProcessorChoices = [];
+    async function populateWordProcessorPicker() {
+      const select = document.getElementById('settings-word-processor-select');
+      if (!select) return;
+      try {
+        wordProcessorChoices = JSON.parse(await invoke('detect_word_processors'));
+      } catch (err) {
+        wordProcessorChoices = [];
+        appendTerminalLog(`Word processor detection failed: ${err}`);
+      }
+      const current = document.getElementById('settings-word-processor')?.value?.trim() || '';
+      select.innerHTML = '<option value="">System default application</option>'
+        + wordProcessorChoices.map((c) => `<option value="${escapeHtml(c.command)}">${escapeHtml(c.label)}</option>`).join('')
+        + '<option value="__custom__">Custom command…</option>';
+      syncWordProcessorSelect();
+      if (!current) select.value = '';
+    }
+    function syncWordProcessorSelect() {
+      const select = document.getElementById('settings-word-processor-select');
+      const current = document.getElementById('settings-word-processor')?.value?.trim() || '';
+      if (!select) return;
+      if (!current) { select.value = ''; return; }
+      select.value = wordProcessorChoices.some((c) => c.command === current) ? current : '__custom__';
+    }
+    function onWordProcessorPick(value) {
+      const input = document.getElementById('settings-word-processor');
+      if (!input) return;
+      if (value === '__custom__') { input.focus(); return; }
+      input.value = value;
     }
     async function openPathExternally(path, mode) {
       const cfg = externalOpenConfig();
       try {
-        appendTerminalLog(await invoke('open_document_externally', { path, mode, editor: cfg.editor, terminalApp: cfg.terminalApp }));
+        appendTerminalLog(await invoke('open_document_externally', { path, ...externalOpenArgs(cfg, mode) }));
       } catch (err) { appendTerminalLog(`External open failed: ${err}`); }
     }
     async function openTextExternally(content, title, mode) {
       const cfg = externalOpenConfig();
       try {
-        const result = JSON.parse(await invoke('open_text_externally', { content, title, mode, editor: cfg.editor, terminalApp: cfg.terminalApp }));
+        const result = JSON.parse(await invoke('open_text_externally', { content, title, ...externalOpenArgs(cfg, mode) }));
         appendTerminalLog(result.message);
       } catch (err) { appendTerminalLog(`External open failed: ${err}`); }
     }
@@ -9730,10 +9789,11 @@ async function restoreVersion() {
       const editorLabel = cfg.editor ? `Open in text editor (${cfg.editor})` : 'Open in text editor (system default)';
       if (spec.path) {
         add(editorLabel, () => openPathExternally(spec.path, 'editor'));
-        add(specIsPdf(spec) ? 'Open in PDF viewer / default app' : 'Open in word processor / default app', () => openPathExternally(spec.path, 'default'));
+        if (specIsPdf(spec)) add('Open in PDF viewer / default app', () => openPathExternally(spec.path, 'default'));
+        else add(wordProcessorMenuLabel(cfg), () => openPathExternally(spec.path, 'word'));
       } else {
         add(editorLabel, async () => openTextExternally(await specText(spec), spec.title, 'editor'), { tip: 'Writes a scratch .md copy and opens it' });
-        add('Open in word processor / default app', async () => openTextExternally(await specText(spec), spec.title, 'default'), { tip: 'Writes a scratch .md copy and opens it' });
+        add(wordProcessorMenuLabel(cfg), async () => openTextExternally(await specText(spec), spec.title, 'word'), { tip: 'Writes a scratch .md copy and opens it' });
       }
 
       document.body.appendChild(menu);
