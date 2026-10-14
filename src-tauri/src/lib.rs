@@ -1151,7 +1151,7 @@ fn default_ai_task_token_budget() -> u64 {
 
 fn ai_task_protocol_instructions() -> String {
     format!(
-        "Task mode: a user message that begins with \"TASK:\" starts a goal-driven task. Respond first with a short numbered plan between {plan_open} and {plan_close} (one step per line, \"1. ...\"), then begin executing. Mark the start of each step's work with {step_open} n>>> on its own line, use file, RUN, and SEARCH blocks as needed, and check your own results (run the script, read the output, compare numbers) before moving on. The app automatically prompts you to continue after each round until you finish; when the goal is met, end your reply with {done} followed by a brief summary of what was produced and verified. If you cannot proceed without the user, write {blocked} followed by the exact question. Keep each round focused on one or two steps; the task has a round and token budget set by the user.",
+        "Task mode: a user message that begins with \"TASK:\" starts a goal-driven task. Respond first with a short numbered plan between {plan_open} and {plan_close} (one step per line, \"1. ...\"), then begin executing. Mark the start of each step's work with {step_open} n>>> on its own line, use file, RUN, and SEARCH blocks as needed, and check your own results (run the script, read the output, compare numbers) before moving on. The app automatically prompts you to continue after each round until you finish; when the goal is met, end your reply with {done} followed by a brief summary of what was produced and verified. If you cannot proceed without the user, write {blocked} followed by the exact question. Keep each round focused on one or two steps; the task has a round and token budget set by the user. Outside a TASK: message (ordinary chat, greetings, questions) never emit {plan_open}, {step_open} n>>>, {done} or {blocked}; just answer.",
         plan_open = AI_TASK_PLAN_OPEN,
         plan_close = AI_TASK_PLAN_CLOSE,
         step_open = AI_TASK_STEP_OPEN,
@@ -1162,7 +1162,7 @@ fn ai_task_protocol_instructions() -> String {
 
 fn ai_memory_protocol_instructions() -> String {
     format!(
-        "Project memory: {file} in the project root is a durable, user-editable log of decisions, conventions, open questions, and failed approaches; its most recent entries are injected into your startup primer in every session. When something is worth remembering across sessions (a decision and its reasoning, a dead end, a naming convention, a result the user accepted), record it with:\n  {open}\n  <one to three concise sentences>\n  {close}\n  The app appends it as a dated bullet. Keep entries terse and factual; never record secrets or transient task state.",
+        "Project memory: {file} in the project root is a durable, user-editable log of decisions, conventions, open questions, and failed approaches; its most recent entries are injected into your startup primer in every session. When something is worth remembering across sessions (a decision and its reasoning, a dead end, a naming convention, a result the user accepted), record it with:\n  {open}\n  <one to three concise sentences>\n  {close}\n  The app appends it as a dated bullet. Use it only for a decision, convention, accepted result, or dead end that the user stated or confirmed — never for greetings, your own intentions, or what you are about to do; at most one per reply. Keep entries terse and factual; never record secrets or transient task state.",
         file = PROJECT_MEMORY_FILE,
         open = AI_REMEMBER_BLOCK_OPEN,
         close = AI_REMEMBER_BLOCK_CLOSE
@@ -1171,7 +1171,7 @@ fn ai_memory_protocol_instructions() -> String {
 
 fn ai_file_read_protocol_instructions() -> String {
     format!(
-        "To read a file inside the project root, emit on its own line:\n  {read} path=\"relative/path.py\">>>\n  The app replies with the file contents in a System message; use it before editing so your SEARCH text matches exactly.",
+        "To read a file inside the project root, emit on its own line:\n  {read} path=\"relative/path.py\">>>\n  The app replies with the file contents in a System message; use it before editing so your SEARCH text matches exactly. Every marker that appears in your reply outside a ``` code fence is executed, so when you merely describe or list the markers, put them inside a code fence.",
         read = AI_READ_BLOCK_OPEN
     )
 }
