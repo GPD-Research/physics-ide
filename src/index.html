@@ -1088,6 +1088,30 @@
       .pane-config-block { border: 1px solid var(--border-color); padding: 10px; border-radius: 4px; margin-bottom: 10px; background: rgba(0,0,0,0.05); }
       .pane-config-block h4 { margin: 0 0 8px 0; font-size: 0.85rem; color: var(--accent-dim); }
       .ai-routing-modal-content { width: min(1120px, 96vw) !important; max-height: 90vh; overflow: auto; }
+      /* Full-screen System Settings window */
+      #settings-modal { align-items: stretch; justify-content: stretch; background-color: var(--bg-darker); }
+      #settings-modal .modal-content {
+        width: 100vw !important;
+        height: 100vh;
+        max-width: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        padding: 18px 28px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      #settings-modal .settings-tab-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 8px; }
+      #settings-modal .settings-footer { flex: 0 0 auto; display: flex; gap: 10px; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--border-color); margin-top: 12px; }
+      .ai-settings-grid { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(380px, 1.35fr) minmax(260px, 1fr); gap: 14px; align-items: start; }
+      .ai-settings-grid .form-group input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+      .ai-settings-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+      .ai-settings-col .pane-config-block { margin-bottom: 0; }
+      .ai-settings-grid .local-ai-model-list { max-height: calc(100vh - 420px); min-height: 160px; }
+      @media (max-width: 1100px) { .ai-settings-grid { grid-template-columns: 1fr 1fr; } .ai-settings-grid .ai-settings-col-local { grid-column: 1 / -1; } }
+      @media (max-width: 800px) { .ai-settings-grid { grid-template-columns: 1fr; } }
       .ai-routing-layout { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(340px, 1fr); gap: 12px; align-items: start; }
       .ai-routing-pane-stack { display: flex; flex-direction: column; gap: 10px; }
       .ai-routing-pane-stack .pane-config-block,
@@ -1771,6 +1795,8 @@
           
 	<!-- Tab 3: AI Configuration -->
 	        <div id="tab-ai" class="settings-tab-panel" style="display: none;">
+          <div class="ai-settings-grid">
+            <div class="ai-settings-col">
 	          <div style="display: flex; gap: 10px;">
 	            <div class="form-group" style="flex: 1;">
 	              <label for="settings-gemini-key">Google Gemini API Key</label>
@@ -1785,8 +1811,33 @@
                 <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-openai-key', this)" title="Show or hide the OpenAI API key">Show</button>
 	            </div>
 	          </div>
-
-
+            <div class="pane-config-block">
+              <h4>AI Routing Summary</h4>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
+                Core provider/model routing is available in Advanced options to keep this panel focused.
+              </div>
+              <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
+              <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
+              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
+              </div>
+            </div>
+              <div class="pane-config-block">
+                <h4>Thread History</h4>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-left-preserve-thread-history" checked>
+                  <label for="settings-left-preserve-thread-history" style="margin: 0;">Keep left pane thread history when its model/provider changes</label>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-right-preserve-thread-history" checked>
+                  <label for="settings-right-preserve-thread-history" style="margin: 0;">Keep right pane thread history when its model/provider changes</label>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--accent-dim);">
+                  ON (default): the pane can keep referencing earlier context. OFF: only that pane resets to baseline awareness when you change its model/provider.
+                </div>
+              </div>
+            </div>
+            <div class="ai-settings-col ai-settings-col-local">
             <div class="pane-config-block" id="local-ai-block">
               <h4>Local AI (Ollama)</h4>
               <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
@@ -1817,19 +1868,8 @@
                 Green = downloaded. Install opens your terminal with the Ollama download commands. Estimates assume a ~9K-token prompt (primer + retrieval) and a ~500-token reply; anything over 60 s per query is marked unusable.
               </div>
             </div>
-
-            <div class="pane-config-block">
-              <h4>AI Routing Summary</h4>
-              <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
-                Core provider/model routing is available in Advanced options to keep this panel focused.
-              </div>
-              <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
-              <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
-              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
-              </div>
             </div>
-
+            <div class="ai-settings-col">
               <div class="pane-config-block">
                 <h4>Workspace File Access</h4>
                 <div class="form-group">
@@ -1870,21 +1910,8 @@
                   </div>
                 </div>
               </div>
-
-              <div class="pane-config-block">
-                <h4>Thread History</h4>
-                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
-                  <input type="checkbox" id="settings-left-preserve-thread-history" checked>
-                  <label for="settings-left-preserve-thread-history" style="margin: 0;">Keep left pane thread history when its model/provider changes</label>
-                </div>
-                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
-                  <input type="checkbox" id="settings-right-preserve-thread-history" checked>
-                  <label for="settings-right-preserve-thread-history" style="margin: 0;">Keep right pane thread history when its model/provider changes</label>
-                </div>
-                <div style="font-size: 0.78rem; color: var(--accent-dim);">
-                  ON (default): the pane can keep referencing earlier context. OFF: only that pane resets to baseline awareness when you change its model/provider.
-                </div>
-              </div>
+            </div>
+          </div>
 	        </div>
 	        
 			<!-- Tab 4: Appearance & Colors -->
@@ -1913,7 +1940,7 @@
 			          </div>
 			</div>
 			
-        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+        <div class="settings-footer">
           <button onclick="closeSettingsModal()" title="Close settings without saving">Cancel</button>
           <button id="save-prefs-btn" style="background-color: var(--accent); color: var(--bg-darker);" onclick="saveSettings()" title="Save current settings to local configuration">
             <span id="save-btn-text">Save Settings</span>
