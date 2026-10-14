@@ -1,0 +1,55 @@
+name: Release
+
+# Pushing a tag like v9.0.0 builds the Linux .deb with the Tauri bundler and attaches it
+# to a GitHub Release of the same name, plus a stable-named copy so
+# https://github.com/GPD-Research/physics-ide/releases/latest/download/physics-ide_latest_amd64.deb
+# always serves the newest release. Releases are never marked prerelease because GitHub's
+# /releases/latest skips prereleases. Can also be run by hand from the Actions tab.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm install
+      - name: Check version matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          test "$PKG" = "$TAG" || { echo "package.json version $PKG != tag $TAG"; exit 1; }
+      - run: npm run tauri build -- --bundles deb
+      - name: Collect package
+        run: |
+          mkdir -p dist-deb
+          cp src-tauri/target/release/bundle/deb/physics-ide_*_amd64.deb dist-deb/
+          cp dist-deb/physics-ide_*_amd64.deb dist-deb/physics-ide_latest_amd64.deb
+          ls -l dist-deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: physics-ide-deb
+          path: dist-deb/*.deb
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-deb/*.deb
+          generate_release_notes: true
