@@ -1798,6 +1798,14 @@
                   <input type="text" id="settings-ollama-host" placeholder="http://127.0.0.1:11434" oninput="markAiRouteValidationPendingForProvider('ollama')">
                 </div>
                 <button type="button" onclick="refreshLocalAiOverview()" title="Check Ollama install/server status and refresh the model list">Refresh</button>
+              </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px;">
+                <div class="form-group" style="flex: 1 1 240px; margin-bottom: 0;">
+                  <label for="settings-ollama-models-dir">Model storage location</label>
+                  <input type="text" id="settings-ollama-models-dir" readonly placeholder="Ollama default (~/.ollama/models)" title="Where downloaded models are stored. Leave empty for the Ollama default. Set via Browse… to use another drive; the install script exports OLLAMA_MODELS and restarts the server there.">
+                </div>
+                <button type="button" onclick="browseOllamaModelsDir()" title="Choose a directory (e.g. on another drive) for downloaded models">Browse…</button>
+                <button type="button" onclick="clearOllamaModelsDir()" title="Use the Ollama default location">Clear</button>
                 <button type="button" onclick="checkHardwareSpecs()" title="Read VRAM, RAM, disk and CPU to estimate which models will run reasonably">Check Hardware Specs</button>
               </div>
               <div id="local-ai-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">Ollama status not checked yet.</div>
@@ -3587,6 +3595,8 @@
         document.getElementById('settings-ai-task-tokens').value = Number.isFinite(Number(currentConfig.ai_task_token_budget)) ? Number(currentConfig.ai_task_token_budget) : 150000;
         const ollamaHostInput = document.getElementById('settings-ollama-host');
         if (ollamaHostInput) ollamaHostInput.value = currentConfig.ollama_host || 'http://127.0.0.1:11434';
+        const ollamaModelsDirInput = document.getElementById('settings-ollama-models-dir');
+        if (ollamaModelsDirInput) ollamaModelsDirInput.value = currentConfig.ollama_models_dir || '';
         if (leftProvider === 'ollama' || rightProvider === 'ollama') {
           refreshLocalAiOverview().catch(() => {});
         }
@@ -5259,7 +5269,7 @@
       const target = document.getElementById('local-ai-hardware');
       if (target) target.textContent = 'Probing hardware...';
       try {
-        const response = await invoke('check_hardware_specs');
+        const response = await invoke('check_hardware_specs', { modelsDir: getOllamaModelsDirFromUi() });
         localAiHardware = typeof response === 'string' ? JSON.parse(response) : response;
         if (target) {
           const notes = Array.isArray(localAiHardware.notes) && localAiHardware.notes.length ? ` — ${localAiHardware.notes.join(' ')}` : '';
@@ -5361,12 +5371,39 @@
       appendTerminalLog(`Local AI: ${modelName} assigned to ${safeSide} pane (save settings to apply).`);
     }
 
+    function getOllamaModelsDirFromUi() {
+      return String(document.getElementById('settings-ollama-models-dir')?.value ?? currentConfig?.ollama_models_dir ?? '').trim();
+    }
+
+    async function browseOllamaModelsDir() {
+      try {
+        const selected = await window.__TAURI__.dialog.open({
+          directory: true,
+          multiple: false,
+          defaultPath: getOllamaModelsDirFromUi() || undefined,
+          title: 'Select model storage directory'
+        });
+        if (!selected) return;
+        const input = document.getElementById('settings-ollama-models-dir');
+        if (input) input.value = selected;
+        setLocalAiStatus(`Models will be stored in ${selected} (save settings to apply; the next Install restarts Ollama there).`);
+      } catch (err) {
+        appendTerminalLog(`Model storage dialog failed: ${err}`);
+      }
+    }
+
+    function clearOllamaModelsDir() {
+      const input = document.getElementById('settings-ollama-models-dir');
+      if (input) input.value = '';
+      setLocalAiStatus('Models will use the Ollama default location (save settings to apply).');
+    }
+
     async function installLocalModel(modelName) {
       const status = localAiOverview?.status || {};
       const terminalApp = String(document.getElementById('settings-terminal')?.value || currentConfig?.terminal_app || '').trim();
       try {
         const result = await invoke('install_local_model', {
-          payload: { model: modelName, terminalApp, ollamaInstalled: !!status.binary_found }
+          payload: { model: modelName, terminalApp, ollamaInstalled: !!status.binary_found, modelsDir: getOllamaModelsDirFromUi() }
         });
         setLocalAiStatus(`${result}. Click Refresh when the download finishes.`);
         appendTerminalLog(result);
@@ -9078,6 +9115,8 @@ async function restoreVersion() {
 
       const ollamaHost = getOllamaHostFromUi();
       payload.ollama_host = ollamaHost;
+      const ollamaModelsDir = getOllamaModelsDirFromUi();
+      payload.ollama_models_dir = ollamaModelsDir;
       const leftApiKey = getApiKeyForProvider(leftProvider);
       const rightApiKey = getApiKeyForProvider(rightProvider);
 
@@ -9124,6 +9163,7 @@ async function restoreVersion() {
         currentConfig.ai_task_max_rounds = aiTaskMaxRounds;
         currentConfig.ai_task_token_budget = aiTaskTokenBudget;
         currentConfig.ollama_host = ollamaHost;
+        currentConfig.ollama_models_dir = ollamaModelsDir;
 
         const leftModelChanged = previousLeftProvider !== leftProvider || previousLeftModel !== leftModel;
         const rightModelChanged = previousRightProvider !== rightProvider || previousRightModel !== rightModel;
