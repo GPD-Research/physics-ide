@@ -646,6 +646,9 @@
         background: var(--bg-panel); color: inherit; border: 1px solid var(--border-color); border-radius: 3px;
       }
       .recall-select:hover { opacity: 1; }
+      .thread-tools-btn { font-size: 0.72rem; padding: 2px 8px; opacity: 0.8; white-space: nowrap; }
+      .thread-tools-btn:hover { opacity: 1; }
+      .thread-logs-body { flex: 1; overflow: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.78rem; line-height: 1.35; }
       .recall-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px; }
       .task-panel { border-bottom: 1px solid var(--border-color); padding: 6px 10px; background: var(--bg-dark); font-size: 0.8rem; }
       .task-panel-row { display: flex; gap: 8px; align-items: stretch; }
@@ -1339,6 +1342,7 @@
             <select id="left-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('left')" onchange="openRecallViewer('left', this.value); this.selectedIndex = 0;">
               <option value="">Recall session…</option>
             </select>
+            <button class="thread-tools-btn" onclick="openThreadToolsMenu(this, 'left')" title="Thread tools: reset this thread or view its logs">Thread tools ▾</button>
           </div>
           <div>
             <button onclick="rotateLeft(-1)" title="Previous analytical slot">▲</button>
@@ -1412,6 +1416,7 @@
             <select id="right-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('right')" onchange="openRecallViewer('right', this.value); this.selectedIndex = 0;">
               <option value="">Recall session…</option>
             </select>
+            <button class="thread-tools-btn" onclick="openThreadToolsMenu(this, 'right')" title="Thread tools: reset this thread or view its logs">Thread tools ▾</button>
           </div>
           <div>
             <button onclick="rotateRight(-1)" title="Previous creative slot">▲</button>
@@ -1681,6 +1686,27 @@
         <button onclick="sendRecallToNotePad()" title="Load this transcript into the note pad (no AI call)">Send to note pad</button>
         <button onclick="openDocActionsMenu(this, recallDocSpec())" title="More: open in built-in editor, external editor, word processor, session equations...">Open in... ▾</button>
         <button onclick="loadRecallIntoThread()" title="Replace the current thread contents with this transcript (tokens are only spent when you send the next message)">Load into thread</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="thread-reset-modal" class="modal" style="z-index: 1130;">
+    <div class="modal-content doc-glass" style="width: 380px;">
+      <div class="modal-header" id="thread-reset-title">Reset thread</div>
+      <p id="thread-reset-text" style="font-size: 0.85rem; opacity: 0.85; margin-bottom: 15px;"></p>
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button onclick="closeThreadResetConfirm()">Cancel</button>
+        <button onclick="confirmThreadReset()" style="color: #f38ba8;">Reset</button>
+      </div>
+    </div>
+  </div>
+  <div id="thread-logs-modal" class="modal" style="z-index: 1120;">
+    <div class="modal-content doc-glass" style="width: min(900px, 90vw); max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header" id="thread-logs-title">Thread logs</div>
+      <div id="thread-logs-body" class="thread-logs-body"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+        <button onclick="closeThreadLogs()">Close</button>
+        <button onclick="copyThreadLogs()" title="Copy the log text to the clipboard">Copy</button>
       </div>
     </div>
   </div>
@@ -9711,6 +9737,87 @@ async function restoreVersion() {
         document.addEventListener('mousedown', onDocActionsOutside, true);
         document.addEventListener('keydown', onDocActionsKey, true);
       }, 0);
+    }
+
+    // ---- thread tools (reset / logs) ----
+    let threadResetPane = null;
+    function openThreadToolsMenu(anchor, pane) {
+      closeDocActionsMenu();
+      const menu = document.createElement('div');
+      menu.className = 'doc-actions-menu doc-glass';
+      const title = document.createElement('div');
+      title.className = 'doc-actions-title';
+      title.textContent = `${pane === 'left' ? 'Left' : 'Right'} pane — thread tools`;
+      menu.appendChild(title);
+      const add = (label, handler, tip) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = label; if (tip) b.title = tip;
+        b.onclick = (e) => { e.stopPropagation(); closeDocActionsMenu(); handler(); };
+        menu.appendChild(b);
+      };
+      add('Reset thread…', () => openThreadResetConfirm(pane), 'Clear this pane\'s history and re-inject the baseline primer (asks first)');
+      add('Thread logs', () => openThreadLogs(pane), 'Show this pane\'s terminal log lines and the current thread\'s message ledger');
+      document.body.appendChild(menu);
+      docActionsMenuEl = menu;
+      const rect = anchor.getBoundingClientRect();
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let left = Math.min(rect.left, window.innerWidth - mw - 8);
+      let top = rect.bottom + 4;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
+      menu.style.left = `${Math.max(8, left)}px`;
+      menu.style.top = `${top}px`;
+      setTimeout(() => {
+        document.addEventListener('mousedown', onDocActionsOutside, true);
+        document.addEventListener('keydown', onDocActionsKey, true);
+      }, 0);
+    }
+    function openThreadResetConfirm(pane) {
+      threadResetPane = pane;
+      document.getElementById('thread-reset-title').textContent = `Reset ${pane} pane thread`;
+      document.getElementById('thread-reset-text').textContent =
+        `This clears every slot of the ${pane} pane and re-injects the baseline primer. The other pane, files on disk and autosaved recalls are untouched.`;
+      document.getElementById('thread-reset-modal').style.display = 'flex';
+    }
+    function closeThreadResetConfirm() {
+      threadResetPane = null;
+      document.getElementById('thread-reset-modal').style.display = 'none';
+    }
+    async function confirmThreadReset() {
+      const pane = threadResetPane;
+      closeThreadResetConfirm();
+      if (pane) await resetSinglePaneContext(pane, false);
+    }
+    function threadLogsText(pane) {
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      const paneLabel = pane === 'left' ? 'Left' : 'Right';
+      const history = (chatHistories[pane] && chatHistories[pane][index]) || [];
+      const lines = [`${paneLabel} pane — slot ${index + 1} — ${history.length} message(s) in context`, ''];
+      history.forEach((m, i) => {
+        const text = m.role === 'model' || Array.isArray(m.parts)
+          ? (m.parts || []).map((p) => p.text || '').join('')
+          : String(m.content || '');
+        const first = text.split('\n').find((l) => l.trim()) || '';
+        lines.push(`${String(i + 1).padStart(2, ' ')}. ${m.role.padEnd(9)} ${m.context_source || ''} ~${Math.ceil(text.length / 4)} tok | ${first.slice(0, 110)}`);
+      });
+      lines.push('', '--- terminal log (this pane) ---');
+      const needle = new RegExp(`\\[${pane}\\]|\\(${pane}\\)|\\b${paneLabel} pane\\b`, 'i');
+      const body = document.getElementById('terminal-output');
+      const matched = body ? Array.from(body.children).map((el) => el.textContent).filter((t) => needle.test(t)) : [];
+      lines.push(...(matched.length ? matched.slice(-200) : ['(no log lines mention this pane yet)']));
+      return lines.join('\n');
+    }
+    function openThreadLogs(pane) {
+      document.getElementById('thread-logs-title').textContent = `Thread logs — ${pane === 'left' ? 'Left' : 'Right'} pane`;
+      document.getElementById('thread-logs-body').textContent = threadLogsText(pane);
+      document.getElementById('thread-logs-modal').style.display = 'flex';
+    }
+    function closeThreadLogs() {
+      document.getElementById('thread-logs-modal').style.display = 'none';
+    }
+    async function copyThreadLogs() {
+      const text = document.getElementById('thread-logs-body').textContent || '';
+      try { await navigator.clipboard.writeText(text); appendTerminalLog('Thread logs copied to clipboard.'); }
+      catch (err) { appendTerminalLog(`Thread logs copy failed: ${err}`); }
     }
 
     // ---- recall extras ----
