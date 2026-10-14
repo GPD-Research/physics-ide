@@ -2173,7 +2173,48 @@
           <option value="single">Render a single file</option>
           <option value="combine">Combine files into a master manuscript</option>
           <option value="mathfix">Math Fixer: scan and repair math notation</option>
+          <option value="axiom">Master Axiom: compile from theory sources</option>
         </select>
+      </div>
+
+      <div id="master-axiom-panel" style="display: none;">
+        <div class="form-group">
+          <label for="master-axiom-source-scope">Source</label>
+          <select id="master-axiom-source-scope" onchange="toggleMasterAxiomScope(this.value)">
+            <option value="configured">Configured Theory Markdown Directory (Settings)</option>
+            <option value="directory">A directory (recursive)</option>
+            <option value="file">A single markdown file</option>
+          </select>
+        </div>
+        <div id="master-axiom-source-group" class="form-group" style="display: none;">
+          <label for="master-axiom-source-path">Source Path</label>
+          <div style="display: flex; gap: 5px;">
+            <input type="text" id="master-axiom-source-path" placeholder="Choose the file or directory to compile from">
+            <button type="button" onclick="browseForMasterAxiomSource()" title="Select the source file or directory">Browse</button>
+          </div>
+        </div>
+        <div class="form-group" style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
+          <div style="flex: 1 1 320px; min-width: 280px;">
+            <label for="master-axiom-output-dir">Output Directory</label>
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="master-axiom-output-dir" placeholder="Leave empty to use the Master Axiom File from Settings">
+              <button type="button" onclick="browseForDirectory('master-axiom-output-dir')" title="Select output directory">Browse</button>
+            </div>
+            <div style="margin-top: 6px; font-size: 0.8rem; color: var(--accent-dim);">Empty: writes the configured Master Axiom File (what the AI primer loads). A custom directory writes a copy as <code>master_axiom.&lt;format&gt;</code> and leaves Settings unchanged.</div>
+          </div>
+          <div style="flex: 0 1 180px; min-width: 160px;">
+            <label for="master-axiom-format">Output Format</label>
+            <select id="master-axiom-format">
+              <option value="md">Markdown</option>
+              <option value="pdf">PDF</option>
+              <option value="docx">DOCX</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+          <button type="button" style="background-color: var(--accent); color: var(--bg-darker);" onclick="generateMasterAxiomFromTools()" title="Compile the master axiom from the selected sources">🧠 Generate Master Axiom</button>
+          <span id="master-axiom-tools-status" style="font-size:0.8rem; color:var(--accent-dim);"></span>
+        </div>
       </div>
 
       <div id="math-fixer-panel" style="display: none;">
@@ -6676,7 +6717,66 @@ async function restoreVersion() {
       saveBtnText.textContent = "Save Settings";
     }
 
+    // ---- Master Axiom (Manuscript Tools mode) ----
+    function toggleMasterAxiomScope(scope) {
+      const group = document.getElementById('master-axiom-source-group');
+      const input = document.getElementById('master-axiom-source-path');
+      if (group) group.style.display = scope === 'configured' ? 'none' : 'block';
+      if (input) input.placeholder = scope === 'file' ? 'Choose a markdown file' : 'Choose a directory of markdown files';
+    }
+    async function browseForMasterAxiomSource() {
+      const scope = document.getElementById('master-axiom-source-scope')?.value || 'directory';
+      if (scope === 'file') await browseForFile('master-axiom-source-path', ['md', 'markdown']);
+      else await browseForDirectory('master-axiom-source-path');
+    }
+    async function generateMasterAxiomFromTools() {
+      const statusEl = document.getElementById('master-axiom-tools-status');
+      const scope = document.getElementById('master-axiom-source-scope')?.value || 'configured';
+      const sourcePath = document.getElementById('master-axiom-source-path')?.value?.trim() || '';
+      const outputDir = document.getElementById('master-axiom-output-dir')?.value?.trim() || '';
+      const format = document.getElementById('master-axiom-format')?.value || 'md';
+      if (scope !== 'configured' && !sourcePath) {
+        if (statusEl) statusEl.textContent = 'Choose a source file or directory first.';
+        return;
+      }
+      const theoryDir = scope === 'configured' ? '' : sourcePath;
+      const masterAxiomPath = outputDir ? `${outputDir.replace(/[\\/]+$/, '')}/master_axiom.${format}` : '';
+      if (statusEl) statusEl.textContent = 'Generating…';
+      try {
+        const result = await invoke('generate_master_axiom_from_theory', { theoryDir, masterAxiomPath, format });
+        const payload = typeof result === 'string' ? JSON.parse(result) : result;
+        if (statusEl) statusEl.textContent = `${payload.status || 'Generated'} → ${payload.master_axiom_file} (files scanned: ${payload.files_scanned || 0})`;
+        appendTerminalLog(`Master axiom written to ${payload.master_axiom_file} (files scanned: ${payload.files_scanned || 0})`);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Generation failed: ${err}`;
+        appendTerminalLog(`Master axiom generation error: ${err}`);
+      }
+    }
+
+    function setManuscriptToolsMaximized(maximized, button) {
+      const content = document.getElementById('manuscript-tools-content');
+      if (!content) return;
+      manuscriptMaximized = maximized;
+      const toggle = button || document.querySelector('#manuscript-tools-content .modal-header button');
+      if (toggle) toggle.textContent = maximized ? '⤡ Restore' : '⤢ Maximize';
+      const fileList = document.getElementById('manuscript-file-list');
+      if (maximized) {
+        content.style.width = '96vw';
+        content.style.maxWidth = '96vw';
+        content.style.height = '94vh';
+        content.style.maxHeight = '94vh';
+        if (fileList) fileList.style.maxHeight = '52vh';
+      } else {
+        content.style.width = '760px';
+        content.style.maxWidth = '92vw';
+        content.style.height = 'auto';
+        content.style.maxHeight = '92vh';
+        if (fileList) fileList.style.maxHeight = '420px';
+      }
+    }
+
     function openManuscriptToolsModal() {
+      setManuscriptToolsMaximized(true);
       const sourceDirInput = document.getElementById('manuscript-source-dir');
       if (sourceDirInput && !sourceDirInput.value.trim()) {
         sourceDirInput.value = currentConfig?.theory_md_dir?.trim() || currentWorkspacePath || '';
@@ -7076,24 +7176,7 @@ async function restoreVersion() {
     }
 
     function toggleManuscriptToolsMaximize() {
-      const content = document.getElementById('manuscript-tools-content');
-      if (!content) return;
-      manuscriptMaximized = !manuscriptMaximized;
-      const button = event?.currentTarget || null;
-      if (button) {
-        button.textContent = manuscriptMaximized ? '⤡ Restore' : '⤢ Maximize';
-      }
-      if (manuscriptMaximized) {
-        content.style.width = '96vw';
-        content.style.maxWidth = '96vw';
-        content.style.height = '92vh';
-        content.style.maxHeight = '92vh';
-      } else {
-        content.style.width = '760px';
-        content.style.maxWidth = '92vw';
-        content.style.height = 'auto';
-        content.style.maxHeight = '92vh';
-      }
+      setManuscriptToolsMaximized(!manuscriptMaximized, event?.currentTarget || null);
     }
 
     function toggleManuscriptMode(mode) {
@@ -7105,18 +7188,22 @@ async function restoreVersion() {
       const formatGroup = document.getElementById('manuscript-format-group');
       const renderButton = document.getElementById('manuscript-render-button');
       const applyButton = document.getElementById('math-fixer-apply-button');
+      const axiomPanel = document.getElementById('master-axiom-panel');
       const isCombine = mode === 'combine';
       const isMathFix = mode === 'mathfix';
+      const isAxiom = mode === 'axiom';
       if (mathFixerPanel) mathFixerPanel.style.display = isMathFix ? 'block' : 'none';
-      if (formatGroup) formatGroup.style.display = isMathFix ? 'none' : 'block';
-      if (renderButton) renderButton.style.display = isMathFix ? 'none' : 'inline-block';
+      if (axiomPanel) axiomPanel.style.display = isAxiom ? 'block' : 'none';
+      if (formatGroup) formatGroup.style.display = (isMathFix || isAxiom) ? 'none' : 'block';
+      if (renderButton) renderButton.style.display = (isMathFix || isAxiom) ? 'none' : 'inline-block';
       if (applyButton) applyButton.style.display = isMathFix ? 'inline-block' : 'none';
-      if (isMathFix) {
+      if (isMathFix || isAxiom) {
         if (combinedPanel) combinedPanel.style.display = 'none';
         if (trainPanel) trainPanel.style.display = 'none';
         if (singleFileControls) singleFileControls.style.display = 'none';
         if (singleFileConfiguration) singleFileConfiguration.style.display = 'none';
-        toggleMathFixerScope(document.getElementById('math-fixer-scope')?.value || 'project');
+        if (isMathFix) toggleMathFixerScope(document.getElementById('math-fixer-scope')?.value || 'project');
+        if (isAxiom) toggleMasterAxiomScope(document.getElementById('master-axiom-source-scope')?.value || 'configured');
         return;
       }
       if (combinedPanel) combinedPanel.style.display = isCombine ? 'block' : 'none';

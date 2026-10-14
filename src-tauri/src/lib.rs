@@ -7882,7 +7882,9 @@ fn scan_markdown_theory(theory_dir: &str) -> serde_json::Value {
     let mut files = Vec::new();
     let theory_path = Path::new(theory_dir);
 
-    if theory_path.exists() {
+    if theory_path.is_file() {
+        files.push(theory_path.to_path_buf());
+    } else if theory_path.exists() {
         let _ = recursive_markdown_scan(theory_path, &mut files);
     }
     files.sort();
@@ -9384,13 +9386,14 @@ fn import_theory_source_command_blocking(source_path: String, output_dir: String
 }
 
 #[tauri::command]
-async fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || generate_master_axiom_from_theory_blocking(theory_dir, master_axiom_path, app))
+async fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, format: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || generate_master_axiom_from_theory_blocking(theory_dir, master_axiom_path, format.unwrap_or_default(), app))
         .await
         .map_err(|e| format!("Master axiom task failed: {e}"))?
 }
 
-fn generate_master_axiom_from_theory_blocking(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
+/// `theory_dir` may be a directory or a single markdown file; `format` is "md" (default), "pdf" or "docx".
+fn generate_master_axiom_from_theory_blocking(theory_dir: String, master_axiom_path: String, format: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).unwrap_or_default();
 
     let effective_theory_dir = if theory_dir.trim().is_empty() {
@@ -9425,11 +9428,26 @@ fn generate_master_axiom_from_theory_blocking(theory_dir: String, master_axiom_p
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create output directory: {e}"))?;
     }
-    fs::write(&output_path, &final_content).map_err(|e| format!("Failed to write master axiom file: {e}"))?;
+    let format = format.trim().to_ascii_lowercase();
+    let (md_path, output_path) = if format == "pdf" || format == "docx" {
+        let md_path = output_path.with_extension("md");
+        (md_path, output_path.with_extension(&format))
+    } else {
+        (output_path.clone(), output_path)
+    };
+    fs::write(&md_path, &final_content).map_err(|e| format!("Failed to write master axiom file: {e}"))?;
+    if md_path != output_path {
+        match run_pandoc_conversion(&md_path, &output_path, &format) {
+            Ok(Ok(())) => {}
+            Ok(Err(detail)) => return Err(format!("Pandoc {format} export failed: {detail}")),
+            Err(e) => return Err(format!("Pandoc is not available ({e}). Install Pandoc or export as Markdown.")),
+        }
+    }
 
     let payload = serde_json::json!({
         "status": status,
         "master_axiom_file": output_path.to_string_lossy().to_string(),
+        "markdown_file": md_path.to_string_lossy().to_string(),
         "files_scanned": scan["files_scanned"],
         "template": final_content
     });
