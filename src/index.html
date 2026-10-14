@@ -4410,7 +4410,46 @@
       collect(AI_REMEMBER_BLOCK_PATTERN, (m) => ({ op: 'remember', entry: m[1] }));
       collect(AI_CALC_BLOCK_PATTERN, (m) => ({ op: 'calc', code: m[2].replace(/^```[a-z]*\r?\n|\r?\n```\s*$/g, ''), timeout: m[1] ? parseInt(m[1], 10) : null }));
       ops.sort((a, b) => a.position - b.position);
-      return ops;
+      const fences = fencedRanges(source);
+      return ops.filter((op) => {
+        const example = isProtocolExampleOp(op);
+        const quoted = source[op.position - 1] === '`';
+        const fenced = AI_SINGLE_LINE_OPS.has(op.op) && fences.some(([a, b]) => op.position > a && op.position < b);
+        if (example || quoted || fenced) {
+          appendTerminalLog(`AI ${op.op.toUpperCase()} block ignored (${example ? 'protocol example' : 'inside code formatting'}): ${op.path || op.cmd || op.query || ''}`);
+          return false;
+        }
+        return true;
+      });
+    }
+
+    const AI_SINGLE_LINE_OPS = new Set(['read', 'run', 'search']);
+    const AI_PROTOCOL_EXAMPLE_VALUES = new Set([
+      'relative/path.py',
+      'relative/path/from/project/root.py',
+      'python3 relative/script.py --arg value',
+      'natural-language or keyword query'
+    ]);
+
+    function isProtocolExampleOp(op) {
+      const value = String(op.path ?? op.cmd ?? op.query ?? '').trim();
+      if (!value) return false;
+      if (AI_PROTOCOL_EXAMPLE_VALUES.has(value)) return true;
+      if (/^relative\/(path|script)\b/.test(value) || /\brelative\/(path|script)\.py\b/.test(value)) return true;
+      return /<[^>]+>/.test(value);
+    }
+
+    function fencedRanges(source) {
+      const ranges = [];
+      const fence = /^\s*```/gm;
+      let open = null;
+      let m;
+      while ((m = fence.exec(source)) !== null) {
+        if (open === null) open = m.index;
+        else { ranges.push([open, m.index]); open = null; }
+      }
+      if (open !== null) ranges.push([open, source.length]);
+      return ranges;
     }
 
     function formatRunOutcome(outcome) {
