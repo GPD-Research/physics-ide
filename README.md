@@ -23,6 +23,17 @@ The version 8 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-10-15)
+
+- cut the v9.0.0 release line: tag-driven `.github/workflows/release.yml` builds the Linux `.deb` with the Tauri bundler and publishes it (plus a stable `physics-ide_latest_amd64.deb`) to GitHub Releases, linked from gpd-research.com;
+- completed the interactive smoke test of the agentic subsystems and shipped the fix batch: hypothesis-preamble leak, append-only `project_memory.md`, correct token-budget stop reason, clean task stop on provider errors, "Settings" wording everywhere;
+- moved every remaining disk / network / subprocess Tauri command off the UI thread and added a Math Fixer progress bar;
+- added a Word Processor picker (detected apps + custom command) in Settings ▸ System & Apps used by "Open in word processor";
+- retrieval hygiene: app-generated reports are no longer indexed and the mechanism-intent boost requires real topical overlap;
+- Manuscript Tools open full-screen and gained a Master Axiom mode with custom source, output directory and md / pdf / docx format;
+- Local AI: quantization selector (q4_0, q4_K_M, q5_K_M, q8_0, fp16) with per-quant size and fit estimates;
+- earlier in this cycle: `READ` / `APPEND` / `EDIT` / allowlisted `RUN` file protocol with guardrails, `SEARCH` and `REMEMBER`, shadow-git checkpoints with revert, Task mode with budgets and Pause / Approve / Stop, `CALC` scratch computation with inline figures, per-pane Thread tools.
+
 ### Latest progress (2026-10-11)
 
 - added Local AI (Ollama) as a third per-pane provider alongside Gemini and OpenAI, configured through the same AI Configuration dialog, with non-streaming `/api/chat` requests, 16K context, and local token-usage reporting;
@@ -119,11 +130,11 @@ The project has moved from a simple desktop shell toward a more practical theory
 
 ### Current focus
 
-- smoke-test the document-management and Local AI subsystems, then cut the first release candidate as a `.deb` with a tag-driven release workflow and a download link on gpd-research.com;
-- make local Ollama models the normal operating mode, with cloud providers as the high-capacity option;
+- verify the first `.deb` from the release workflow installs and launches cleanly; then iterate on user feedback from the v9 release;
+- make local Ollama models the normal operating mode (one local pane at a time on 16 GB machines), with cloud providers as the high-capacity option;
+- "Agentic Build-out" documentation, then watch-mode experiment sweeps and a self-verification pass;
 - add a Table Fixer and an HTML/KaTeX PDF export route for table-heavy manuscripts;
-- extend the AI file protocol with append/edit/read/run operations under the project-root permission layer;
-- implement lazy directory token-cost guidance and complete the v9 production release audit.
+- implement lazy directory token-cost guidance and complete the production release audit.
 
 ## Version 8 Implementation Order
 
