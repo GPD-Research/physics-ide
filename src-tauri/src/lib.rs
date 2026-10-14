@@ -6375,6 +6375,9 @@ fn refresh_retrieval_index_value(root: &Path, index_path: &Path) -> Result<serde
             .to_string_lossy()
             .replace('\\', "/");
         let file_name = file.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        if is_app_generated_artifact(file_name) {
+            continue;
+        }
         if matches!(
             file_name,
             "ai_briefing.md"
@@ -6493,6 +6496,18 @@ struct RetrievalFusionCandidate {
     vector_distance: Option<f64>,
 }
 
+/// Reports the app writes into the project root (context probes, exit drafts) are not theory sources.
+fn is_app_generated_artifact(file_name: &str) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    lower.starts_with("context_probe_report") || lower.starts_with("exit_session_draft")
+}
+
+/// Query words too generic to establish that a chunk is *about* the asked topic.
+const RETRIEVAL_GENERIC_TERMS: &[&str] = &[
+    "model", "theory", "framework", "handle", "handles", "explain", "explains", "describe", "describes",
+    "manifestation", "work", "works", "mean", "means", "account", "treat", "treats", "approach", "paper",
+];
+
 fn retrieval_intent_adjustment(query: &str, path: &str, heading: &str, content: &str) -> f64 {
     let query_lower = query.to_ascii_lowercase();
     let mechanism_intent = ["how", "determin", "deriv", "calculat", "govern", "establish"]
@@ -6503,10 +6518,16 @@ fn retrieval_intent_adjustment(query: &str, path: &str, heading: &str, content: 
     }
     let heading_lower = heading.to_ascii_lowercase();
     let content_lower = content.to_ascii_lowercase();
-    let query_terms = build_probe_terms(query);
-    let topic_overlap = query_terms.iter().any(|term| {
-        heading_lower.contains(term) || content_lower.contains(term)
-    });
+    let query_terms: Vec<String> = build_probe_terms(query)
+        .into_iter()
+        .filter(|term| term.len() >= 4 && !RETRIEVAL_GENERIC_TERMS.contains(&term.as_str()))
+        .collect();
+    if query_terms.is_empty() {
+        return 0.0;
+    }
+    let heading_overlap = query_terms.iter().any(|term| heading_lower.contains(term.as_str()));
+    let content_hits = query_terms.iter().filter(|term| content_lower.contains(term.as_str())).count();
+    let topic_overlap = heading_overlap || content_hits >= query_terms.len().min(2);
     if !topic_overlap {
         return 0.0;
     }
@@ -11261,6 +11282,30 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn intent_adjustment_ignores_chunks_that_only_share_generic_words() {
+        let off_topic = retrieval_intent_adjustment(
+            "how does the model handle the manifestation of dark energy",
+            "manuscript/md/Chapter_13.md",
+            "13.7.3 Collider Blind Spots",
+            "The model predicts sterile singlets with m = 2 n. Standard Model bookkeeping.",
+        );
+        assert_eq!(off_topic, 0.0);
+        let on_topic = retrieval_intent_adjustment(
+            "how does the model handle the manifestation of dark energy",
+            "manuscript/md/Chapter_7.md",
+            "7.4 Global Metric Expansion and the Inter-brane Potential",
+            "Dark energy is the inter-brane potential: $$V_{gap} = \\frac{1}{2} k d^2$$ driving expansion.",
+        );
+        assert!(on_topic > 0.0);
+    }
+
+    #[test]
+    fn app_generated_reports_are_excluded_from_indexing() {
+        assert!(is_app_generated_artifact("context_probe_report_2026-10-14.md"));
+        assert!(!is_app_generated_artifact("Chapter_7_Cosmological_Boundaries_v3.md"));
+    }
 
     #[test]
     fn allows_workspace_scoped_ai_file_operations_when_enabled() {
