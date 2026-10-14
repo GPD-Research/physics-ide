@@ -3794,7 +3794,7 @@
           `Source files: ${sourceNote || 'none'}`,
           retrievalContract,
           ...stableContextBlock,
-          'Begin by clarifying today\'s goal and keeping assumptions explicit before opening new branches.'
+          'Answer the current request directly; keep assumptions explicit before opening new branches.'
         ].join('\n');
       }
 
@@ -3809,7 +3809,7 @@
         `Source files: ${sourceNote || 'none'}`,
         retrievalContract,
         ...stableContextBlock,
-        'Begin by clarifying what evidence would constrain or falsify the active hypothesis in this session.'
+        'Answer the current request directly. State falsification criteria only when the hypothesis itself is being discussed; never preface unrelated replies with them.'
       ].join('\n');
     }
 
@@ -4198,8 +4198,9 @@
           if (taskStateFor(pane, index)) finishTask(pane, 'stopped', 'thread frozen at the usage limit; progress so far is kept in the thread');
           return '';
         }
-        if (taskStateFor(pane, index)) finishTask(pane, 'failed', String(err));
+        if (taskStateFor(pane, index)) finishTask(pane, 'stopped', `provider error: ${err}`);
         appendChatBubble(pane, index, "System Error", err);
+        if (provenance.source === 'task_follow_up' || provenance.source === 'file_ops_follow_up') return '';
         throw err;
       } finally {
         setPaneBusy(pane, false);
@@ -4338,12 +4339,12 @@
         finishTask(pane, 'blocked', 'the AI needs your input; answer in the chat and start a new task or continue manually');
         return { handled: true, continuePrompt: null };
       }
-      if (st.rounds >= st.maxRounds) {
-        finishTask(pane, 'stopped', `round budget (${st.maxRounds}) reached; raise it in Settings or send "continue" in chat`);
+      if (st.tokenBudget > 0 && st.tokens >= st.tokenBudget) {
+        finishTask(pane, 'stopped', `token budget (${st.tokenBudget.toLocaleString()}) reached after ${st.rounds} round${st.rounds === 1 ? '' : 's'}; raise it in Settings`);
         return { handled: true, continuePrompt: null };
       }
-      if (st.tokenBudget > 0 && st.tokens >= st.tokenBudget) {
-        finishTask(pane, 'stopped', `token budget (${st.tokenBudget}) reached`);
+      if (st.rounds >= st.maxRounds) {
+        finishTask(pane, 'stopped', `round budget (${st.maxRounds}) reached; raise it in Settings or send "continue" in chat`);
         return { handled: true, continuePrompt: null };
       }
 

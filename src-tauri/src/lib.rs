@@ -10106,7 +10106,7 @@ fn session_doc_target(app: &tauri::AppHandle, kind: &str, date: &str) -> Result<
     let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
     let project_root = config.project_root_dir.trim();
     if project_root.is_empty() {
-        return Err("Session document blocked: no project root is configured. Open a workspace or set the project root in Customize first.".to_string());
+        return Err("Session document blocked: no project root is configured. Open a workspace or set the project root in Settings first.".to_string());
     }
     let workspace_path = PathBuf::from(project_root);
     if !workspace_path.is_dir() {
@@ -10285,7 +10285,7 @@ fn configured_project_root(app: &tauri::AppHandle, action: &str) -> Result<PathB
     let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
     let project_root = config.project_root_dir.trim();
     if project_root.is_empty() {
-        return Err(format!("{action} blocked: no project root is configured. Set the project root in Customize first."));
+        return Err(format!("{action} blocked: no project root is configured. Set the project root in Settings first."));
     }
     let root = PathBuf::from(project_root);
     if !root.is_dir() {
@@ -10382,7 +10382,7 @@ async fn run_ai_calc(code: String, timeout_seconds: Option<u64>, app: tauri::App
 fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     if !config.ai_run_enabled {
-        return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Customize to allow CALC blocks.".to_string());
+        return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Settings to allow CALC blocks.".to_string());
     }
     if config.ai_file_access_mode.trim().eq_ignore_ascii_case("disabled") {
         return Err("AI file access is disabled; enable at least read-only access to allow CALC blocks.".to_string());
@@ -10471,7 +10471,7 @@ fn write_ai_project_file_blocking(path: String, content: String, app: tauri::App
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     let project_root = config.project_root_dir.trim();
     if project_root.is_empty() {
-        return Err("AI file write blocked: no project root is configured. Set the project root in Customize first.".to_string());
+        return Err("AI file write blocked: no project root is configured. Set the project root in Settings first.".to_string());
     }
     let workspace_path = PathBuf::from(project_root);
     if !workspace_path.is_dir() {
@@ -10488,6 +10488,7 @@ fn write_ai_project_file_blocking(path: String, content: String, app: tauri::App
     if target_path.is_dir() {
         return Err(format!("AI file write blocked: {} is a directory.", target_path.to_string_lossy()));
     }
+    reject_project_memory_overwrite("write", &target_path)?;
 
     let existed = target_path.exists();
     if let Some(parent) = target_path.parent() {
@@ -10510,11 +10511,22 @@ fn write_ai_project_file_blocking(path: String, content: String, app: tauri::App
     .to_string())
 }
 
+/// `project_memory.md` is append-only for the AI: a FILE or EDIT block would replace the
+/// durable cross-session memory wholesale. REMEMBER (or APPEND) is the supported route.
+fn reject_project_memory_overwrite(action: &str, target_path: &Path) -> Result<(), String> {
+    if target_path.file_name().and_then(|n| n.to_str()) == Some(PROJECT_MEMORY_FILE) {
+        return Err(format!(
+            "AI file {action} blocked: {PROJECT_MEMORY_FILE} is append-only. Use a REMEMBER block (or APPEND) to record a decision instead of rewriting the file."
+        ));
+    }
+    Ok(())
+}
+
 fn ai_project_target(app: &tauri::AppHandle, action: &str, path: &str) -> Result<(AppConfig, PathBuf, PathBuf, String), String> {
     let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
     let project_root = config.project_root_dir.trim();
     if project_root.is_empty() {
-        return Err(format!("AI file {action} blocked: no project root is configured. Set the project root in Customize first."));
+        return Err(format!("AI file {action} blocked: no project root is configured. Set the project root in Settings first."));
     }
     let workspace_path = PathBuf::from(project_root);
     if !workspace_path.is_dir() {
@@ -10527,6 +10539,9 @@ fn ai_project_target(app: &tauri::AppHandle, action: &str, path: &str) -> Result
     let target_path = normalize_path_for_scope_check(Path::new(requested), &workspace_path);
     let gate = if action == "read" { "read" } else { "write" };
     ensure_ai_file_access(&config, gate, &target_path, &workspace_path)?;
+    if action == "edit" {
+        reject_project_memory_overwrite(action, &target_path)?;
+    }
     if target_path.is_dir() {
         return Err(format!("AI file {action} blocked: {} is a directory.", target_path.to_string_lossy()));
     }
@@ -10640,7 +10655,7 @@ async fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, app: 
 fn run_ai_project_command_blocking(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     if !config.ai_run_enabled {
-        return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Customize to allow RUN blocks.".to_string());
+        return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Settings to allow RUN blocks.".to_string());
     }
     if config.ai_file_access_mode.trim().eq_ignore_ascii_case("disabled") {
         return Err("AI file access is disabled; enable at least read-only access to allow RUN blocks.".to_string());
@@ -10750,7 +10765,7 @@ fn math_fixer_root(app: &AppHandle, request: &MathFixerScanRequest) -> Result<(P
             } else if !config.theory_md_dir.trim().is_empty() {
                 config.theory_md_dir.trim().to_string()
             } else {
-                return Err("No project root is configured. Set the project root in Customize first.".to_string());
+                return Err("No project root is configured. Set the project root in Settings first.".to_string());
             };
             let root = PathBuf::from(&root_str);
             if !root.is_dir() {
