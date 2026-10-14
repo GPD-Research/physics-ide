@@ -411,6 +411,8 @@ pub struct AppConfig {
     ai_task_token_budget: u64,
     #[serde(default = "default_ollama_host")]
     ollama_host: String,
+    #[serde(default)]
+    ollama_models_dir: String,
     reuse_notes_next_session: bool,
     first_session_completed: bool,
 }
@@ -452,6 +454,7 @@ impl Default for AppConfig {
             ai_task_max_rounds: default_ai_task_max_rounds(),
             ai_task_token_budget: default_ai_task_token_budget(),
             ollama_host: default_ollama_host(),
+            ollama_models_dir: String::new(),
             reuse_notes_next_session: false,
             first_session_completed: false,
         }
@@ -523,6 +526,8 @@ pub struct SaveUserSettingsPayload {
     pub ai_run_timeout_seconds: u64,
     #[serde(default = "default_ollama_host", alias = "ollamaHost")]
     pub ollama_host: String,
+    #[serde(default, alias = "ollamaModelsDir")]
+    pub ollama_models_dir: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -4599,9 +4604,13 @@ fn call_ollama(host: &str, model: &str, messages: &[serde_json::Value]) -> Resul
 }
 
 #[tauri::command]
-async fn check_hardware_specs() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        serde_json::to_string(&local_ai::check_hardware_specs()).map_err(|e| e.to_string())
+async fn check_hardware_specs(models_dir: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    let models_dir = match models_dir {
+        Some(dir) => dir,
+        None => get_app_config(&app)?.ollama_models_dir,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        serde_json::to_string(&local_ai::check_hardware_specs_with(&models_dir)).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Hardware probe task failed: {e}"))?
@@ -4664,6 +4673,8 @@ struct InstallLocalModelPayload {
     terminal_app: String,
     #[serde(default, alias = "ollamaInstalled")]
     ollama_installed: bool,
+    #[serde(default, alias = "modelsDir")]
+    models_dir: String,
 }
 
 #[tauri::command]
@@ -4672,7 +4683,8 @@ fn install_local_model(payload: InstallLocalModelPayload) -> Result<String, Stri
     if model.is_empty() || !model.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '-' | '_' | '/')) {
         return Err(format!("Invalid model name '{}'", payload.model));
     }
-    let script = local_ai::build_install_script(model, payload.ollama_installed);
+    let models_dir = local_ai::normalize_models_dir(&payload.models_dir)?;
+    let script = local_ai::build_install_script_with_dir(model, payload.ollama_installed, &models_dir);
     let (program, args) = local_ai::build_terminal_command(&payload.terminal_app, &script);
     std::process::Command::new(&program)
         .args(&args)
@@ -8982,6 +8994,7 @@ fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> 
         "ai_checkpoints_enabled": config.ai_checkpoints_enabled,
         "ai_task_max_rounds": config.ai_task_max_rounds,
         "ai_task_token_budget": config.ai_task_token_budget,
+        "ollama_models_dir": config.ollama_models_dir,
         "ai_run_allowlist": config.ai_run_allowlist,
         "ai_run_timeout_seconds": config.ai_run_timeout_seconds,
         "primer": primer_payload,
@@ -10745,6 +10758,7 @@ fn save_user_settings(payload: SaveUserSettingsPayload, app: tauri::AppHandle) -
     config.ai_run_allowlist = ai_file_ops::parse_allowlist(&payload.ai_run_allowlist).join(",");
     config.ai_run_timeout_seconds = payload.ai_run_timeout_seconds.clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS);
     config.ollama_host = local_ai::normalize_host(&payload.ollama_host);
+    config.ollama_models_dir = local_ai::normalize_models_dir(&payload.ollama_models_dir)?;
 
     if !config.project_root_dir.trim().is_empty() {
         config.last_root_dir = config.project_root_dir.clone();

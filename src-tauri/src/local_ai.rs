@@ -145,6 +145,31 @@ fn round1(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
+/// Validate a user-chosen model storage directory: empty means "Ollama default";
+/// otherwise it must be an absolute path to an existing directory.
+pub fn normalize_models_dir(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        return Err(format!("Model storage location must be an absolute path (got '{trimmed}')."));
+    }
+    if !path.is_dir() {
+        return Err(format!("Model storage location '{trimmed}' is not an existing directory."));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Directory where Ollama stores models: the app setting if set, else `$OLLAMA_MODELS`, else `~/.ollama/models`.
+pub fn ollama_models_dir_with(configured: &str) -> PathBuf {
+    if !configured.trim().is_empty() {
+        return PathBuf::from(configured.trim());
+    }
+    ollama_models_dir()
+}
+
 /// Directory where Ollama stores models (`$OLLAMA_MODELS` or `~/.ollama/models`).
 pub fn ollama_models_dir() -> PathBuf {
     if let Ok(custom) = std::env::var("OLLAMA_MODELS") {
@@ -301,7 +326,7 @@ fn apple_unified_bandwidth_gbps(chip: &str) -> f64 {
     }
 }
 
-pub fn check_hardware_specs() -> HardwareSpecs {
+pub fn check_hardware_specs_with(models_dir_override: &str) -> HardwareSpecs {
     let mut notes = Vec::new();
 
     let cpu_cores = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(0);
@@ -345,7 +370,7 @@ pub fn check_hardware_specs() -> HardwareSpecs {
     }
     let vram_total_gb: f64 = gpus.iter().map(|gpu| gpu.vram_gb).sum();
 
-    let models_dir = ollama_models_dir();
+    let models_dir = ollama_models_dir_with(models_dir_override);
     let probe_dir = nearest_existing(&models_dir);
     let (disk_total_gb, disk_free_gb) = disk_usage_gb(&probe_dir).unwrap_or_else(|| {
         notes.push(format!("Could not read free space for {}.", probe_dir.display()));
@@ -655,15 +680,37 @@ pub fn validate_model(host: &str, model: &str) -> Result<(), String> {
 
 /// Shell script run inside a terminal window to install Ollama (if needed)
 /// and pull the requested model.
-pub fn build_install_script(model: &str, ollama_installed: bool) -> String {
-    build_install_script_for(model, ollama_installed, cfg!(target_os = "macos"))
+pub fn build_install_script_with_dir(model: &str, ollama_installed: bool, models_dir: &str) -> String {
+    build_install_script_for(model, ollama_installed, cfg!(target_os = "macos"), models_dir)
 }
 
-pub fn build_install_script_for(model: &str, ollama_installed: bool, macos: bool) -> String {
+pub fn build_install_script_for(model: &str, ollama_installed: bool, macos: bool, models_dir: &str) -> String {
     let quoted = shell_quote(model);
     let mut script = String::from("set -e\n");
     if macos {
         script.push_str("export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\n");
+    }
+    let models_dir = models_dir.trim();
+    if !models_dir.is_empty() {
+        let quoted_dir = shell_quote(models_dir);
+        script.push_str(&format!("export OLLAMA_MODELS={quoted_dir}\n"));
+        script.push_str(&format!("mkdir -p {quoted_dir}\n"));
+        script.push_str(&format!("echo \"== Models will be stored in {quoted_dir} ==\"\n"));
+        script.push_str("if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then\n");
+        script.push_str("  echo '== Restarting the Ollama server so it uses this storage location =='\n");
+        if macos {
+            script.push_str("  brew services stop ollama >/dev/null 2>&1 || true\n");
+        } else {
+            script.push_str("  (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ollama && sudo systemctl stop ollama) || true\n");
+        }
+        script.push_str("  pkill -f 'ollama serve' >/dev/null 2>&1 || true\n");
+        script.push_str("  sleep 2\n");
+        script.push_str("fi\n");
+        if macos {
+            script.push_str("echo 'Note: to make this permanent for a brew-managed Ollama, add OLLAMA_MODELS to its launchd plist or start it via this app.'\n");
+        } else {
+            script.push_str("echo 'Note: to make this permanent for the systemd service run: sudo systemctl edit ollama  and add  [Service] Environment=OLLAMA_MODELS='\"$OLLAMA_MODELS\"'\n");
+        }
     }
     if !ollama_installed {
         script.push_str("echo '== Installing Ollama (https://ollama.com/download) =='\n");
@@ -904,11 +951,35 @@ mod tests {
     }
 
     #[test]
+    fn install_script_exports_models_dir_when_set() {
+        let script = build_install_script_for("qwen2.5:7b", true, false, "/mnt/models/ollama");
+        assert!(script.contains("export OLLAMA_MODELS='/mnt/models/ollama'"));
+        assert!(script.contains("mkdir -p '/mnt/models/ollama'"));
+        assert!(script.contains("pkill -f 'ollama serve'"));
+        assert!(script.contains("systemctl edit ollama"));
+        let plain = build_install_script_for("qwen2.5:7b", true, false, "");
+        assert!(!plain.contains("OLLAMA_MODELS"));
+        let mac = build_install_script_for("qwen2.5:7b", true, true, "/Volumes/Models");
+        assert!(mac.contains("brew services stop ollama"));
+    }
+
+    #[test]
+    fn models_dir_normalization() {
+        assert_eq!(normalize_models_dir("  ").unwrap(), "");
+        assert!(normalize_models_dir("relative/dir").is_err());
+        assert!(normalize_models_dir("/definitely/not/here/xyz").is_err());
+        let tmp = std::env::temp_dir();
+        let ok = normalize_models_dir(&format!(" {} ", tmp.display())).unwrap();
+        assert_eq!(ok, tmp.to_string_lossy());
+        assert_eq!(ollama_models_dir_with(&ok), tmp);
+    }
+
+    #[test]
     fn install_script_includes_installer_only_when_missing() {
-        let with = build_install_script("llama3.1:8b", false);
+        let with = build_install_script_with_dir("llama3.1:8b", false, "");
         assert!(with.contains("ollama.com/install.sh"));
         assert!(with.contains("ollama pull 'llama3.1:8b'"));
-        let without = build_install_script("llama3.1:8b", true);
+        let without = build_install_script_with_dir("llama3.1:8b", true, "");
         assert!(!without.contains("install.sh"));
     }
 
@@ -966,11 +1037,11 @@ mod tests {
 
     #[test]
     fn macos_install_script_uses_brew_not_linux_installer() {
-        let script = build_install_script_for("qwen2.5:14b", false, true);
+        let script = build_install_script_for("qwen2.5:14b", false, true, "");
         assert!(script.contains("brew install ollama"));
         assert!(!script.contains("install.sh"));
         assert!(script.contains("ollama pull 'qwen2.5:14b'"));
-        let linux = build_install_script_for("qwen2.5:14b", false, false);
+        let linux = build_install_script_for("qwen2.5:14b", false, false, "");
         assert!(linux.contains("install.sh"));
     }
 }
