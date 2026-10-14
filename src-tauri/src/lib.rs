@@ -4734,6 +4734,9 @@ struct LocalAiOverviewPayload {
     host: String,
     #[serde(default)]
     hardware: Option<local_ai::HardwareSpecs>,
+    /// Optional Ollama quantization tag (e.g. "q4_0"); empty keeps the curated defaults.
+    #[serde(default)]
+    quant: String,
 }
 
 #[tauri::command]
@@ -4745,9 +4748,14 @@ async fn get_local_ai_overview(payload: LocalAiOverviewPayload, app: tauri::AppH
     };
     tauri::async_runtime::spawn_blocking(move || {
         let status = local_ai::ollama_status(&host);
+        let quant = payload.quant.trim().to_string();
         let catalog: Vec<serde_json::Value> = local_ai::curated_model_catalog()
             .into_iter()
-            .map(|spec| {
+            .map(|default_spec| {
+                let (spec, quant_applied) = match local_ai::apply_quantization(&default_spec, &quant) {
+                    Some(spec) => (spec, !quant.is_empty()),
+                    None => (default_spec, false),
+                };
                 let installed = status
                     .installed_models
                     .iter()
@@ -4765,12 +4773,15 @@ async fn get_local_ai_overview(payload: LocalAiOverviewPayload, app: tauri::AppH
                     "description": spec.description,
                     "installed": installed,
                     "estimate": estimate,
+                    "quant_applied": quant_applied,
                 })
             })
             .collect();
         serde_json::to_string(&serde_json::json!({
             "status": status,
             "catalog": catalog,
+            "quant": quant,
+            "quant_options": local_ai::QUANT_OPTIONS.iter().map(|(tag, _, label)| serde_json::json!({"tag": tag, "label": label})).collect::<Vec<_>>(),
         }))
         .map_err(|e| e.to_string())
     })

@@ -1894,6 +1894,18 @@
                 <button type="button" onclick="clearOllamaModelsDir()" title="Use the Ollama default location">Clear</button>
                 <button type="button" onclick="checkHardwareSpecs()" title="Read VRAM, RAM, disk and CPU to estimate which models will run reasonably">Check Hardware Specs</button>
               </div>
+              <div class="form-group" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom: 6px;">
+                <label for="local-ai-quant" style="margin:0;">Quantization</label>
+                <select id="local-ai-quant" onchange="onLocalAiQuantChange()" title="Download a lighter or heavier build of each catalog model. Sizes and estimates update per choice.">
+                  <option value="">Catalog default (q4_K_M for most)</option>
+                  <option value="q4_0">q4_0 — lightest, fastest, lowest fidelity</option>
+                  <option value="q4_K_M">q4_K_M — Ollama default balance</option>
+                  <option value="q5_K_M">q5_K_M — slightly larger, better fidelity</option>
+                  <option value="q8_0">q8_0 — near-lossless, ~2× the q4 size</option>
+                  <option value="fp16">fp16 — unquantized, largest</option>
+                </select>
+                <span style="font-size:0.75rem; color:var(--text-muted);">Models without a predictable tag (e.g. DeepSeek R1) keep their default.</span>
+              </div>
               <div id="local-ai-status" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">Ollama status not checked yet.</div>
               <div id="local-ai-hardware" style="font-size: 0.78rem; color: var(--accent-dim); margin-bottom: 8px;">Hardware not checked. Click "Check Hardware Specs" to see a deep&harr;quick estimate per model.</div>
               <div id="local-ai-model-list" class="local-ai-model-list">
@@ -5438,11 +5450,20 @@
       }
     }
 
+    function getLocalAiQuantFromUi() {
+      return String(document.getElementById('local-ai-quant')?.value || '').trim();
+    }
+    function onLocalAiQuantChange() {
+      const quant = getLocalAiQuantFromUi();
+      appendTerminalLog(quant ? `Local AI: showing ${quant} builds of the catalog.` : 'Local AI: showing catalog default builds.');
+      refreshLocalAiOverview();
+    }
+
     async function refreshLocalAiOverview() {
       setLocalAiStatus('Checking Ollama...');
       try {
         const response = await invoke('get_local_ai_overview', {
-          payload: { host: getOllamaHostFromUi(), hardware: localAiHardware }
+          payload: { host: getOllamaHostFromUi(), hardware: localAiHardware, quant: getLocalAiQuantFromUi() }
         });
         localAiOverview = typeof response === 'string' ? JSON.parse(response) : response;
         const status = localAiOverview.status || {};
