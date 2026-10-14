@@ -8752,13 +8752,18 @@ _Compiled mathematical framework of the theory: every governing equation found i
 // same ingestion workflow from those generated files.
 
 #[tauri::command]
-fn compile_ai_briefing(state: tauri::State<AppState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn compile_ai_briefing(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
     let current_path = state
         .workspace_path
         .lock()
         .map_err(|_| "Workspace path mutex poisoned".to_string())?
         .clone();
+    tauri::async_runtime::spawn_blocking(move || compile_ai_briefing_blocking(current_path, app))
+        .await
+        .map_err(|e| format!("Briefing compile task failed: {e}"))?
+}
 
+fn compile_ai_briefing_blocking(current_path: String, app: tauri::AppHandle) -> Result<String, String> {
     let mut config = load_app_config(&app).unwrap_or_default();
 
     apply_unset_path_defaults(&mut config);
@@ -9208,7 +9213,13 @@ fn import_theory_source_command(source_path: String, output_dir: String, app: ta
 }
 
 #[tauri::command]
-fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn generate_master_axiom_from_theory(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || generate_master_axiom_from_theory_blocking(theory_dir, master_axiom_path, app))
+        .await
+        .map_err(|e| format!("Master axiom task failed: {e}"))?
+}
+
+fn generate_master_axiom_from_theory_blocking(theory_dir: String, master_axiom_path: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).unwrap_or_default();
 
     let effective_theory_dir = if theory_dir.trim().is_empty() {
