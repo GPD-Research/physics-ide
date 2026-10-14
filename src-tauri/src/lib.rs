@@ -1962,7 +1962,13 @@ fn read_markdown_document(directory_path: String, file_path: String) -> Result<S
 }
 
 #[tauri::command]
-fn search_markdown_documents(directory_path: String, query: String) -> Result<String, String> {
+async fn search_markdown_documents(directory_path: String, query: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || search_markdown_documents_blocking(directory_path, query))
+        .await
+        .map_err(|e| format!("search_markdown_documents task failed: {e}"))?
+}
+
+fn search_markdown_documents_blocking(directory_path: String, query: String) -> Result<String, String> {
     let root = PathBuf::from(directory_path.trim());
     if !root.exists() || !root.is_dir() {
         return Err(format!("Markdown directory does not exist: {}", directory_path));
@@ -4508,7 +4514,13 @@ fn estimate_prompt_usage_value(history: &[serde_json::Value]) -> serde_json::Val
 }
 
 #[tauri::command]
-fn estimate_prompt_usage(history: Vec<serde_json::Value>) -> String {
+async fn estimate_prompt_usage(history: Vec<serde_json::Value>) -> String {
+    tauri::async_runtime::spawn_blocking(move || estimate_prompt_usage_blocking(history))
+        .await
+        .unwrap_or_default()
+}
+
+fn estimate_prompt_usage_blocking(history: Vec<serde_json::Value>) -> String {
     estimate_prompt_usage_value(&history).to_string()
 }
 
@@ -5357,7 +5369,13 @@ fn score_probe_content(relative_path: &str, content: &str, terms: &[String]) -> 
 }
 
 #[tauri::command]
-fn collect_probe_evidence(workspace_path: String, query: String) -> Result<Vec<ProbeEvidenceItem>, String> {
+async fn collect_probe_evidence(workspace_path: String, query: String) -> Result<Vec<ProbeEvidenceItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || collect_probe_evidence_blocking(workspace_path, query))
+        .await
+        .map_err(|e| format!("collect_probe_evidence task failed: {e}"))?
+}
+
+fn collect_probe_evidence_blocking(workspace_path: String, query: String) -> Result<Vec<ProbeEvidenceItem>, String> {
     let root = PathBuf::from(workspace_path.trim());
     if !root.exists() || !root.is_dir() {
         return Err("Workspace path is missing or invalid for probe evidence scan.".to_string());
@@ -9911,7 +9929,22 @@ struct ThreadSaveSummary {
 }
 
 #[tauri::command]
-fn autosave_thread(
+async fn autosave_thread(
+    session_key: String,
+    pane: String,
+    slot: i64,
+    title: String,
+    started_at: String,
+    updated_at: String,
+    transcript_json: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || autosave_thread_blocking(session_key, pane, slot, title, started_at, updated_at, transcript_json, app))
+        .await
+        .map_err(|e| format!("autosave_thread task failed: {e}"))?
+}
+
+fn autosave_thread_blocking(
     session_key: String,
     pane: String,
     slot: i64,
@@ -9979,7 +10012,13 @@ fn autosave_thread(
 }
 
 #[tauri::command]
-fn list_thread_saves(pane: String, slot: i64, limit: i64, app: tauri::AppHandle) -> Result<String, String> {
+async fn list_thread_saves(pane: String, slot: i64, limit: i64, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || list_thread_saves_blocking(pane, slot, limit, app))
+        .await
+        .map_err(|e| format!("list_thread_saves task failed: {e}"))?
+}
+
+fn list_thread_saves_blocking(pane: String, slot: i64, limit: i64, app: tauri::AppHandle) -> Result<String, String> {
     let connection = open_thread_store(&app)?;
     let mut statement = connection
         .prepare(
@@ -10010,7 +10049,13 @@ fn list_thread_saves(pane: String, slot: i64, limit: i64, app: tauri::AppHandle)
 }
 
 #[tauri::command]
-fn load_thread_save(id: i64, app: tauri::AppHandle) -> Result<String, String> {
+async fn load_thread_save(id: i64, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || load_thread_save_blocking(id, app))
+        .await
+        .map_err(|e| format!("load_thread_save task failed: {e}"))?
+}
+
+fn load_thread_save_blocking(id: i64, app: tauri::AppHandle) -> Result<String, String> {
     let connection = open_thread_store(&app)?;
     connection
         .query_row(
@@ -10075,7 +10120,13 @@ fn session_doc_target(app: &tauri::AppHandle, kind: &str, date: &str) -> Result<
 
 /// Resolve today's session document (notes or equations), creating it with a heading if missing.
 #[tauri::command]
-fn ensure_session_doc(kind: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn ensure_session_doc(kind: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ensure_session_doc_blocking(kind, date, app))
+        .await
+        .map_err(|e| format!("ensure_session_doc task failed: {e}"))?
+}
+
+fn ensure_session_doc_blocking(kind: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
     let (target_path, file_name, header) = session_doc_target(&app, &kind, &date)?;
     let existed = target_path.exists();
     if !existed {
@@ -10089,12 +10140,24 @@ fn ensure_session_doc(kind: String, date: String, app: tauri::AppHandle) -> Resu
 }
 
 #[tauri::command]
-fn append_session_equation(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn append_session_equation(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || append_session_equation_blocking(markdown, date, app))
+        .await
+        .map_err(|e| format!("append_session_equation task failed: {e}"))?
+}
+
+fn append_session_equation_blocking(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
     append_session_doc("equations", &markdown, &date, &app)
 }
 
 #[tauri::command]
-fn append_session_note(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn append_session_note(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || append_session_note_blocking(markdown, date, app))
+        .await
+        .map_err(|e| format!("append_session_note task failed: {e}"))?
+}
+
+fn append_session_note_blocking(markdown: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
     append_session_doc("notes", &markdown, &date, &app)
 }
 
@@ -10232,7 +10295,13 @@ fn configured_project_root(app: &tauri::AppHandle, action: &str) -> Result<PathB
 }
 
 #[tauri::command]
-fn append_project_memory(entry: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn append_project_memory(entry: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || append_project_memory_blocking(entry, date, app))
+        .await
+        .map_err(|e| format!("append_project_memory task failed: {e}"))?
+}
+
+fn append_project_memory_blocking(entry: String, date: String, app: tauri::AppHandle) -> Result<String, String> {
     let root = configured_project_root(&app, "Project memory")?;
     let path = root.join(PROJECT_MEMORY_FILE);
     let existed = path.exists();
@@ -10247,7 +10316,13 @@ fn append_project_memory(entry: String, date: String, app: tauri::AppHandle) -> 
 }
 
 #[tauri::command]
-fn read_project_memory(app: tauri::AppHandle) -> Result<String, String> {
+async fn read_project_memory(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_project_memory_blocking(app))
+        .await
+        .map_err(|e| format!("read_project_memory task failed: {e}"))?
+}
+
+fn read_project_memory_blocking(app: tauri::AppHandle) -> Result<String, String> {
     let root = configured_project_root(&app, "Project memory")?;
     let (payload, _diag) = read_project_memory_payload(&root.join(PROJECT_MEMORY_FILE), PROJECT_MEMORY_PRIMER_MAX_CHARS);
     Ok(payload.to_string())
@@ -10298,7 +10373,13 @@ fn checkpoint_repo(app: &tauri::AppHandle) -> Result<checkpoints::ShadowRepo, St
 }
 
 #[tauri::command]
-fn run_ai_calc(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+async fn run_ai_calc(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ai_calc_blocking(code, timeout_seconds, app))
+        .await
+        .map_err(|e| format!("run_ai_calc task failed: {e}"))?
+}
+
+fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     if !config.ai_run_enabled {
         return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Customize to allow CALC blocks.".to_string());
@@ -10332,31 +10413,61 @@ fn cancel_ai_project_command() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn create_project_checkpoint(subject: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn create_project_checkpoint(subject: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || create_project_checkpoint_blocking(subject, app))
+        .await
+        .map_err(|e| format!("create_project_checkpoint task failed: {e}"))?
+}
+
+fn create_project_checkpoint_blocking(subject: String, app: tauri::AppHandle) -> Result<String, String> {
     let outcome = checkpoint_repo(&app)?.create(&subject)?;
     serde_json::to_string(&outcome).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn list_project_checkpoints(limit: Option<usize>, app: tauri::AppHandle) -> Result<String, String> {
+async fn list_project_checkpoints(limit: Option<usize>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || list_project_checkpoints_blocking(limit, app))
+        .await
+        .map_err(|e| format!("list_project_checkpoints task failed: {e}"))?
+}
+
+fn list_project_checkpoints_blocking(limit: Option<usize>, app: tauri::AppHandle) -> Result<String, String> {
     let rows = checkpoint_repo(&app)?.list(limit.unwrap_or(checkpoints::DEFAULT_LIST_LIMIT))?;
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn describe_project_checkpoint(sha: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn describe_project_checkpoint(sha: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || describe_project_checkpoint_blocking(sha, app))
+        .await
+        .map_err(|e| format!("describe_project_checkpoint task failed: {e}"))?
+}
+
+fn describe_project_checkpoint_blocking(sha: String, app: tauri::AppHandle) -> Result<String, String> {
     let files = checkpoint_repo(&app)?.files_in(&sha)?;
     serde_json::to_string(&files).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn revert_project_checkpoint(sha: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn revert_project_checkpoint(sha: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || revert_project_checkpoint_blocking(sha, app))
+        .await
+        .map_err(|e| format!("revert_project_checkpoint task failed: {e}"))?
+}
+
+fn revert_project_checkpoint_blocking(sha: String, app: tauri::AppHandle) -> Result<String, String> {
     let outcome = checkpoint_repo(&app)?.revert_to(&sha)?;
     serde_json::to_string(&outcome).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || write_ai_project_file_blocking(path, content, app))
+        .await
+        .map_err(|e| format!("write_ai_project_file task failed: {e}"))?
+}
+
+fn write_ai_project_file_blocking(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     let project_root = config.project_root_dir.trim();
     if project_root.is_empty() {
@@ -10428,7 +10539,13 @@ fn ai_project_target(app: &tauri::AppHandle, action: &str, path: &str) -> Result
 }
 
 #[tauri::command]
-fn read_ai_project_file(path: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn read_ai_project_file(path: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_ai_project_file_blocking(path, app))
+        .await
+        .map_err(|e| format!("read_ai_project_file task failed: {e}"))?
+}
+
+fn read_ai_project_file_blocking(path: String, app: tauri::AppHandle) -> Result<String, String> {
     let (_config, _root, target_path, relative_path) = ai_project_target(&app, "read", &path)?;
     if !target_path.is_file() {
         return Err(format!("File not found: {relative_path}"));
@@ -10457,7 +10574,13 @@ fn read_ai_project_file(path: String, app: tauri::AppHandle) -> Result<String, S
 }
 
 #[tauri::command]
-fn append_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn append_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || append_ai_project_file_blocking(path, content, app))
+        .await
+        .map_err(|e| format!("append_ai_project_file task failed: {e}"))?
+}
+
+fn append_ai_project_file_blocking(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
     let (_config, _root, target_path, relative_path) = ai_project_target(&app, "append", &path)?;
     let existed = target_path.exists();
     if let Some(parent) = target_path.parent() {
@@ -10482,7 +10605,13 @@ fn append_ai_project_file(path: String, content: String, app: tauri::AppHandle) 
 }
 
 #[tauri::command]
-fn edit_ai_project_file(path: String, hunks: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn edit_ai_project_file(path: String, hunks: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || edit_ai_project_file_blocking(path, hunks, app))
+        .await
+        .map_err(|e| format!("edit_ai_project_file task failed: {e}"))?
+}
+
+fn edit_ai_project_file_blocking(path: String, hunks: String, app: tauri::AppHandle) -> Result<String, String> {
     let (_config, _root, target_path, relative_path) = ai_project_target(&app, "edit", &path)?;
     if !target_path.is_file() {
         return Err(format!("File not found: {relative_path}. Use a FILE block to create it first."));
@@ -10502,7 +10631,13 @@ fn edit_ai_project_file(path: String, hunks: String, app: tauri::AppHandle) -> R
 }
 
 #[tauri::command]
-fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+async fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ai_project_command_blocking(cmd, timeout_seconds, app))
+        .await
+        .map_err(|e| format!("run_ai_project_command task failed: {e}"))?
+}
+
+fn run_ai_project_command_blocking(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
     if !config.ai_run_enabled {
         return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Customize to allow RUN blocks.".to_string());
@@ -11395,7 +11530,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = search_markdown_documents(
+        let result = search_markdown_documents_blocking(
             temp_dir.to_string_lossy().to_string(),
             "neutrino mass".to_string(),
         )
