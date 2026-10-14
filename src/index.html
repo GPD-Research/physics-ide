@@ -4381,36 +4381,41 @@
       try { await invoke('cancel_ai_project_command'); } catch (_) { /* no run in flight */ }
     }
 
-    const AI_FILE_BLOCK_PATTERN = /<<<FILE\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END FILE>>>/g;
-    const AI_APPEND_BLOCK_PATTERN = /<<<APPEND\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END APPEND>>>/g;
-    const AI_EDIT_BLOCK_PATTERN = /<<<EDIT\s+path="([^"\n]+)"\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END EDIT>>>/g;
-    const AI_READ_BLOCK_PATTERN = /<<<READ\s+path="([^"\n]+)"\s*>>>/g;
-    const AI_RUN_BLOCK_PATTERN = /<<<RUN\s+cmd="([^"\n]+)"(?:\s+timeout="?(\d+)"?)?\s*>>>/g;
-    const AI_SEARCH_BLOCK_PATTERN = /<<<SEARCH\s+query="([^"\n]+)"(?:\s+limit="?(\d+)"?)?\s*>>>/g;
-    const AI_CALC_BLOCK_PATTERN = /<<<CALC(?:\s+timeout="?(\d+)"?)?\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END CALC>>>/g;
-    const AI_REMEMBER_BLOCK_PATTERN = /<<<REMEMBER\s*>>>\r?\n([\s\S]*?)\r?\n?<<<END REMEMBER>>>/g;
+    // Open markers tolerate stray extra '>' and trailing spaces (small local models often emit '>>>>').
+    const AI_FILE_BLOCK_PATTERN = /<<<FILE\s+path="([^"\n]+)"\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END FILE>>>/g;
+    const AI_APPEND_BLOCK_PATTERN = /<<<APPEND\s+path="([^"\n]+)"\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END APPEND>>>/g;
+    const AI_EDIT_BLOCK_PATTERN = /<<<EDIT\s+path="([^"\n]+)"\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END EDIT>>>/g;
+    const AI_READ_BLOCK_PATTERN = /<<<READ\s+path="([^"\n]+)"\s*>>>+/g;
+    const AI_RUN_BLOCK_PATTERN = /<<<RUN\s+cmd="([^"\n]+)"(?:\s+timeout="?(\d+)"?)?\s*>>>+/g;
+    const AI_SEARCH_BLOCK_PATTERN = /<<<SEARCH\s+query="([^"\n]+)"(?:\s+limit="?(\d+)"?)?\s*>>>+/g;
+    const AI_CALC_BLOCK_PATTERN = /<<<CALC(?:\s+timeout="?(\d+)"?)?\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END CALC>>>/g;
+    const AI_REMEMBER_BLOCK_PATTERN = /<<<REMEMBER\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END REMEMBER>>>/g;
     const AI_FILE_OPS_MAX_AUTO_CONTINUE = 3;
 
     function parseAssistantFileBlocks(text) {
       const source = String(text || '');
       const ops = [];
+      let masked = source;
       const collect = (pattern, build) => {
         pattern.lastIndex = 0;
         let match;
         while ((match = pattern.exec(source)) !== null) {
           ops.push({ position: match.index, ...build(match) });
+          if (match[0].includes('\n')) {
+            masked = masked.slice(0, match.index) + ' '.repeat(match[0].length) + masked.slice(match.index + match[0].length);
+          }
         }
       };
-      collect(AI_FILE_BLOCK_PATTERN, (m) => ({ op: 'write', path: m[1].trim(), content: m[2] }));
-      collect(AI_APPEND_BLOCK_PATTERN, (m) => ({ op: 'append', path: m[1].trim(), content: m[2] }));
+      collect(AI_FILE_BLOCK_PATTERN, (m) => ({ op: 'write', path: m[1].trim(), content: stripWrappingFence(m[2]) }));
+      collect(AI_APPEND_BLOCK_PATTERN, (m) => ({ op: 'append', path: m[1].trim(), content: stripWrappingFence(m[2]) }));
       collect(AI_EDIT_BLOCK_PATTERN, (m) => ({ op: 'edit', path: m[1].trim(), hunks: m[2] }));
       collect(AI_READ_BLOCK_PATTERN, (m) => ({ op: 'read', path: m[1].trim() }));
       collect(AI_RUN_BLOCK_PATTERN, (m) => ({ op: 'run', cmd: m[1].trim(), timeout: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_SEARCH_BLOCK_PATTERN, (m) => ({ op: 'search', query: m[1].trim(), limit: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_REMEMBER_BLOCK_PATTERN, (m) => ({ op: 'remember', entry: m[1] }));
-      collect(AI_CALC_BLOCK_PATTERN, (m) => ({ op: 'calc', code: m[2].replace(/^```[a-z]*\r?\n|\r?\n```\s*$/g, ''), timeout: m[1] ? parseInt(m[1], 10) : null }));
+      collect(AI_CALC_BLOCK_PATTERN, (m) => ({ op: 'calc', code: stripWrappingFence(m[2]), timeout: m[1] ? parseInt(m[1], 10) : null }));
       ops.sort((a, b) => a.position - b.position);
-      const fences = fencedRanges(source);
+      const fences = fencedRanges(masked);
       return ops.filter((op) => {
         const example = isProtocolExampleOp(op);
         const quoted = source[op.position - 1] === '`';
@@ -4421,6 +4426,11 @@
         }
         return true;
       });
+    }
+
+    // Removes one markdown fence wrapped around a block body (opening ```lang line and/or closing ``` line).
+    function stripWrappingFence(body) {
+      return String(body ?? '').replace(/^[ \t]*```[\w+-]*[ \t]*\r?\n/, '').replace(/\r?\n[ \t]*```[ \t]*$/, '');
     }
 
     const AI_SINGLE_LINE_OPS = new Set(['read', 'run', 'search']);
