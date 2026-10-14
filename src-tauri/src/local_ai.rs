@@ -121,6 +121,50 @@ pub fn curated_model_catalog() -> Vec<LocalModelSpec> {
     ]
 }
 
+/// Selectable Ollama quantization tags: (tag as used in Ollama library names, approx GB per billion params, label).
+pub const QUANT_OPTIONS: &[(&str, f64, &str)] = &[
+    ("q4_0", 0.57, "q4_0 — lightest, fastest, lowest fidelity"),
+    ("q4_K_M", 0.62, "q4_K_M — Ollama default balance"),
+    ("q5_K_M", 0.72, "q5_K_M — slightly larger, better fidelity"),
+    ("q8_0", 1.07, "q8_0 — near-lossless, ~2× the q4 size"),
+    ("fp16", 2.0, "fp16 — unquantized, largest"),
+];
+
+pub fn quant_gb_per_b(quant: &str) -> Option<f64> {
+    QUANT_OPTIONS
+        .iter()
+        .find(|(tag, _, _)| tag.eq_ignore_ascii_case(quant))
+        .map(|(_, gb, _)| *gb)
+}
+
+/// Rewrite a curated catalog entry to a specific quantization tag, following the
+/// Ollama library naming for each family (`qwen2.5:7b-instruct-q4_0`, `phi4:14b-q8_0`).
+/// Returns `None` for families whose tags do not follow a predictable pattern.
+pub fn apply_quantization(spec: &LocalModelSpec, quant: &str) -> Option<LocalModelSpec> {
+    let quant = quant.trim();
+    if quant.is_empty() {
+        return Some(spec.clone());
+    }
+    let gb_per_b = quant_gb_per_b(quant)?;
+    let (repo, tag) = spec.name.split_once(':')?;
+    let size = tag.split('-').next()?;
+    if !size.ends_with('b') {
+        return None;
+    }
+    let name = match repo {
+        "qwen2.5" | "qwen2.5-coder" | "llama3.1" | "llama3.2" | "llama3.3" | "mistral" | "gemma2" => {
+            format!("{repo}:{size}-instruct-{quant}")
+        }
+        "phi4" | "phi4-mini" => format!("{repo}:{size}-{quant}"),
+        _ => return None,
+    };
+    let mut out = spec.clone();
+    out.name = name;
+    out.quant = quant.to_ascii_uppercase().replace("FP16", "F16");
+    out.file_gb = round1(spec.params_b * gb_per_b);
+    Some(out)
+}
+
 fn read_to_string(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
@@ -880,6 +924,23 @@ pub fn chat(host: &str, model: &str, messages: &[serde_json::Value]) -> Result<O
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quantization_rewrites_names_and_sizes() {
+        let cat = curated_model_catalog();
+        let qwen = cat.iter().find(|m| m.name == "qwen2.5:7b").unwrap();
+        let q4 = apply_quantization(qwen, "q4_0").unwrap();
+        assert_eq!(q4.name, "qwen2.5:7b-instruct-q4_0");
+        assert!(q4.file_gb < qwen.file_gb);
+        let q8 = apply_quantization(qwen, "q8_0").unwrap();
+        assert_eq!(q8.name, "qwen2.5:7b-instruct-q8_0");
+        assert!((q8.file_gb - 8.1).abs() < 0.3);
+        let phi = cat.iter().find(|m| m.name == "phi4:14b").unwrap();
+        assert_eq!(apply_quantization(phi, "q5_K_M").unwrap().name, "phi4:14b-q5_K_M");
+        let r1 = cat.iter().find(|m| m.name == "deepseek-r1:8b").unwrap();
+        assert!(apply_quantization(r1, "q4_0").is_none());
+        assert!(apply_quantization(qwen, "q9_9").is_none());
+    }
 
     fn hw(ram: f64, vram: f64, disk_total: f64, disk_free: f64) -> HardwareSpecs {
         HardwareSpecs {
