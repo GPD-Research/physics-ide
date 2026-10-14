@@ -185,7 +185,7 @@ pub fn validate_run_command(cmd: &str, allowlist: &[String], project_root: &Path
         .unwrap_or_default();
     if !allowlist.iter().any(|a| a.eq_ignore_ascii_case(&program)) {
         return Err(format!(
-            "Program '{program}' is not on the AI run allowlist ({}). Adjust the allowlist in Customize if this is intended.",
+            "Program '{program}' is not on the AI run allowlist ({}). Adjust the allowlist in Settings if this is intended.",
             allowlist.join(", ")
         ));
     }
