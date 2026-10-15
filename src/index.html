@@ -4409,6 +4409,7 @@
         writtenPaths: new Set(),
         readText: '',
         runOutput: '',
+        lastRunOutput: '',
         gateRejections: 0
       };
       renderTaskPanel(pane);
@@ -4455,7 +4456,7 @@
     }
 
     // Pure check behind the DONE gate: placeholder code, results no run printed, missing ±err.
-    function findTaskCompletionIssues({ goal, readText, runOutput, files, reply }) {
+    function findTaskCompletionIssues({ goal, readText, runOutput, lastRunOutput = runOutput, files, reply }) {
       const issues = [];
       for (const { path, content } of files) {
         const hits = String(content || '').split(/\r?\n/)
@@ -4478,7 +4479,7 @@
         }
       }
       if (TASK_RESULT_ERR_CONTRACT.test(`${goal}\n${readText}`)) {
-        const all = [...taskResultLines(runOutput), ...files.flatMap((f) => taskResultLines(f.content))];
+        const all = [...taskResultLines(lastRunOutput), ...files.flatMap((f) => taskResultLines(f.content))];
         const bare = all.filter((l) => !/±|\+\/-/.test(l));
         if (bare.length) {
           issues.push(`the task asks for RESULT: name=value±err, but ${bare.length} RESULT line(s) have no error, e.g. "${bare[0].slice(0, 90)}"`);
@@ -4495,7 +4496,7 @@
           files.push({ path: outcome.relative_path || path, content: outcome.content });
         } catch (_) { /* deleted or unreadable since it was written */ }
       }
-      return findTaskCompletionIssues({ goal: st.goal, readText: st.readText, runOutput: st.runOutput, files, reply });
+      return findTaskCompletionIssues({ goal: st.goal, readText: st.readText, runOutput: st.runOutput, lastRunOutput: st.lastRunOutput, files, reply });
     }
 
     async function updateTaskAfterReply(pane, index, reply, fileOps) {
@@ -4511,7 +4512,10 @@
       (fileOps.written || []).forEach((path) => st.writtenPaths.add(path));
       for (const { op, text: outText } of fileOps.outputs || []) {
         if (op === 'read') st.readText = `${st.readText}\n${outText}`.slice(-200000);
-        if (op === 'run' || op === 'calc') st.runOutput = `${st.runOutput}\n${outText}`.slice(-200000);
+        if (op === 'run' || op === 'calc') {
+          st.runOutput = `${st.runOutput}\n${outText}`.slice(-200000);
+          st.lastRunOutput = String(outText || '');
+        }
       }
       const text = String(reply || '');
       const planMatch = text.match(TASK_PLAN_PATTERN);
@@ -4538,7 +4542,7 @@
         }
         st.gateRejections += 1;
         appendTerminalLog(`Task DONE rejected [${pane}] (${st.gateRejections}/${TASK_GATE_MAX_REJECTIONS}): ${issues.join(' | ')}`);
-        gatePrompt = `Your ${TASK_DONE_MARK} was not accepted; the app's completion checks found:\n${issues.map((i) => `- ${i}`).join('\n')}\nFinish the real implementation (no placeholders or TODOs), re-run it, and regenerate any report from the script's actual output. Then end with ${TASK_DONE_MARK} again, or ${TASK_BLOCKED_MARK} with the exact reason you cannot. Never report a value the code does not compute.`;
+        gatePrompt = `Your ${TASK_DONE_MARK} was not accepted; the app's completion checks found:\n${issues.map((i) => `- ${i}`).join('\n')}\nFinish the real implementation (no placeholders or TODOs), re-run it, and regenerate any report from the script's actual output. Write the report only in the reply after the RUN output is shown to you, copying the printed RESULT lines; a report written in the same reply as its RUN cannot know the numbers. Then end with ${TASK_DONE_MARK} again, or ${TASK_BLOCKED_MARK} with the exact reason you cannot. Never report a value the code does not compute.`;
       }
       if (text.includes(TASK_BLOCKED_MARK)) {
         finishTask(pane, 'blocked', 'the AI needs your input; answer in the chat and start a new task or continue manually');
