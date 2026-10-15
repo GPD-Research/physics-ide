@@ -17,6 +17,7 @@ mod ai_file_ops;
 mod checkpoints;
 mod local_ai;
 mod math_fixer;
+mod system_monitor;
 
 #[derive(Deserialize, Default)]
 struct GeminiModelListResponse {
@@ -1822,6 +1823,41 @@ fn compute_markdown_doc_score(title: &str, content: &str, tokens: &[String]) -> 
     }
 
     score
+}
+
+#[tauri::command]
+async fn get_system_stats(
+    state: tauri::State<'_, system_monitor::SystemMonitorState>,
+    include_processes: bool,
+) -> Result<system_monitor::SystemStats, String> {
+    let shared = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || system_monitor::sample(&shared, include_processes))
+        .await
+        .map_err(|e| format!("get_system_stats task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn open_system_monitor(app: AppHandle, kind: String, theme_query: String) -> Result<(), String> {
+    if !system_monitor::is_safe_query(&theme_query) {
+        return Err("Rejected monitor theme parameters".to_string());
+    }
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let spec = system_monitor::window_spec(kind.trim(), cores)?;
+    if let Some(existing) = app.get_webview_window(spec.label) {
+        let _ = existing.unminimize();
+        return existing
+            .set_focus()
+            .map_err(|e| format!("Failed to focus {}: {e}", spec.title));
+    }
+    let url = format!("sysmon.html?kind={}&{}", spec.kind, theme_query);
+    tauri::WebviewWindowBuilder::new(&app, spec.label, tauri::WebviewUrl::App(url.into()))
+        .title(spec.title)
+        .inner_size(spec.width, spec.height)
+        .min_inner_size(240.0, 180.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("Failed to open {}: {e}", spec.title))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -13048,6 +13084,7 @@ pub fn run() {
                 llm_usage: std::sync::Mutex::new(std::collections::HashMap::new()),
                 embedding_model: std::sync::Mutex::new(None),
             });
+            app.manage(system_monitor::SystemMonitorState::default());
 
             Ok(())
         })
@@ -13143,7 +13180,9 @@ pub fn run() {
             git_push,
             prepare_exit_session,
             generate_exit_session_draft,
-            get_master_axiom_snapshot
+            get_master_axiom_snapshot,
+            get_system_stats,
+            open_system_monitor
             // Add your other commands here...
         ])
         .run(tauri::generate_context!())

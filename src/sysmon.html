@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Monitor</title>
+<style>
+  :root { --bg: #11111b; --panel: #181825; --text: #cdd6f4; --muted: #a6adc8; --accent: #33d17a; --border: #313244; --warn: #f5a524; --hot: #ef4444; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 12px; overflow: hidden; }
+  body { display: flex; width: 100%; flex-direction: column; padding: 8px 10px; gap: 6px; }
+  header { display: flex; align-items: center; gap: 8px; }
+  header .title { font-weight: 600; letter-spacing: 0.02em; }
+  header .sub { color: var(--muted); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header button { flex-shrink: 0; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; cursor: pointer; font-size: 11px; }
+  header button.on { color: var(--accent); border-color: var(--accent); }
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #status { color: var(--hot); font-size: 11px; min-height: 0; }
+  .mono { font-family: ui-monospace, "DejaVu Sans Mono", Menlo, monospace; }
+
+  /* CPU bars */
+  .bars { flex: 1; min-height: 0; display: flex; align-items: stretch; gap: 4px; padding: 4px 2px 0; }
+  .bar { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 10px; }
+  .bar .track { flex: 1; width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; position: relative; overflow: hidden; }
+  .bar .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); transition: height 0.5s ease, background-color 0.5s; }
+  .bar .lbl { color: var(--muted); font-size: 10px; }
+  .spark { height: 34px; width: 100%; display: block; margin-top: 6px; border: 1px solid var(--border); border-radius: 3px; background: var(--panel); }
+
+  /* Gauges */
+  .gauges { flex: 1; display: flex; gap: 10px; justify-content: space-around; align-items: center; }
+  .gauge { flex: 1 1 0; min-width: 0; max-width: 190px; text-align: center; }
+  .gauge svg { width: 100%; display: block; }
+  .gauge .needle { transition: transform 0.6s cubic-bezier(.3,1.4,.5,1); transform-origin: 100px 100px; }
+  .gauge .name { font-weight: 600; margin-top: 2px; }
+  .gauge .val { color: var(--muted); }
+
+  /* Conky panel */
+  .conky { white-space: pre; line-height: 1.42; font-size: 11.5px; overflow: auto; }
+  .conky .h { color: var(--accent); font-weight: 600; }
+  .conky .m { color: var(--muted); }
+  .conky .w { color: var(--warn); }
+  .conky .x { color: var(--hot); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="title" id="title">System</span>
+    <span class="sub" id="sub"></span>
+    <button id="pin" title="Keep this window above other windows">pin</button>
+  </header>
+  <main id="main"></main>
+  <div id="status"></div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const kind = ['cpu', 'memory', 'system'].includes(params.get('kind')) ? params.get('kind') : 'system';
+  for (const [key, cssVar] of [['bg', '--bg'], ['panel', '--panel'], ['text', '--text'], ['muted', '--muted'], ['accent', '--accent'], ['border', '--border']]) {
+    if (params.get(key)) document.documentElement.style.setProperty(cssVar, params.get(key));
+  }
+  if (params.get('scheme')) document.documentElement.style.colorScheme = params.get('scheme');
+
+  const tauri = window.__TAURI__;
+  const invoke = tauri ? tauri.core.invoke : previewInvoke;
+  const HISTORY = 90;
+  const history = [];
+  const $ = (id) => document.getElementById(id);
+  const GB = 1024 ** 3;
+  const gb = (bytes) => (bytes / GB).toFixed(1);
+  const pct = (used, total) => (total > 0 ? (100 * used) / total : 0);
+  const level = (p) => (p >= 90 ? 'var(--hot)' : p >= 70 ? 'var(--warn)' : 'var(--accent)');
+
+  function uptime(secs) {
+    const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+    return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  function sparkline(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (history.length < 2) return;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const step = w / (HISTORY - 1);
+    const x0 = w - (history.length - 1) * step;
+    ctx.beginPath();
+    history.forEach((v, i) => { const x = x0 + i * step, y = h - 2 - (v / 100) * (h - 4); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.lineTo(w, h); ctx.lineTo(x0, h); ctx.closePath();
+    ctx.globalAlpha = 0.18; ctx.fillStyle = accent; ctx.fill(); ctx.globalAlpha = 1;
+  }
+
+  // ---------- CPU: one bar per logical core + 90 s total history ----------
+  function renderCpu(s) {
+    $('title').textContent = `CPU ${s.total_cpu.toFixed(0)}%`;
+    $('sub').textContent = `${s.cpu_brand} · ${s.core_usage.length} threads${s.physical_cores ? ` / ${s.physical_cores} cores` : ''}`;
+    let bars = $('bars');
+    if (!bars || bars.children.length !== s.core_usage.length) {
+      $('main').innerHTML = '<div class="bars" id="bars"></div><canvas class="spark" id="spark" title="Total CPU, last 90 s"></canvas>';
+      bars = $('bars');
+      s.core_usage.forEach((_, i) => {
+        bars.insertAdjacentHTML('beforeend', `<div class="bar"><div class="track"><div class="fill"></div></div><span class="lbl">${i}</span></div>`);
+      });
+    }
+    s.core_usage.forEach((u, i) => {
+      const bar = bars.children[i];
+      const fill = bar.querySelector('.fill');
+      fill.style.height = `${Math.min(100, u).toFixed(1)}%`;
+      fill.style.backgroundColor = level(u);
+      bar.title = `core ${i}: ${u.toFixed(0)}%`;
+    });
+    sparkline($('spark'));
+  }
+
+  // ---------- Memory: analog needle gauges for RAM and swap ----------
+  function gaugeSvg(id) {
+    const ticks = [];
+    for (let i = 0; i <= 10; i++) {
+      const a = Math.PI * (1 - i / 10), major = i % 5 === 0;
+      const r1 = major ? 68 : 72, r2 = 80;
+      ticks.push(`<line x1="${100 + r1 * Math.cos(a)}" y1="${100 - r1 * Math.sin(a)}" x2="${100 + r2 * Math.cos(a)}" y2="${100 - r2 * Math.sin(a)}" stroke="var(--muted)" stroke-width="${major ? 2 : 1}"/>`);
+    }
+    const arc = (from, to, color) => {
+      const a0 = Math.PI * (1 - from), a1 = Math.PI * (1 - to), r = 88;
+      return `<path d="M ${100 + r * Math.cos(a0)} ${100 - r * Math.sin(a0)} A ${r} ${r} 0 0 1 ${100 + r * Math.cos(a1)} ${100 - r * Math.sin(a1)}" stroke="${color}" stroke-width="7" fill="none"/>`;
+    };
+    return `<svg viewBox="0 0 200 124">
+      ${arc(0, 0.7, 'var(--accent)')}${arc(0.7, 0.9, 'var(--warn)')}${arc(0.9, 1, 'var(--hot)')}
+      ${ticks.join('')}
+      <text x="22" y="114" fill="var(--muted)" font-size="10" text-anchor="middle">0</text>
+      <text x="100" y="12" fill="var(--muted)" font-size="10" text-anchor="middle">50</text>
+      <text x="178" y="114" fill="var(--muted)" font-size="10" text-anchor="middle">100</text>
+      <g class="needle" id="${id}-needle" style="transform: rotate(-90deg)">
+        <line x1="100" y1="104" x2="100" y2="24" stroke="var(--text)" stroke-width="2.5" stroke-linecap="round"/>
+      </g>
+      <circle cx="100" cy="100" r="6" fill="var(--text)"/><circle cx="100" cy="100" r="2.5" fill="var(--bg)"/>
+      <text x="100" y="121" fill="var(--text)" font-size="15" font-weight="600" text-anchor="middle" id="${id}-pct">0%</text>
+    </svg>`;
+  }
+
+  function setGauge(id, used, total) {
+    const p = pct(used, total);
+    $(`${id}-needle`).style.transform = `rotate(${(-90 + 1.8 * Math.min(100, p)).toFixed(1)}deg)`;
+    $(`${id}-pct`).textContent = total > 0 ? `${p.toFixed(0)}%` : 'off';
+    $(`${id}-val`).textContent = total > 0 ? `${gb(used)} / ${gb(total)} GB` : 'no swap configured';
+  }
+
+  function renderMemory(s) {
+    if (!$('ram-needle')) {
+      $('main').innerHTML = `<div class="gauges">
+        <div class="gauge">${gaugeSvg('ram')}<div class="name">RAM</div><div class="val" id="ram-val"></div></div>
+        <div class="gauge">${gaugeSvg('swap')}<div class="name">Swap</div><div class="val" id="swap-val"></div></div>
+      </div>`;
+    }
+    $('title').textContent = 'Memory';
+    $('sub').textContent = `${gb(s.memory_total - s.memory_used)} GB free`;
+    setGauge('ram', s.memory_used, s.memory_total);
+    setGauge('swap', s.swap_used, s.swap_total);
+  }
+
+  // ---------- System: conky-style text panel ----------
+  function meter(p, width) {
+    const n = Math.round((Math.min(100, Math.max(0, p)) / 100) * width);
+    const cls = p >= 90 ? 'x' : p >= 70 ? 'w' : '';
+    return `[<span class="${cls}">${'#'.repeat(n)}</span><span class="m">${'-'.repeat(width - n)}</span>]`;
+  }
+  const pad = (v, n) => String(v).padStart(n);
+
+  function renderSystem(s) {
+    $('title').textContent = 'System';
+    $('sub').textContent = s.cpu_brand;
+    const lines = [];
+    lines.push(`<span class="h">UPTIME</span> ${uptime(s.uptime_secs)}   <span class="h">LOAD</span> ${s.load_average.map((v) => v.toFixed(2)).join(' ')}`);
+    lines.push('');
+    lines.push(`<span class="h">CPU</span>  ${meter(s.total_cpu, 20)} ${pad(s.total_cpu.toFixed(0), 3)}%`);
+    lines.push('<canvas class="spark" id="spark" title="Total CPU, last 90 s"></canvas>');
+    for (let i = 0; i < s.core_usage.length; i += 2) {
+      const cell = (j) => (j < s.core_usage.length ? `<span class="m">${pad(j, 2)}</span> ${meter(s.core_usage[j], 8)} ${pad(s.core_usage[j].toFixed(0), 3)}%` : '');
+      lines.push(`${cell(i)}  ${cell(i + 1)}`);
+    }
+    lines.push('');
+    const ramP = pct(s.memory_used, s.memory_total), swapP = pct(s.swap_used, s.swap_total);
+    lines.push(`<span class="h">RAM</span>  ${meter(ramP, 20)} ${pad(ramP.toFixed(0), 3)}%`);
+    lines.push(`     <span class="m">${gb(s.memory_used)} / ${gb(s.memory_total)} GB</span>`);
+    lines.push(`<span class="h">SWAP</span> ${s.swap_total > 0 ? `${meter(swapP, 20)} ${pad(swapP.toFixed(0), 3)}%` : '<span class="m">none</span>'}`);
+    if (s.swap_total > 0) lines.push(`     <span class="m">${gb(s.swap_used)} / ${gb(s.swap_total)} GB</span>`);
+    lines.push('');
+    if (s.ollama) {
+      const o = s.ollama, share = o.cpu_percent / Math.max(1, s.core_usage.length);
+      lines.push(`<span class="h">OLLAMA</span> ${meter(share, 18)} ${pad(o.cpu_percent.toFixed(0), 4)}%`);
+      lines.push(`     <span class="m">${(o.cpu_percent / 100).toFixed(1)} threads busy · ${gb(o.memory_bytes)} GB · ${o.process_count} proc</span>`);
+      lines.push(`     ${o.cpu_percent > 20 ? '<span class="h">working</span>' : '<span class="m">idle</span>'}`);
+    } else {
+      lines.push('<span class="h">OLLAMA</span> <span class="m">not running</span>');
+    }
+    $('main').innerHTML = `<div class="conky mono">${lines.join('\n')}</div>`;
+    sparkline($('spark'));
+  }
+
+  const RENDER = { cpu: renderCpu, memory: renderMemory, system: renderSystem };
+
+  async function tick() {
+    try {
+      const stats = await invoke('get_system_stats', { includeProcesses: kind === 'system' });
+      history.push(stats.total_cpu);
+      if (history.length > HISTORY) history.shift();
+      RENDER[kind](stats);
+      $('status').textContent = '';
+    } catch (error) {
+      $('status').textContent = String(error);
+    }
+    setTimeout(tick, 1000);
+  }
+
+  let pinned = false;
+  $('pin').addEventListener('click', async () => {
+    pinned = !pinned;
+    $('pin').classList.toggle('on', pinned);
+    try { if (tauri) await tauri.window.getCurrentWindow().setAlwaysOnTop(pinned); }
+    catch (error) { $('status').textContent = String(error); }
+  });
+
+  // Browser preview (no Tauri): synthetic readings so the layouts can be checked.
+  function previewInvoke() {
+    const t = Date.now() / 1000, cores = Number(params.get('cores') || 16);
+    const core_usage = Array.from({ length: cores }, (_, i) => Math.max(0, Math.min(100, (i < cores / 2 ? 92 : 8) + 8 * Math.sin(t + i))));
+    return Promise.resolve({
+      cpu_brand: 'AMD Ryzen 7 7730U with Radeon Graphics', core_usage,
+      total_cpu: core_usage.reduce((a, b) => a + b, 0) / cores, physical_cores: cores / 2,
+      memory_total: 15.3 * GB, memory_used: 6.6 * GB, swap_total: 4 * GB, swap_used: 0.4 * GB,
+      load_average: [7.9, 6.2, 3.1], uptime_secs: 11520,
+      ollama: { name: 'ollama', process_count: 2, cpu_percent: 795, memory_bytes: 5.9 * GB },
+    });
+  }
+
+  tick();
+</script>
+</body>
+</html>
