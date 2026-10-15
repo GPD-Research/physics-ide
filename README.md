@@ -23,6 +23,11 @@ The version 8 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-10-15, v9.0.2)
+
+- cloud chat (OpenAI, Gemini) no longer aborts replies after 20 s: 20 s connect limit, 15 min per reply, and request errors name the cause (timeout / connect / TLS) — long Task rounds on gpt-4.1 failed with a bare "error sending request";
+- Settings ▸ Theory Source File is now saved with the other paths.
+
 ### Latest progress (2026-10-15, v9.0.1)
 
 - Task mode DONE gate: `<<<DONE>>>` is rejected (max two send-backs) while files written during the task hold TODO/placeholder code, a report cites `RESULT:` lines no run printed, or the requested `±err` is missing;

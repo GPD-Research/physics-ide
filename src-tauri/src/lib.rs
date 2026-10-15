@@ -4150,7 +4150,7 @@ fn send_gemini_post_with_auth_fallback(
         .header("Content-Type", "application/json")
         .json(body)
         .send()
-        .map_err(|e| format!("Gemini request failed: {e}"))?;
+        .map_err(|e| format!("Gemini request failed: {}", describe_cloud_request_error(&e)))?;
 
     let status = response.status();
     let response_text = response
@@ -4192,7 +4192,7 @@ fn send_gemini_get_with_auth_fallback(
     let response = client
         .get(&query_url)
         .send()
-        .map_err(|e| format!("Gemini request failed: {e}"))?;
+        .map_err(|e| format!("Gemini request failed: {}", describe_cloud_request_error(&e)))?;
 
     let status = response.status();
     let response_text = response
@@ -4947,10 +4947,7 @@ fn call_openai_with_options(
         candidates
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let client = cloud_chat_client()?;
     let mut attempted_models = Vec::new();
     let mut last_error = String::new();
 
@@ -4973,7 +4970,7 @@ fn call_openai_with_options(
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
-            .map_err(|e| format!("OpenAI request failed: {e}"))?;
+            .map_err(|e| format!("OpenAI request failed: {}", describe_cloud_request_error(&e)))?;
 
         let status = response.status();
         let response_text = response
@@ -5262,6 +5259,35 @@ fn parse_gemini_usage(response: &serde_json::Value, model: &str) -> ProviderUsag
     }
 }
 
+// Chat rounds with large READ/RUN context can take minutes; only validation calls keep the 20 s cap.
+const CLOUD_CHAT_CONNECT_TIMEOUT_SECS: u64 = 20;
+const CLOUD_CHAT_TIMEOUT_SECS: u64 = 900;
+
+fn cloud_chat_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(CLOUD_CHAT_CONNECT_TIMEOUT_SECS))
+        .timeout(std::time::Duration::from_secs(CLOUD_CHAT_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))
+}
+
+fn describe_cloud_request_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return format!(
+            "no complete reply within {} min (connect limit {} s); the request was abandoned: {e}",
+            CLOUD_CHAT_TIMEOUT_SECS / 60,
+            CLOUD_CHAT_CONNECT_TIMEOUT_SECS
+        );
+    }
+    let mut message = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        message.push_str(&format!(": {cause}"));
+        source = cause.source();
+    }
+    message
+}
+
 fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Result<ProviderReply, String> {
     if api_key.trim().is_empty() {
         return Err("Gemini API key is not configured. Please add one in Settings.".to_string());
@@ -5269,10 +5295,7 @@ fn call_gemini(api_key: &str, model: &str, history: &[serde_json::Value]) -> Res
 
     let normalized_model = normalize_model_for_provider("gemini", model);
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let client = cloud_chat_client()?;
     let body = build_gemini_request_body(history).map_err(|e| format!("Gemini request body error: {e}"))?;
 
     let mut last_error = "Gemini request failed before receiving a response".to_string();
@@ -11384,6 +11407,17 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cloud_request_error_names_the_cause() {
+        let err = super::cloud_chat_client()
+            .unwrap()
+            .post("http://127.0.0.1:9/v1/chat/completions")
+            .send()
+            .unwrap_err();
+        let text = super::describe_cloud_request_error(&err);
+        assert!(text.len() > err.to_string().len(), "{text}");
+    }
+
     use super::*;
 
     #[test]
