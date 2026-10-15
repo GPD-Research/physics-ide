@@ -4292,7 +4292,7 @@
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
         scheduleThreadAutosave(pane, index);
         const fileOps = await applyAssistantFileBlocks(pane, index, reply);
-        const taskDecision = updateTaskAfterReply(pane, index, reply, fileOps);
+        const taskDecision = await updateTaskAfterReply(pane, index, reply, fileOps);
         if (taskDecision.handled) {
           if (taskDecision.continuePrompt) {
             return dispatchPromptToPane(pane, taskDecision.continuePrompt, 'System', [], {
@@ -4377,7 +4377,7 @@
         const n = i + 1;
         if (st.currentStep && n < st.currentStep) li.classList.add('done');
         if (st.currentStep === n && st.active) li.classList.add('current');
-        if (st.phase === 'done') li.classList.add('done');
+        if (String(st.phase).startsWith('done')) li.classList.add('done');
         plan.appendChild(li);
       });
     }
@@ -4404,7 +4404,11 @@
         plan: [],
         currentStep: 0,
         pendingPrompt: null,
-        haltFollowUp: false
+        haltFollowUp: false,
+        writtenPaths: new Set(),
+        readText: '',
+        runOutput: '',
+        gateRejections: 0
       };
       renderTaskPanel(pane);
       appendTerminalLog(`Task started [${pane}]: ${goal}`);
@@ -4438,7 +4442,62 @@
       renderTaskPanel(pane);
     }
 
-    function updateTaskAfterReply(pane, index, reply, fileOps) {
+    const TASK_PLACEHOLDER_PATTERN = /\b(TODO|FIXME|XXX|placeholders?|stub(?:bed)?|not (?:yet )?implemented|NotImplementedError)\b/i;
+    const TASK_ADMISSION_PATTERN = /\b(placeholders?|not (?:yet )?implemented|stub(?:bed)?|incomplete implementation|dummy values?)\b/i;
+    const TASK_RESULT_ERR_CONTRACT = /RESULT:\s*`?name`?\s*=\s*`?value\s*(?:±|\+\/-)\s*err/i;
+    const TASK_GATE_MAX_REJECTIONS = 2;
+
+    function taskResultLines(text) {
+      return String(text || '').split(/\r?\n/)
+        .map((line) => line.trim().replace(/^[-*>]\s+/, '').replace(/^`+|`+$/g, '').trim())
+        .filter((line) => /^RESULT:/.test(line));
+    }
+
+    // Pure check behind the DONE gate: placeholder code, results no run printed, missing ±err.
+    function findTaskCompletionIssues({ goal, readText, runOutput, files, reply }) {
+      const issues = [];
+      for (const { path, content } of files) {
+        const hits = String(content || '').split(/\r?\n/)
+          .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+          .filter(({ line }) => TASK_PLACEHOLDER_PATTERN.test(line))
+          .slice(0, 4);
+        if (hits.length) {
+          issues.push(`${path} still contains unfinished code: ${hits.map(({ line, n }) => `line ${n} "${line.slice(0, 90)}"`).join('; ')}`);
+        }
+      }
+      const doneText = String(reply || '').split(TASK_DONE_MARK).pop();
+      const admission = doneText.match(TASK_ADMISSION_PATTERN);
+      if (admission) issues.push(`your DONE summary itself says "${admission[0]}"`);
+
+      const printed = new Set(taskResultLines(runOutput).map((l) => l.replace(/\s+/g, ' ')));
+      for (const { path, content } of files) {
+        const unprinted = taskResultLines(content).filter((l) => !printed.has(l.replace(/\s+/g, ' ')));
+        if (unprinted.length) {
+          issues.push(`${path} reports ${unprinted.length} RESULT line(s) that no RUN/CALC output in this task printed, e.g. "${unprinted[0].slice(0, 90)}"`);
+        }
+      }
+      if (TASK_RESULT_ERR_CONTRACT.test(`${goal}\n${readText}`)) {
+        const all = [...taskResultLines(runOutput), ...files.flatMap((f) => taskResultLines(f.content))];
+        const bare = all.filter((l) => !/±|\+\/-/.test(l));
+        if (bare.length) {
+          issues.push(`the task asks for RESULT: name=value±err, but ${bare.length} RESULT line(s) have no error, e.g. "${bare[0].slice(0, 90)}"`);
+        }
+      }
+      return issues;
+    }
+
+    async function verifyTaskCompletion(st, reply) {
+      const files = [];
+      for (const path of st.writtenPaths) {
+        try {
+          const outcome = JSON.parse(await invoke('read_ai_project_file', { path }));
+          files.push({ path: outcome.relative_path || path, content: outcome.content });
+        } catch (_) { /* deleted or unreadable since it was written */ }
+      }
+      return findTaskCompletionIssues({ goal: st.goal, readText: st.readText, runOutput: st.runOutput, files, reply });
+    }
+
+    async function updateTaskAfterReply(pane, index, reply, fileOps) {
       const stopped = taskStates[pane];
       if (stopped && stopped.haltFollowUp && stopped.index === index) {
         stopped.haltFollowUp = false;
@@ -4448,6 +4507,11 @@
       if (!st) return { handled: false };
       st.rounds += 1;
       st.approveEach = Boolean(document.getElementById(`${pane}-task-approve`)?.checked);
+      (fileOps.written || []).forEach((path) => st.writtenPaths.add(path));
+      for (const { op, text: outText } of fileOps.outputs || []) {
+        if (op === 'read') st.readText = `${st.readText}\n${outText}`.slice(-200000);
+        if (op === 'run' || op === 'calc') st.runOutput = `${st.runOutput}\n${outText}`.slice(-200000);
+      }
       const text = String(reply || '');
       const planMatch = text.match(TASK_PLAN_PATTERN);
       if (planMatch) {
@@ -4460,9 +4524,20 @@
       if (lastStep) st.currentStep = lastStep;
       st.phase = st.plan.length ? 'running' : 'planning';
 
+      let gatePrompt = null;
       if (text.includes(TASK_DONE_MARK)) {
-        finishTask(pane, 'done', `${st.rounds} rounds, ~${st.tokens} tokens`);
-        return { handled: true, continuePrompt: null };
+        const issues = await verifyTaskCompletion(st, text);
+        if (!issues.length) {
+          finishTask(pane, 'done', `${st.rounds} rounds, ~${st.tokens} tokens; completion checks passed`);
+          return { handled: true, continuePrompt: null };
+        }
+        if (st.gateRejections >= TASK_GATE_MAX_REJECTIONS || st.rounds >= st.maxRounds) {
+          finishTask(pane, 'done (unverified)', `completion checks still failing: ${issues.join(' | ')}`);
+          return { handled: true, continuePrompt: null };
+        }
+        st.gateRejections += 1;
+        appendTerminalLog(`Task DONE rejected [${pane}] (${st.gateRejections}/${TASK_GATE_MAX_REJECTIONS}): ${issues.join(' | ')}`);
+        gatePrompt = `Your ${TASK_DONE_MARK} was not accepted; the app's completion checks found:\n${issues.map((i) => `- ${i}`).join('\n')}\nFinish the real implementation (no placeholders or TODOs), re-run it, and regenerate any report from the script's actual output. Then end with ${TASK_DONE_MARK} again, or ${TASK_BLOCKED_MARK} with the exact reason you cannot. Never report a value the code does not compute.`;
       }
       if (text.includes(TASK_BLOCKED_MARK)) {
         finishTask(pane, 'blocked', 'the AI needs your input; answer in the chat and start a new task or continue manually');
@@ -4477,9 +4552,9 @@
         return { handled: true, continuePrompt: null };
       }
 
-      const prompt = fileOps.needsFollowUp
+      const prompt = gatePrompt || (fileOps.needsFollowUp
         ? 'The operation results above are in. Continue the task: check the output, repair failures, and proceed to the next step. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.'
-        : 'Continue the task with the next step from your plan. Verify your results as you go. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.';
+        : 'Continue the task with the next step from your plan. Verify your results as you go. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.');
       if (st.paused || st.approveEach) {
         st.paused = true;
         st.awaitingApproval = true;
@@ -4754,9 +4829,11 @@
 
     async function applyAssistantFileBlocks(pane, index, reply) {
       const ops = parseAssistantFileBlocks(reply);
-      if (ops.length === 0) return { needsFollowUp: false };
+      if (ops.length === 0) return { needsFollowUp: false, written: [], outputs: [] };
 
       const results = [];
+      const written = [];
+      const outputs = [];
       let needsFollowUp = false;
       let touchedFiles = false;
       const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc');
@@ -4775,6 +4852,8 @@
         try {
           const outcome = await executeAssistantFileOp(pane, op);
           results.push(outcome.text);
+          outputs.push({ op: op.op, text: outcome.text });
+          if (op.op === 'write' || op.op === 'append' || op.op === 'edit') written.push(op.path);
           needsFollowUp = needsFollowUp || outcome.needsFollowUp;
           touchedFiles = touchedFiles || op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'remember';
         } catch (opError) {
@@ -4793,7 +4872,7 @@
       if (touchedFiles && typeof refreshFileTree === 'function') {
         try { await refreshFileTree(); } catch (_) { /* tree refresh is best-effort */ }
       }
-      return { needsFollowUp };
+      return { needsFollowUp, written, outputs };
     }
 
     function evaluateProbeReply(reply, expectedToken) {
