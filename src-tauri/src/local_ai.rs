@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 pub const DEFAULT_OLLAMA_HOST: &str = "http://127.0.0.1:11434";
 pub const DEFAULT_LOCAL_MODEL: &str = "llama3.1:8b";
@@ -885,50 +886,246 @@ fn canonical_to_ollama_messages(messages: &[serde_json::Value]) -> Vec<serde_jso
 /// primer plus retrieval packet. Ollama caps it to what the model supports.
 const OLLAMA_NUM_CTX: u64 = 16_384;
 
-pub fn chat(host: &str, model: &str, messages: &[serde_json::Value]) -> Result<OllamaChatResult, String> {
-    let host = normalize_host(host);
-    let client = http_client(900)?;
-    let body = serde_json::json!({
-        "model": model,
-        "messages": canonical_to_ollama_messages(messages),
-        "stream": false,
-        "options": { "num_ctx": OLLAMA_NUM_CTX }
-    });
-    let response = client
+/// Default silence limit for a local reply. There is no total cap: a reply is only
+/// abandoned when Ollama sends nothing for this long (prompt reading on CPU included).
+pub const DEFAULT_IDLE_TIMEOUT_MINS: u32 = 60;
+pub const MAX_IDLE_TIMEOUT_MINS: u32 = 1440;
+
+/// Pane keys whose in-flight local reply should be dropped (closing the connection
+/// makes Ollama stop generating).
+static CHAT_CANCEL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub fn request_chat_cancel(key: &str) {
+    if let Ok(mut keys) = CHAT_CANCEL.lock() {
+        if !keys.iter().any(|k| k == key) {
+            keys.push(key.to_string());
+        }
+    }
+}
+
+fn take_chat_cancel(key: &str) -> bool {
+    match CHAT_CANCEL.lock() {
+        Ok(mut keys) => {
+            let before = keys.len();
+            keys.retain(|k| k != key);
+            keys.len() != before
+        }
+        Err(_) => false,
+    }
+}
+
+/// Snapshot sent to the UI about once a second while a local reply is in flight.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatProgress {
+    /// "reading" until the first token arrives (prompt prefill), then "writing".
+    pub phase: &'static str,
+    pub elapsed_secs: u64,
+    pub first_token_secs: Option<u64>,
+    pub tokens: u64,
+}
+
+#[derive(Debug, Default)]
+struct StreamAcc {
+    content: String,
+    chunks: u64,
+    prompt_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    done: bool,
+}
+
+/// Applies one NDJSON line of Ollama's streaming /api/chat response.
+fn apply_stream_line(acc: &mut StreamAcc, line: &str) -> Result<(), String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(());
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(line).map_err(|e| format!("Ollama sent malformed stream data: {e}"))?;
+    if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        return Err(format!("Ollama error: {err}"));
+    }
+    if let Some(piece) = v.pointer("/message/content").and_then(|c| c.as_str()) {
+        if !piece.is_empty() {
+            acc.content.push_str(piece);
+            acc.chunks += 1;
+        }
+    }
+    if v.get("done").and_then(|d| d.as_bool()) == Some(true) {
+        acc.done = true;
+        acc.prompt_tokens = v.get("prompt_eval_count").and_then(|n| n.as_u64());
+        acc.output_tokens = v.get("eval_count").and_then(|n| n.as_u64());
+    }
+    Ok(())
+}
+
+/// reqwest's Display drops the cause ("error sending request for url ..."), so name
+/// the common cases and append the source chain for the rest.
+fn describe_chat_error(host: &str, idle_secs: u64, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return format!(
+            "Local AI request stopped: Ollama sent nothing for {} min ({host}). For very slow prompts raise Settings ▸ AI Models ▸ Local AI silence limit, or use a smaller model.",
+            idle_secs / 60
+        );
+    }
+    if e.is_connect() {
+        return format!("Local AI request failed ({host}): could not connect. Is Ollama running?");
+    }
+    let mut detail = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        detail.push_str(": ");
+        detail.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    format!("Local AI request failed ({host}): {detail}. Ollama may have stopped or crashed mid-reply; check `journalctl -u ollama`.")
+}
+
+async fn stream_chat(
+    client: reqwest::Client,
+    host: String,
+    body: serde_json::Value,
+    idle_secs: u64,
+    acc: Arc<Mutex<StreamAcc>>,
+) -> Result<(), String> {
+    let mut response = client
         .post(format!("{host}/api/chat"))
         .json(&body)
         .send()
-        .map_err(|e| format!("Local AI request failed ({host}): {e}. Is Ollama running?"))?;
+        .await
+        .map_err(|e| describe_chat_error(&host, idle_secs, &e))?;
     let status = response.status();
-    let text = response.text().map_err(|e| format!("Failed to read Ollama response: {e}"))?;
     if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
         let detail = serde_json::from_str::<serde_json::Value>(&text)
             .ok()
             .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
             .unwrap_or_else(|| text.trim().to_string());
         return Err(format!("Ollama returned HTTP {status}: {detail}"));
     }
-    let parsed: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("Ollama returned malformed JSON: {e}"))?;
-    let content = parsed
-        .get("message")
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_string();
+    let mut pending: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| describe_chat_error(&host, idle_secs, &e))?
+    {
+        pending.extend_from_slice(&chunk);
+        while let Some(pos) = pending.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = pending.drain(..=pos).collect();
+            let mut guard = acc.lock().map_err(|_| "Local AI stream state poisoned".to_string())?;
+            apply_stream_line(&mut guard, &String::from_utf8_lossy(&line))?;
+        }
+    }
+    let mut guard = acc.lock().map_err(|_| "Local AI stream state poisoned".to_string())?;
+    apply_stream_line(&mut guard, &String::from_utf8_lossy(&pending))?;
+    if !guard.done {
+        return Err(format!("Local AI request failed ({host}): Ollama closed the stream before finishing the reply."));
+    }
+    Ok(())
+}
+
+/// Streams one local reply. `cancel_key` (the pane) lets `request_chat_cancel` abort it;
+/// `on_progress` is called about once a second until the reply completes.
+pub fn chat(
+    host: &str,
+    model: &str,
+    messages: &[serde_json::Value],
+    idle_timeout_mins: u32,
+    cancel_key: &str,
+    mut on_progress: impl FnMut(&ChatProgress),
+) -> Result<OllamaChatResult, String> {
+    let host = normalize_host(host);
+    let idle_secs = u64::from(idle_timeout_mins.clamp(1, MAX_IDLE_TIMEOUT_MINS)) * 60;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(idle_secs))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let body = serde_json::json!({
+        "model": model,
+        "messages": canonical_to_ollama_messages(messages),
+        "stream": true,
+        "options": { "num_ctx": OLLAMA_NUM_CTX }
+    });
+    take_chat_cancel(cancel_key);
+    let acc = Arc::new(Mutex::new(StreamAcc::default()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let task = tauri::async_runtime::spawn(stream_chat_task(client, host.clone(), body, idle_secs, acc.clone(), tx));
+    let started = std::time::Instant::now();
+    let mut first_token_secs = None;
+    let outcome = loop {
+        match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            Ok(result) => break result,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                break Err("Local AI stream task ended unexpectedly".to_string())
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if take_chat_cancel(cancel_key) {
+            task.abort();
+            break Err("Local AI request stopped by user.".to_string());
+        }
+        let tokens = acc.lock().map(|a| a.chunks).unwrap_or(0);
+        let elapsed_secs = started.elapsed().as_secs();
+        if tokens > 0 && first_token_secs.is_none() {
+            first_token_secs = Some(elapsed_secs);
+        }
+        on_progress(&ChatProgress {
+            phase: if tokens == 0 { "reading" } else { "writing" },
+            elapsed_secs,
+            first_token_secs,
+            tokens,
+        });
+    };
+    outcome?;
+    let mut guard = acc.lock().map_err(|_| "Local AI stream state poisoned".to_string())?;
+    let content = std::mem::take(&mut guard.content);
     if content.trim().is_empty() {
         return Err("Ollama returned an empty reply".to_string());
     }
     Ok(OllamaChatResult {
         content,
-        prompt_tokens: parsed.get("prompt_eval_count").and_then(|v| v.as_u64()),
-        output_tokens: parsed.get("eval_count").and_then(|v| v.as_u64()),
+        prompt_tokens: guard.prompt_tokens,
+        output_tokens: guard.output_tokens.or(Some(guard.chunks)),
     })
+}
+
+async fn stream_chat_task(
+    client: reqwest::Client,
+    host: String,
+    body: serde_json::Value,
+    idle_secs: u64,
+    acc: Arc<Mutex<StreamAcc>>,
+    tx: std::sync::mpsc::Sender<Result<(), String>>,
+) {
+    let _ = tx.send(stream_chat(client, host, body, idle_secs, acc).await);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_lines_accumulate_reply_and_counts() {
+        let mut acc = StreamAcc::default();
+        apply_stream_line(&mut acc, r#"{"message":{"role":"assistant","content":"Hel"},"done":false}"#).unwrap();
+        apply_stream_line(&mut acc, "\n").unwrap();
+        apply_stream_line(&mut acc, r#"{"message":{"role":"assistant","content":"lo"},"done":false}"#).unwrap();
+        apply_stream_line(&mut acc, r#"{"message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":10428,"eval_count":2}"#).unwrap();
+        assert_eq!(acc.content, "Hello");
+        assert_eq!(acc.chunks, 2);
+        assert!(acc.done);
+        assert_eq!((acc.prompt_tokens, acc.output_tokens), (Some(10428), Some(2)));
+        let err = apply_stream_line(&mut acc, r#"{"error":"model runner has unexpectedly stopped"}"#).unwrap_err();
+        assert!(err.contains("unexpectedly stopped"), "{err}");
+    }
+
+    #[test]
+    fn cancel_flag_is_per_pane_and_consumed() {
+        request_chat_cancel("left");
+        assert!(!take_chat_cancel("right"));
+        assert!(take_chat_cancel("left"));
+        assert!(!take_chat_cancel("left"));
+    }
 
     #[test]
     fn quantization_rewrites_names_and_sizes() {
