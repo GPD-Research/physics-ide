@@ -3763,6 +3763,7 @@
         document.getElementById('settings-theory-dir').value = currentConfig.theory_md_dir || "";
         document.getElementById('settings-master-axiom').value = currentConfig.master_axiom_file || "";
         document.getElementById('settings-tools-dir').value = currentConfig.tools_dir || "";
+        document.getElementById('settings-import-source').value = currentConfig.theory_source_file || "";
         document.getElementById('terminal-label').innerText = `${currentConfig.terminal_app} (~/projects/physics-ide)`;
         document.getElementById('settings-gemini-key').value = currentConfig.gemini_api_key;
         document.getElementById('settings-openai-key').value = currentConfig.openai_api_key || "";
@@ -9474,6 +9475,7 @@ async function restoreVersion() {
       const theoryDir = document.getElementById('settings-theory-dir').value;
       const masterAxiom = document.getElementById('settings-master-axiom').value;
       const toolsDir = document.getElementById('settings-tools-dir').value;
+      const theorySourceFile = document.getElementById('settings-import-source').value.trim();
       const theme = document.getElementById('settings-theme').value;
       const customAccent = document.getElementById('picker-accent').value;
       const customBgPanel = document.getElementById('picker-bg-panel').value;
@@ -9504,6 +9506,7 @@ async function restoreVersion() {
         theory_md_dir: theoryDir,
         master_axiom_file: masterAxiom,
         tools_dir: toolsDir,
+        theory_source_file: theorySourceFile,
         theme,
         custom_accent: customAccent,
         custom_bg_panel: customBgPanel,
@@ -9557,6 +9560,7 @@ async function restoreVersion() {
         currentConfig.theory_md_dir = theoryDir;
         currentConfig.master_axiom_file = masterAxiom;
         currentConfig.tools_dir = toolsDir;
+        currentConfig.theory_source_file = theorySourceFile;
         currentConfig.theme = theme;
         currentConfig.custom_accent = customAccent;
         currentConfig.custom_bg_panel = customBgPanel;

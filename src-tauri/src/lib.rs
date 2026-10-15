@@ -391,6 +391,8 @@ pub struct AppConfig {
     theory_md_dir: String,
     master_axiom_file: String,
     tools_dir: String,
+    #[serde(default)]
+    theory_source_file: String,
     theme: String,           // <-- NEW
     custom_accent: String,   // <-- NEW
     custom_bg_panel: String, // <-- NEW
@@ -447,6 +449,7 @@ impl Default for AppConfig {
             theory_md_dir: String::new(),
             master_axiom_file: String::new(),
             tools_dir: String::new(),
+            theory_source_file: String::new(),
             theme: "dark".to_string(),
             custom_accent: String::new(),
             custom_bg_panel: String::new(),
@@ -510,6 +513,8 @@ pub struct SaveUserSettingsPayload {
     pub master_axiom_file: String,
     #[serde(default, alias = "toolsDir")]
     pub tools_dir: String,
+    #[serde(default, alias = "theorySourceFile")]
+    pub theory_source_file: String,
     pub theme: String,
     #[serde(alias = "customAccent")]
     pub custom_accent: String,
@@ -2767,6 +2772,7 @@ fn close_active_theory(state: tauri::State<AppState>, app: AppHandle) -> Result<
     config.theory_md_dir = String::new();
     config.master_axiom_file = String::new();
     config.tools_dir = String::new();
+    config.theory_source_file = String::new();
     config.reuse_notes_next_session = false;
     config.first_session_completed = false;
 
@@ -11345,6 +11351,7 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.theory_md_dir = payload.theory_md_dir;
     config.master_axiom_file = payload.master_axiom_file;
     config.tools_dir = payload.tools_dir;
+    config.theory_source_file = payload.theory_source_file.trim().to_string();
     config.theme = payload.theme;
     config.custom_accent = payload.custom_accent;
     config.custom_bg_panel = payload.custom_bg_panel;
