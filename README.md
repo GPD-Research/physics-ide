@@ -23,6 +23,12 @@ The version 8 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-10-15, v9.0.1)
+
+- Task mode DONE gate: `<<<DONE>>>` is rejected (max two send-backs) while files written during the task hold TODO/placeholder code, a report cites `RESULT:` lines no run printed, or the requested `±err` is missing;
+- Local AI replies stream with no total time cap (Settings ▸ Local AI silence limit, default 60 min), live pane progress, Stop cancels, distinct timeout / not-running / crash errors;
+- View ▸ Monitors: CPU, Memory and System floating windows (incl. the Ollama process).
+
 ### Latest progress (2026-10-15)
 
 - cut the v9.0.0 release line: tag-driven `.github/workflows/release.yml` builds the Linux `.deb` with the Tauri bundler and publishes it (plus a stable `physics-ide_latest_amd64.deb`) to GitHub Releases, linked from gpd-research.com;
