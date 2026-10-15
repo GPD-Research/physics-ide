@@ -1226,6 +1226,10 @@
         <a href="#" class="menu-item-toggle" id="view-menu-inspectors" onclick="toggleViewTool('inspectors'); return false;" title="Show or hide the inspectors panel"><span>Inspectors</span><span class="menu-item-state">●</span></a>
         <a href="#" class="menu-item-toggle" id="view-menu-equation" onclick="toggleViewTool('equation'); return false;" title="Show or hide equation tools panel"><span>Equation Tools</span><span class="menu-item-state">●</span></a>
         <a href="#" class="menu-item-toggle" id="view-menu-notes" onclick="toggleViewTool('notes'); return false;" title="Show or hide the scratchpad panel"><span>Scratchpad</span><span class="menu-item-state">●</span></a>
+        <div class="menu-section">Monitors</div>
+        <a href="#" onclick="openSystemMonitor('cpu'); return false;" title="Floating window with one live bar per CPU core">CPU Monitor</a>
+        <a href="#" onclick="openSystemMonitor('memory'); return false;" title="Floating window with RAM and swap needle gauges">Memory Monitor</a>
+        <a href="#" onclick="openSystemMonitor('system'); return false;" title="Floating conky-style panel: cores, RAM, swap, load, uptime and the Ollama process">System Monitor</a>
         <div class="menu-section">Documents</div>
         <a href="#" onclick="openBriefingPacketEditor(); return false;" title="Inspect generated awareness and use explicit legacy recovery when needed">Awareness Inspector</a>
         <a href="#" onclick="openRequestInspector(); return false;" title="Inspect ordered AI context sources and estimated token use">AI Request Inspector</a>
@@ -9204,6 +9208,25 @@ async function restoreVersion() {
       }
 
       syncViewMenuState();
+    }
+
+    async function openSystemMonitor(kind) {
+      const css = getComputedStyle(document.documentElement);
+      const pick = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+      const theme = new URLSearchParams({
+        bg: pick('--bg-darker', '#11111b'),
+        panel: pick('--bg-dark', '#181825'),
+        text: pick('--text', '#cdd6f4'),
+        muted: pick('--text-muted', '#a6adc8'),
+        accent: pick('--accent', '#33d17a'),
+        border: pick('--border-color', '#313244'),
+        scheme: pick('color-scheme', 'dark'),
+      });
+      try {
+        await invoke('open_system_monitor', { kind, themeQuery: theme.toString() });
+      } catch (error) {
+        appendTerminalLog(`System monitor: ${error}`);
+      }
     }
 
     function toggleViewTool(toolName) {
