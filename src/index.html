@@ -375,6 +375,22 @@
         flex: 0 0 auto;
       }
 
+      .ai-progress {
+        font-family: ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .ai-progress button {
+        font-size: 0.68rem;
+        padding: 0 5px;
+        line-height: 1.4;
+      }
+
       .ai-activity-led.busy {
         background: #33d17a;
         animation: ai-busy-blink 1.15s linear infinite;
@@ -1339,6 +1355,7 @@
           <div class="pane-header-left">
             <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
             <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
+            <span id="left-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('left')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
             <select id="left-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('left')" onchange="openRecallViewer('left', this.value); this.selectedIndex = 0;">
               <option value="">Recall session…</option>
             </select>
@@ -1413,6 +1430,7 @@
           <div class="pane-header-left">
             <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
             <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
+            <span id="right-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('right')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
             <select id="right-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('right')" onchange="openRecallViewer('right', this.value); this.selectedIndex = 0;">
               <option value="">Recall session…</option>
             </select>
@@ -1884,6 +1902,11 @@
                   <input type="text" id="settings-ollama-host" placeholder="http://127.0.0.1:11434" oninput="markAiRouteValidationPendingForProvider('ollama')">
                 </div>
                 <button type="button" onclick="refreshLocalAiOverview()" title="Check Ollama install/server status and refresh the model list">Refresh</button>
+              </div>
+              <div class="form-group" style="margin-bottom: 8px;">
+                <label for="settings-local-ai-idle">Local AI silence limit (minutes, 1–1440)</label>
+                <input type="number" id="settings-local-ai-idle" min="1" max="1440" step="1" placeholder="60">
+                <div style="margin-top: 4px; font-size: 0.78rem; color: var(--accent-dim);">Local replies have no total time cap; one is only abandoned when Ollama sends nothing for this long. On CPU, reading a long task prompt can take many minutes before the first word, so keep this generous.</div>
               </div>
               <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px;">
                 <div class="form-group" style="flex: 1 1 240px; margin-bottom: 0;">
@@ -3710,6 +3733,7 @@
         document.getElementById('settings-ai-run-timeout').value = Number(currentConfig.ai_run_timeout_seconds) || 60;
         document.getElementById('settings-ai-task-rounds').value = Number(currentConfig.ai_task_max_rounds) || 12;
         document.getElementById('settings-ai-task-tokens').value = Number.isFinite(Number(currentConfig.ai_task_token_budget)) ? Number(currentConfig.ai_task_token_budget) : 150000;
+        document.getElementById('settings-local-ai-idle').value = Number(currentConfig.local_ai_idle_timeout_mins) || 60;
         const ollamaHostInput = document.getElementById('settings-ollama-host');
         if (ollamaHostInput) ollamaHostInput.value = currentConfig.ollama_host || 'http://127.0.0.1:11434';
         const ollamaModelsDirInput = document.getElementById('settings-ollama-models-dir');
@@ -3947,6 +3971,42 @@
       const isBusy = paneBusyCounter[pane] > 0;
       led.classList.toggle('busy', isBusy);
       led.title = isBusy ? 'AI busy' : 'AI idle';
+      if (!isBusy) {
+        const progress = document.getElementById(`${pane}-ai-progress`);
+        if (progress) progress.hidden = true;
+      }
+    }
+
+    function formatClock(secs) {
+      const s = Math.max(0, Math.floor(Number(secs) || 0));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = String(s % 60).padStart(2, '0');
+      return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+    }
+
+    // Live status of a streaming local (Ollama) reply, shown next to the pane's activity LED.
+    function renderLocalAiProgress(pane, p) {
+      const el = document.getElementById(`${pane}-ai-progress`);
+      if (!el || !p || paneBusyCounter[pane] === 0) return;
+      const text = el.querySelector('.ai-progress-text');
+      const elapsed = formatClock(p.elapsed_secs);
+      if (p.phase === 'reading') {
+        text.textContent = `reading prompt ${elapsed}`;
+      } else {
+        const writingSecs = Math.max(1, (Number(p.elapsed_secs) || 0) - (Number(p.first_token_secs) || 0));
+        text.textContent = `writing ${Number(p.tokens).toLocaleString()} tok · ${(p.tokens / writingSecs).toFixed(1)} tok/s · ${elapsed}`;
+      }
+      el.title = `Local AI reply in progress (${pane} pane)`;
+      el.hidden = false;
+    }
+
+    if (window.__TAURI__?.event) {
+      window.__TAURI__.event.listen('local-ai-progress', (event) => {
+        renderLocalAiProgress(event.payload?.pane, event.payload?.progress);
+      });
+    }
+
+    async function cancelLocalAiRequest(pane) {
+      try { await invoke('cancel_local_ai_request', { pane }); } catch (_) { /* nothing in flight */ }
     }
 
     async function injectPrimerIntoThreads(isStartup = false) {
@@ -4345,12 +4405,13 @@
       renderTaskPanel(pane);
       appendTerminalLog(`Task started [${pane}]: ${goal}`);
       const retrievalEvidenceLines = await buildChatRetrievalEvidenceLines(goal);
+      // dispatchPromptToPane already logged the fault and stopped the task.
       await dispatchPromptToPane(pane, `TASK: ${goal}`, 'Gregory', [], {
         source: 'current_request',
         trigger: 'task_start',
         retrievalEvidenceLines,
         retrievalBudgetCharacters: latestRetrievalDiagnostics?.budget_characters
-      });
+      }).catch(() => {});
     }
 
     function noteTaskUsage(pane, index, last) {
@@ -4469,6 +4530,7 @@
       if (!st || !st.active) return;
       st.haltFollowUp = true;
       finishTask(pane, 'stopped', 'by user');
+      cancelLocalAiRequest(pane);
       try { await invoke('cancel_ai_project_command'); } catch (_) { /* no run in flight */ }
     }
 
@@ -9322,6 +9384,7 @@ async function restoreVersion() {
       const aiRunTimeoutSeconds = Math.max(1, Math.min(600, parseInt(document.getElementById('settings-ai-run-timeout').value, 10) || 60));
       const aiTaskMaxRounds = Math.max(1, Math.min(100, parseInt(document.getElementById('settings-ai-task-rounds').value, 10) || 12));
       const aiTaskTokenBudget = Math.max(0, parseInt(document.getElementById('settings-ai-task-tokens').value, 10) || 0);
+      const localAiIdleTimeoutMins = Math.max(1, Math.min(1440, parseInt(document.getElementById('settings-local-ai-idle').value, 10) || 60));
 
       const payload = {
         editor,
@@ -9350,7 +9413,8 @@ async function restoreVersion() {
         ai_run_allowlist: aiRunAllowlist,
         ai_run_timeout_seconds: aiRunTimeoutSeconds,
         ai_task_max_rounds: aiTaskMaxRounds,
-        ai_task_token_budget: aiTaskTokenBudget
+        ai_task_token_budget: aiTaskTokenBudget,
+        local_ai_idle_timeout_mins: localAiIdleTimeoutMins
       };
 
       const ollamaHost = getOllamaHostFromUi();
@@ -9403,6 +9467,7 @@ async function restoreVersion() {
         currentConfig.ai_run_timeout_seconds = aiRunTimeoutSeconds;
         currentConfig.ai_task_max_rounds = aiTaskMaxRounds;
         currentConfig.ai_task_token_budget = aiTaskTokenBudget;
+        currentConfig.local_ai_idle_timeout_mins = localAiIdleTimeoutMins;
         currentConfig.ollama_host = ollamaHost;
         currentConfig.ollama_models_dir = ollamaModelsDir;
 

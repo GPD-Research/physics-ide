@@ -411,6 +411,8 @@ pub struct AppConfig {
     ai_task_max_rounds: u32,
     #[serde(default = "default_ai_task_token_budget")]
     ai_task_token_budget: u64,
+    #[serde(default = "default_local_ai_idle_timeout_mins")]
+    local_ai_idle_timeout_mins: u32,
     #[serde(default = "default_ollama_host")]
     ollama_host: String,
     #[serde(default)]
@@ -456,6 +458,7 @@ impl Default for AppConfig {
             ai_checkpoints_enabled: true,
             ai_task_max_rounds: default_ai_task_max_rounds(),
             ai_task_token_budget: default_ai_task_token_budget(),
+            local_ai_idle_timeout_mins: default_local_ai_idle_timeout_mins(),
             ollama_host: default_ollama_host(),
             ollama_models_dir: String::new(),
             reuse_notes_next_session: false,
@@ -527,6 +530,8 @@ pub struct SaveUserSettingsPayload {
     pub ai_task_max_rounds: u32,
     #[serde(default = "default_ai_task_token_budget", alias = "aiTaskTokenBudget")]
     pub ai_task_token_budget: u64,
+    #[serde(default = "default_local_ai_idle_timeout_mins", alias = "localAiIdleTimeoutMins")]
+    pub local_ai_idle_timeout_mins: u32,
     #[serde(default = "default_ai_run_timeout_seconds", alias = "aiRunTimeoutSeconds")]
     pub ai_run_timeout_seconds: u64,
     #[serde(default = "default_ollama_host", alias = "ollamaHost")]
@@ -1148,6 +1153,10 @@ const AI_TASK_BLOCKED: &str = "<<<BLOCKED>>>";
 
 fn default_ai_task_max_rounds() -> u32 {
     12
+}
+
+fn default_local_ai_idle_timeout_mins() -> u32 {
+    local_ai::DEFAULT_IDLE_TIMEOUT_MINS
 }
 
 fn default_ai_task_token_budget() -> u64 {
@@ -3688,12 +3697,15 @@ async fn send_llm_prompt(
     let openai_api_key = normalize_api_key(&config.openai_api_key);
     let gemini_api_key = normalize_api_key(&config.gemini_api_key);
     let ollama_host = config.ollama_host.clone();
+    let local_idle_mins = config.local_ai_idle_timeout_mins;
+    let call_pane = pane.clone();
+    let call_app = app.clone();
 
     let reply = tauri::async_runtime::spawn_blocking(move || {
         match provider_name.as_str() {
             "openai" => call_openai(&openai_api_key, &model, &canonical_messages),
             "gemini" => call_gemini(&gemini_api_key, &model, &canonical_messages),
-            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages),
+            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages, local_idle_mins, &call_pane, &call_app),
             other => Err(format!("Unsupported provider '{}'. Choose OpenAI, Gemini, or Local (Ollama).", other)),
         }
     })
@@ -4695,8 +4707,17 @@ fn parse_openai_visible_content(response: &serde_json::Value) -> Result<String, 
     ))
 }
 
-fn call_ollama(host: &str, model: &str, messages: &[serde_json::Value]) -> Result<ProviderReply, String> {
-    let result = local_ai::chat(host, model, messages)?;
+fn call_ollama(
+    host: &str,
+    model: &str,
+    messages: &[serde_json::Value],
+    idle_timeout_mins: u32,
+    pane: &str,
+    app: &AppHandle,
+) -> Result<ProviderReply, String> {
+    let result = local_ai::chat(host, model, messages, idle_timeout_mins, pane, |progress| {
+        let _ = app.emit("local-ai-progress", serde_json::json!({ "pane": pane, "progress": progress }));
+    })?;
     let total = match (result.prompt_tokens, result.output_tokens) {
         (Some(p), Some(o)) => Some(p + o),
         _ => None,
@@ -9176,6 +9197,7 @@ fn compile_ai_briefing_blocking(current_path: String, app: tauri::AppHandle) -> 
         "ai_checkpoints_enabled": config.ai_checkpoints_enabled,
         "ai_task_max_rounds": config.ai_task_max_rounds,
         "ai_task_token_budget": config.ai_task_token_budget,
+        "local_ai_idle_timeout_mins": config.local_ai_idle_timeout_mins,
         "ollama_models_dir": config.ollama_models_dir,
         "word_processor": config.word_processor,
         "ai_run_allowlist": config.ai_run_allowlist,
@@ -10742,6 +10764,12 @@ fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, app: tauri::
     serde_json::to_string(&outcome).map_err(|e| e.to_string())
 }
 
+/// Drops the pane's in-flight local reply; Ollama stops generating when the connection closes.
+#[tauri::command]
+fn cancel_local_ai_request(pane: String) {
+    local_ai::request_chat_cancel(&pane);
+}
+
 #[tauri::command]
 async fn cancel_ai_project_command() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || cancel_ai_project_command_blocking())
@@ -11291,6 +11319,9 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
     config.ai_task_token_budget = payload.ai_task_token_budget;
+    config.local_ai_idle_timeout_mins = payload
+        .local_ai_idle_timeout_mins
+        .clamp(1, local_ai::MAX_IDLE_TIMEOUT_MINS);
     config.ai_run_allowlist = ai_file_ops::parse_allowlist(&payload.ai_run_allowlist).join(",");
     config.ai_run_timeout_seconds = payload.ai_run_timeout_seconds.clamp(1, ai_file_ops::MAX_RUN_TIMEOUT_SECONDS);
     config.ollama_host = local_ai::normalize_host(&payload.ollama_host);
@@ -13098,6 +13129,7 @@ pub fn run() {
             describe_project_checkpoint,
             revert_project_checkpoint,
             cancel_ai_project_command,
+            cancel_local_ai_request,
             run_ai_calc,
             append_session_equation,
             ensure_session_doc,
