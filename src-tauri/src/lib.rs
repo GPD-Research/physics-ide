@@ -1197,7 +1197,7 @@ fn ai_file_read_protocol_instructions() -> String {
 }
 
 fn ai_file_write_protocol_instructions() -> String {
-    format!(
+    let instructions = format!(
         "To create or overwrite a file inside the project root, emit exactly this block in your reply (the app writes it to disk and reports the result back to you):\n  {open} path=\"relative/path/from/project/root.py\">>>\n  <complete file contents>\n  {close}\n  To add to the end of an existing file:\n  {aopen} path=\"relative/path.py\">>>\n  <text to append>\n  {aclose}\n  To change part of an existing file (preferred for code you already wrote), use one or more exact SEARCH/REPLACE hunks:\n  {eopen} path=\"relative/path.py\">>>\n  <<<<< SEARCH\n  <lines copied exactly from the current file>\n  =====\n  <replacement lines>\n  >>>>> REPLACE\n  {eclose}\n  Rules: paths are relative to the project root and may not leave it; FILE must contain the complete file (no diffs or ellipses); each SEARCH text must match the current file exactly once, otherwise the edit is rejected and you will be told why; do not wrap any block or its contents in a markdown code fence (fences are for display only and are never written to disk); close every opening marker with exactly three '>' characters; results of every block are reported back to you as a System message, so check them and repair failures.",
         open = AI_FILE_BLOCK_OPEN,
         close = AI_FILE_BLOCK_CLOSE,
@@ -1205,12 +1205,13 @@ fn ai_file_write_protocol_instructions() -> String {
         aclose = AI_APPEND_BLOCK_CLOSE,
         eopen = AI_EDIT_BLOCK_OPEN,
         eclose = AI_EDIT_BLOCK_CLOSE
-    )
+    );
+    format!("{instructions} Never claim a file was created, written, or changed until the corresponding operation's OK result is returned.")
 }
 
 fn ai_run_protocol_instructions(allowlist: &str, timeout_seconds: u64) -> String {
     format!(
-        "AI script execution is enabled. To run a program inside the project root, emit on its own line:\n  {run} cmd=\"python3 relative/script.py --arg value\" timeout=\"{timeout}\">>>\n  Allowed programs: {allow}. No shell operators (pipes, redirects, &&, ;), no inline-code flags (python -c, node -e, sh -c), and no paths outside the project root. If the user asks for a program that is not allowed (rm, mv, curl, ...), say it is outside the allowlist and stop; never re-express it through an allowed interpreter or a script. The command runs with the project root as working directory and is killed after the timeout (default {timeout}s). stdout, stderr and the exit code come back to you in a System message; read them and fix the script if it failed. Never write the program's output yourself and never invent an END RUN marker: stop after the RUN line and wait for the System message.",
+        "AI script execution is enabled only inside the Linux Bubblewrap sandbox. To run a program, emit on its own line:\n  {run} cmd=\"python3 relative/script.py --arg value\" timeout=\"{timeout}\">>>\n  Allowed programs: {allow}. No shell operators (pipes, redirects, &&, ;), no inline-code flags (python -c, node -e, sh -c), and no paths outside the project root. The sandbox has no network, hides home and user runtime directories, mounts the host filesystem read-only except for the selected project root, and limits temporary storage, CPU time, address space, file size, open files, and captured output. If Bubblewrap or its required namespaces are unavailable, execution is refused; never suggest running the command outside the sandbox. If the user asks for a program that is not allowed (rm, mv, curl, ...), say it is outside the allowlist and stop; never re-express it through an allowed interpreter or a script. The command is killed at the timeout (default {timeout}s). stdout, stderr and the exit code come back to you in a System message; read them and fix failures. Never write the program's output yourself and never invent an END RUN marker: stop after the RUN line and wait for the System message.",
         run = AI_RUN_BLOCK_OPEN,
         allow = allowlist,
         timeout = timeout_seconds
@@ -11558,6 +11559,7 @@ mod tests {
         assert!(!describe_ai_file_access_mode("disabled").contains(AI_FILE_BLOCK_OPEN));
         assert!(!describe_ai_file_access_mode("disabled").contains(AI_READ_BLOCK_OPEN));
         assert!(status.contains(AI_EDIT_BLOCK_OPEN) && status.contains(AI_APPEND_BLOCK_OPEN));
+        assert!(status.contains("Never claim a file was created"));
         assert!(!status.contains(AI_RUN_BLOCK_OPEN));
         let with_run = describe_ai_file_access("read_write", true, "python3,node", 45);
         assert!(with_run.contains(AI_RUN_BLOCK_OPEN) && with_run.contains("python3,node") && with_run.contains("45"));

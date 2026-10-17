@@ -1980,7 +1980,7 @@
                   <label for="settings-ai-task-tokens" style="margin-top: 6px;">Task mode: token budget per task (0 = unlimited)</label>
                   <input type="number" id="settings-ai-task-tokens" min="0" step="1000" placeholder="150000">
                   <div style="margin-top: 6px; font-size: 0.78rem; color: var(--accent-dim);">
-                    Commands run with the project root as working directory, without a shell (no pipes or redirects), are killed at the timeout, and their stdout/stderr/exit code are fed back to the AI so it can fix failures. Requires file access to be at least read-only. This also enables CALC scratch snippets, which run with python in <code>.scratch/</code> under the project root (120 s cap) and show any plots they save in the chat.
+                    Commands run inside Bubblewrap with no network, hidden home/runtime directories, and a read-only host filesystem except for the selected project (CALC can write only in <code>.scratch/</code>). CPU time, memory, per-file size, temporary storage, open files, captured output, and wall time are limited. If Bubblewrap or required Linux namespaces are unavailable, execution is refused. Requires file access to be at least read-only. This also enables CALC scratch snippets, which run with python in <code>.scratch/</code> under the project root (120 s cap) and show any plots they save in the chat.
                   </div>
                 </div>
               </div>
@@ -4309,7 +4309,9 @@
           appendTerminalLog(`AI file ops [${pane}]: results need a follow-up; auto-continuing (${depth + 1}/${AI_FILE_OPS_MAX_AUTO_CONTINUE}).`);
           return dispatchPromptToPane(
             pane,
-            'The file operation results above are in. Continue with the task: inspect the output, repair any failures, and finish your reply. Only emit further file or RUN blocks if they are still needed.',
+            fileOps.unrecognizedWriteClaim
+              ? 'The response claimed a file was created or written, but no successful workspace write operation occurred. The app does not execute prose or pseudo-commands such as `write path=...`. If file access is enabled, perform the requested write using the exact FILE/APPEND/EDIT block protocol from your instructions, then wait for the app result before saying the file exists. If access is disabled or the write fails, report that explicitly and do not claim success.'
+              : 'The file operation results above are in. Continue with the task: inspect the output, repair any failures, and finish your reply. Only emit further file or RUN blocks if they are still needed.',
             'System',
             [],
             { source: 'file_ops_follow_up', trigger: 'assistant_file_block', autoContinueDepth: depth + 1 }
@@ -4531,7 +4533,9 @@
 
       let gatePrompt = null;
       if (text.includes(TASK_DONE_MARK)) {
-        const issues = await verifyTaskCompletion(st, text);
+        const issues = fileOps.unrecognizedWriteClaim
+          ? ['A file write was claimed, but no recognized write operation succeeded.']
+          : await verifyTaskCompletion(st, text);
         if (!issues.length) {
           finishTask(pane, 'done', `${st.rounds} rounds, ~${st.tokens} tokens; completion checks passed`);
           return { handled: true, continuePrompt: null };
@@ -4557,7 +4561,9 @@
         return { handled: true, continuePrompt: null };
       }
 
-      const prompt = gatePrompt || (fileOps.needsFollowUp
+      const prompt = gatePrompt || (fileOps.unrecognizedWriteClaim
+        ? 'No successful workspace file write occurred, although the response claimed one. Do not claim the file exists. If file access is enabled, use the exact FILE/APPEND/EDIT block protocol and wait for the app result; otherwise report that access is unavailable. Continue the task only after checking the operation result.'
+        : fileOps.needsFollowUp
         ? 'The operation results above are in. Continue the task: check the output, repair failures, and proceed to the next step. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.'
         : 'Continue the task with the next step from your plan. Verify your results as you go. End with <<<DONE>>> and a summary once the goal is met, or <<<BLOCKED>>> if you need the user.');
       if (st.paused || st.approveEach) {
@@ -4834,13 +4840,25 @@
 
     async function applyAssistantFileBlocks(pane, index, reply) {
       const ops = parseAssistantFileBlocks(reply);
-      if (ops.length === 0) return { needsFollowUp: false, written: [], outputs: [] };
+      const unverifiedWriteClaim = Boolean(window.physicsIdeAiConfig?.claimsFileWriteWithoutOperation(reply));
+      if (ops.length === 0 && !unverifiedWriteClaim) return { needsFollowUp: false, written: [], outputs: [] };
 
       const results = [];
       const written = [];
       const outputs = [];
       let needsFollowUp = false;
       let touchedFiles = false;
+      if (ops.length === 0) {
+        const warning = 'No workspace file was written: the assistant claimed a file write, but emitted no recognized file operation.';
+        appendTerminalLog(`AI file op warning [${pane}]: ${warning}`);
+        injectSystemPrimerMessage(pane, index, 'File System', warning, {
+          source: 'file_write_result',
+          trigger: 'assistant_file_block',
+          volatility: 'dynamic'
+        });
+        return { needsFollowUp: true, written, outputs, unrecognizedWriteClaim: true };
+      }
+
       const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc');
       if (mutating.length > 0 && currentConfig?.ai_checkpoints_enabled !== false) {
         const label = `Before AI edits/runs [${pane}]: ${mutating.map(describeAssistantFileOp).join(', ')}`;
@@ -4868,6 +4886,14 @@
         }
       }
 
+      const unrecognizedWriteClaim = written.length === 0 && unverifiedWriteClaim;
+      if (unrecognizedWriteClaim) {
+        const warning = 'No workspace file was written: the assistant claimed a file write, but no recognized write operation succeeded.';
+        appendTerminalLog(`AI file op warning [${pane}]: ${warning}`);
+        results.push(`- WARNING: ${warning}`);
+        needsFollowUp = true;
+      }
+
       const summary = `File operation results:\n${results.join('\n')}`;
       injectSystemPrimerMessage(pane, index, 'File System', summary, {
         source: 'file_write_result',
@@ -4877,7 +4903,7 @@
       if (touchedFiles && typeof refreshFileTree === 'function') {
         try { await refreshFileTree(); } catch (_) { /* tree refresh is best-effort */ }
       }
-      return { needsFollowUp, written, outputs };
+      return { needsFollowUp, written, outputs, unrecognizedWriteClaim };
     }
 
     function evaluateProbeReply(reply, expectedToken) {
@@ -10872,7 +10898,8 @@ async function restoreVersion() {
   </script>
   <script type="module">
     import { getModelOptions } from './ai-config.js';
-    window.physicsIdeAiConfig = { getModelOptions };
+    import { claimsFileWriteWithoutOperation } from './ai-file-claims.js';
+    window.physicsIdeAiConfig = { getModelOptions, claimsFileWriteWithoutOperation };
   </script>
 </body>
 </html>

@@ -37,6 +37,11 @@ In this app's model:
 4. Save as new version when mature.
 5. Optionally push finalized version-state to GitHub if you use it.
 
+## AI File Writes
+AI file changes are executed only when the assistant emits a supported FILE, APPEND, or EDIT block and the app reports success. A prose statement such as “the file was created” is not proof that it exists. If the assistant claims a write without a successful operation, the IDE warns and prompts it to use the file-operation protocol.
+
+AI RUN and CALC commands use Bubblewrap on Linux: the host filesystem is read-only except for the selected project root (CALC receives write access only to `.scratch/`), network access is disabled, and the host home and user runtime directories are hidden. Resource and output limits apply. If Bubblewrap or required namespaces are unavailable, commands are refused rather than run unsandboxed. This is an operating-system isolation layer, not a substitute for reviewing code or protecting data deliberately placed inside the selected project.
+
 ## So:
 - Workspace = where work lives
 - Hypothesis = experiment track

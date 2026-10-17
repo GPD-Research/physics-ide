@@ -3356,6 +3356,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.5.2",
  "fastembed",
+ "libc",
  "mime_guess",
  "notify",
  "pbkdf2",
