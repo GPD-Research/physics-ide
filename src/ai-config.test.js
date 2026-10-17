@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getModelOptions, getProviderLabel } from './ai-config.js';
+import { claimsFileWriteWithoutOperation } from './ai-file-claims.js';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const htmlPath = path.join(testDir, 'index.html');
@@ -44,6 +45,13 @@ test('provider labels are human-readable', () => {
   assert.equal(getProviderLabel('openai'), 'OpenAI');
   assert.equal(getProviderLabel('gemini'), 'Gemini');
   assert.equal(getProviderLabel('unknown'), 'Provider');
+});
+
+test('detects unexecuted file-write claims from pseudo commands and success prose', () => {
+  assert.equal(claimsFileWriteWithoutOperation('The file manuscript/md/fixes.md has been created.'), true);
+  assert.equal(claimsFileWriteWithoutOperation('write path="manuscript/md/fixes.md"\ncontent="""# Audit\n"""'), true);
+  assert.equal(claimsFileWriteWithoutOperation('The file manuscript/md/fixes.md has not been created.'), false);
+  assert.equal(claimsFileWriteWithoutOperation('The file manuscript/md/fixes.md is missing.'), false);
 });
 
 test('ai thread bubbles use a transparent thread background without theme-specific overrides', () => {

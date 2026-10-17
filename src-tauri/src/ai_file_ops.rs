@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 
 /// Set by the UI Stop button; checked by the run loop so a running script can be killed.
 pub static RUN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -20,6 +22,10 @@ pub const DEFAULT_RUN_TIMEOUT_SECONDS: u64 = 60;
 pub const MAX_RUN_TIMEOUT_SECONDS: u64 = 600;
 /// Per-stream cap on captured output returned to the model.
 pub const MAX_OUTPUT_BYTES: usize = 12_000;
+pub const MAX_RUN_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+pub const MAX_RUN_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const TMPFS_LIMIT_128_MIB: &str = "134217728";
+const TMPFS_LIMIT_16_MIB: &str = "16777216";
 /// Scratch directory (relative to the project root) used by CALC blocks.
 pub const SCRATCH_DIR: &str = ".scratch";
 pub const MAX_CALC_TIMEOUT_SECONDS: u64 = 120;
@@ -219,56 +225,203 @@ pub struct RunOutcome {
     pub elapsed_seconds: f64,
 }
 
-fn truncate_output(bytes: &[u8]) -> (String, bool) {
-    let text = String::from_utf8_lossy(bytes);
-    if text.len() <= MAX_OUTPUT_BYTES {
-        return (text.to_string(), false);
+fn capture_output<R: Read>(mut reader: R) -> (String, bool) {
+    let half = MAX_OUTPUT_BYTES / 2;
+    let mut head = Vec::with_capacity(half);
+    let mut tail = Vec::with_capacity(half);
+    let mut total = 0usize;
+    let mut chunk = [0u8; 8192];
+
+    loop {
+        let read = match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+        total = total.saturating_add(read);
+        let mut remaining = &chunk[..read];
+        if head.len() < half {
+            let copied = (half - head.len()).min(remaining.len());
+            head.extend_from_slice(&remaining[..copied]);
+            remaining = &remaining[copied..];
+        }
+        if !remaining.is_empty() {
+            tail.extend_from_slice(remaining);
+            if tail.len() > half {
+                let excess = tail.len() - half;
+                tail.drain(..excess);
+            }
+        }
     }
-    let head = MAX_OUTPUT_BYTES / 2;
-    let tail = MAX_OUTPUT_BYTES - head;
-    let mut cut_head = head;
-    while !text.is_char_boundary(cut_head) {
-        cut_head -= 1;
+
+    if total <= MAX_OUTPUT_BYTES {
+        let mut captured = head;
+        captured.extend_from_slice(&tail);
+        return (String::from_utf8_lossy(&captured).into_owned(), false);
     }
-    let mut cut_tail = text.len() - tail;
-    while !text.is_char_boundary(cut_tail) {
-        cut_tail += 1;
-    }
-    (
-        format!("{}\n… [{} bytes omitted] …\n{}", &text[..cut_head], cut_tail - cut_head, &text[cut_tail..]),
-        true,
-    )
+
+    let omitted = total.saturating_sub(head.len()).saturating_sub(tail.len());
+    let head = String::from_utf8_lossy(&head);
+    let tail = String::from_utf8_lossy(&tail);
+    (format!("{head}\n… [{omitted} bytes omitted] …\n{tail}"), true)
 }
 
-/// Runs `argv` with the project root as working directory, killing it after
-/// `timeout`. Output is drained on reader threads so large output can't block.
+#[cfg(target_os = "linux")]
+fn sandbox_command(argv: &[String], project_root: &Path, timeout: Duration) -> Result<Command, String> {
+    let project_root = project_root
+        .canonicalize()
+        .map_err(|e| format!("AI execution sandbox requires a canonical project root: {e}"))?;
+    if !project_root.is_dir() {
+        return Err("AI execution sandbox requires the project root to be a directory.".to_string());
+    }
+    if ["/", "/home", "/root", "/run/user", "/media", "/mnt", "/srv", "/tmp", "/var/tmp", "/var/lib", "/sys"]
+        .iter()
+        .any(|path| project_root == Path::new(path))
+    {
+        return Err("AI execution blocked: choose a project subdirectory, not a protected system or temporary directory.".to_string());
+    }
+
+    let bwrap = ["/usr/bin/bwrap", "/bin/bwrap"]
+        .into_iter()
+        .find(|candidate| Path::new(candidate).is_file())
+        .ok_or_else(|| "AI execution blocked: Bubblewrap is not installed; install the bubblewrap package and retry.".to_string())?;
+
+    let mut command = Command::new(bwrap);
+    command
+        .env_clear()
+        .args([
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-net",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--disable-userns",
+            "--cap-drop",
+            "ALL",
+            "--ro-bind",
+            "/",
+            "/",
+            "--size",
+            TMPFS_LIMIT_16_MIB,
+            "--tmpfs",
+            "/home",
+            "--size",
+            TMPFS_LIMIT_16_MIB,
+            "--tmpfs",
+            "/root",
+            "--size",
+            TMPFS_LIMIT_128_MIB,
+            "--tmpfs",
+            "/tmp",
+            "--size",
+            TMPFS_LIMIT_128_MIB,
+            "--tmpfs",
+            "/var/tmp",
+        ]);
+
+    for path in ["/run", "/media", "/mnt", "/srv", "/var/lib"] {
+        if Path::new(path).exists() {
+            command.args(["--size", TMPFS_LIMIT_16_MIB, "--tmpfs", path]);
+        }
+    }
+    command
+        .args(["--size", TMPFS_LIMIT_16_MIB, "--tmpfs", "/sys", "--proc", "/proc", "--dev", "/dev"])
+        .args(["--size", TMPFS_LIMIT_128_MIB, "--tmpfs", "/dev/shm"]);
+
+    for masked_root in ["/home", "/root", "/run", "/media", "/mnt", "/srv", "/tmp", "/var/tmp", "/var/lib"] {
+        let masked_root = Path::new(masked_root);
+        if !project_root.starts_with(masked_root) {
+            continue;
+        }
+        let Ok(relative) = project_root.strip_prefix(masked_root) else {
+            continue;
+        };
+        let mut visible_path = masked_root.to_path_buf();
+        for component in relative.components() {
+            visible_path.push(component);
+            command.arg("--dir").arg(&visible_path);
+        }
+        break;
+    }
+
+    let project_path = project_root.to_string_lossy().into_owned();
+    let timeout_secs = timeout.as_secs().max(1);
+    command
+        .arg("--bind")
+        .arg(&project_root)
+        .arg(&project_path)
+        .args(["--chdir", &project_path, "--clearenv"])
+        .args(["--setenv", "HOME", "/tmp"])
+        .args(["--setenv", "TMPDIR", "/tmp"])
+        .args(["--setenv", "TMP", "/tmp"])
+        .args(["--setenv", "TEMP", "/tmp"])
+        .args(["--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"])
+        .args(["--setenv", "LANG", "C.UTF-8"])
+        .args(["--setenv", "LC_ALL", "C.UTF-8"])
+        .arg("--")
+        .arg(&argv[0])
+        .args(&argv[1..]);
+
+    let memory_limit = MAX_RUN_MEMORY_BYTES as libc::rlim_t;
+    let file_limit = MAX_RUN_FILE_BYTES as libc::rlim_t;
+    let cpu_limit = timeout_secs.saturating_add(1) as libc::rlim_t;
+    unsafe {
+        command.pre_exec(move || {
+            let limits = [
+                (libc::RLIMIT_AS, memory_limit),
+                (libc::RLIMIT_FSIZE, file_limit),
+                (libc::RLIMIT_CPU, cpu_limit),
+                (libc::RLIMIT_NOFILE, 256),
+                (libc::RLIMIT_CORE, 0),
+            ];
+            for (resource, limit) in limits {
+                let value = libc::rlimit {
+                    rlim_cur: limit,
+                    rlim_max: limit,
+                };
+                if libc::setrlimit(resource, &value) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+    Ok(command)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sandbox_command(_argv: &[String], _project_root: &Path, _timeout: Duration) -> Result<Command, String> {
+    Err("AI execution is unavailable on this platform because the required Bubblewrap sandbox is Linux-only.".to_string())
+}
+
+/// Runs `argv` inside an isolated Linux namespace with a read-only host filesystem,
+/// workspace-only writes, no network, bounded resources, and a wall-clock timeout.
 pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -> Result<RunOutcome, String> {
     let started = Instant::now();
     RUN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
-    let mut child = Command::new(&argv[0])
-        .args(&argv[1..])
-        .current_dir(project_root)
+    let mut child = sandbox_command(argv, project_root, timeout)?
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to start '{}': {e}", argv[0]))?;
+        .map_err(|e| format!("Failed to start AI execution sandbox for '{}': {e}", argv[0]))?;
 
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
     let stdout_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
+        let mut result = (String::new(), false);
         if let Some(mut pipe) = stdout_pipe.take() {
-            let _ = pipe.read_to_end(&mut buf);
+            result = capture_output(&mut pipe);
         }
-        buf
+        result
     });
     let stderr_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
+        let mut result = (String::new(), false);
         if let Some(mut pipe) = stderr_pipe.take() {
-            let _ = pipe.read_to_end(&mut buf);
+            result = capture_output(&mut pipe);
         }
-        buf
+        result
     });
 
     let mut timed_out = false;
@@ -295,10 +448,8 @@ pub fn run_in_project(argv: &[String], project_root: &Path, timeout: Duration) -
         }
     };
 
-    let stdout_bytes = stdout_thread.join().unwrap_or_default();
-    let stderr_bytes = stderr_thread.join().unwrap_or_default();
-    let (stdout, stdout_truncated) = truncate_output(&stdout_bytes);
-    let (stderr, stderr_truncated) = truncate_output(&stderr_bytes);
+    let (stdout, stdout_truncated) = stdout_thread.join().unwrap_or_default();
+    let (stderr, stderr_truncated) = stderr_thread.join().unwrap_or_default();
 
     Ok(RunOutcome {
         command: argv.join(" "),
@@ -517,7 +668,8 @@ mod tests {
     #[test]
     fn runs_and_times_out() {
         let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir();
+        let dir = std::env::temp_dir().join(format!("ai_run_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
         let argv: Vec<String> = ["sh", "-c", "echo out; echo err 1>&2; exit 3"].iter().map(|s| s.to_string()).collect();
         let out = run_in_project(&argv, &dir, Duration::from_secs(10)).unwrap();
         assert_eq!(out.exit_code, Some(3));
@@ -528,14 +680,37 @@ mod tests {
         let argv: Vec<String> = ["sh", "-c", "sleep 5"].iter().map(|s| s.to_string()).collect();
         let out = run_in_project(&argv, &dir, Duration::from_millis(300)).unwrap();
         assert!(out.timed_out);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn truncates_long_output() {
         let big = vec![b'a'; MAX_OUTPUT_BYTES * 3];
-        let (text, truncated) = truncate_output(&big);
+        let (text, truncated) = capture_output(big.as_slice());
         assert!(truncated);
         assert!(text.contains("bytes omitted"));
         assert!(text.len() < MAX_OUTPUT_BYTES + 100);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn run_sandbox_limits_writes_to_project_and_disables_network() {
+        let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let base = std::env::temp_dir().join(format!("ai_run_sandbox_{}", std::process::id()));
+        let project = base.join("workspace");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(base.join("outside.txt"), "host-only").unwrap();
+
+        let code = "from pathlib import Path\nimport socket\nPath('inside.txt').write_text('ok')\nprint('inside', Path('inside.txt').read_text())\nprint('outside_visible', Path('/tmp/ai_run_sandbox_{}' + '/outside.txt').exists())\ntry:\n socket.create_connection(('1.1.1.1', 53), timeout=1)\n print('network', 'available')\nexcept OSError:\n print('network', 'blocked')\n"
+            .replace("{}", &std::process::id().to_string());
+        let argv = vec!["python3".to_string(), "-c".to_string(), code];
+        let outcome = run_in_project(&argv, &project, Duration::from_secs(5)).unwrap();
+        assert_eq!(outcome.exit_code, Some(0), "{}", outcome.stderr);
+        assert!(outcome.stdout.contains("inside ok"), "{}", outcome.stdout);
+        assert!(outcome.stdout.contains("outside_visible False"), "{}", outcome.stdout);
+        assert!(outcome.stdout.contains("network blocked"), "{}", outcome.stdout);
+        assert_eq!(std::fs::read_to_string(project.join("inside.txt")).unwrap(), "ok");
+        assert_eq!(std::fs::read_to_string(base.join("outside.txt")).unwrap(), "host-only");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
