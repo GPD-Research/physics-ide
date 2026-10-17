@@ -23,6 +23,10 @@ The version 8 vision is to provide a flexible environment for:
 
 The project has moved from a simple desktop shell toward a more practical theory-development workspace.
 
+### Latest progress (2026-10-17)
+
+- sandboxed Linux `RUN` / `CALC` execution and added safeguards against unsupported AI claims that files were written.
+
 ### Latest progress (2026-10-15, v9.0.2)
 
 - cloud chat (OpenAI, Gemini) no longer aborts replies after 20 s: 20 s connect limit, 15 min per reply, and request errors name the cause (timeout / connect / TLS) — long Task rounds on gpt-4.1 failed with a bare "error sending request";
