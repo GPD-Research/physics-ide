@@ -357,6 +357,20 @@
         font-size: 0.9rem;
       }
 
+      .pane-model-badge {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 1px 8px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 260px;
+        flex: 0 1 auto;
+      }
+      .pane-model-badge.read-only { color: #ffb0b0; border-color: #ffb0b0; }
+
       .pane-header-left {
         display: flex;
         align-items: center;
@@ -1358,6 +1372,7 @@
         <div class="pane-header">
           <div class="pane-header-left">
             <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
+            <span id="left-model-badge" class="pane-model-badge" title="Model loaded in this pane">…</span>
             <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
             <span id="left-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('left')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
             <select id="left-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('left')" onchange="openRecallViewer('left', this.value); this.selectedIndex = 0;">
@@ -1433,6 +1448,7 @@
         <div class="pane-header">
           <div class="pane-header-left">
             <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
+            <span id="right-model-badge" class="pane-model-badge" title="Model loaded in this pane">…</span>
             <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
             <span id="right-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('right')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
             <select id="right-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('right')" onchange="openRecallViewer('right', this.value); this.selectedIndex = 0;">
@@ -1861,8 +1877,10 @@
               </div>
               <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
               <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
-              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
+              <div id="ai-route-both-status" style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">Not validated yet.</div>
+              <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+                <button type="button" onclick="validateBothPanes()" title="Check both pane models against their provider APIs">Validate both panes</button>
+                <button type="button" onclick="openAiRoutingModal()" title="Change providers/models; the provider model lists are re-pulled when this opens">Advanced AI Routing...</button>
               </div>
             </div>
 	          <div style="display: flex; gap: 10px;">
@@ -1879,6 +1897,20 @@
                 <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-openai-key', this)" title="Show or hide the OpenAI API key">Show</button>
 	            </div>
 	          </div>
+              <div class="pane-config-block">
+                <h4>Pane Permissions</h4>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-left-pane-ai-write" checked>
+                  <label for="settings-left-pane-ai-write" style="margin: 0;">Left pane AI may write files and run scripts</label>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-right-pane-ai-write">
+                  <label for="settings-right-pane-ai-write" style="margin: 0;">Right pane AI may write files and run scripts</label>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--accent-dim);">
+                  A pane with this off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
+                </div>
+              </div>
               <div class="pane-config-block">
                 <h4>Thread History</h4>
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
@@ -3587,7 +3619,9 @@
       }
 
       syncAiRoutingSummaries();
-      setAiRouteValidationStatus(safeSide, `${getProviderDisplayName(normalizedProvider)} model selected from catalog. Validate before save.`);
+      aiRouteValidationState[safeSide] = { ok: true, stamp: getPaneRouteSignature(safeSide) };
+      setAiRouteValidationStatus(safeSide, `${getProviderDisplayName(normalizedProvider)} model picked from the live catalog — no separate validation needed.`);
+      updateSaveGateForAiValidation();
     }
 
     function getApiKeyForProvider(provider) {
@@ -3697,6 +3731,59 @@
       }
     }
 
+    function isPaneRouteValidated(side) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const state = aiRouteValidationState[safeSide];
+      return Boolean(state?.ok) && state.stamp === getPaneRouteSignature(safeSide);
+    }
+
+    function setBothPanesValidationStatus(message, isError = false) {
+      const target = document.getElementById('ai-route-both-status');
+      if (!target) return;
+      target.textContent = message;
+      target.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    async function validateBothPanes() {
+      setBothPanesValidationStatus('Validating left and right pane models...');
+      const failures = [];
+      for (const side of ['left', 'right']) {
+        const provider = normalizeProviderForV7(document.getElementById(`settings-${side}-provider`)?.value || 'openai');
+        const model = normalizeModelForProvider(provider, getEffectivePaneModelFromUi(side));
+        try {
+          await validateAiRouteModelSelection(side, provider, model, getApiKeyForProvider(provider), { showStatus: true });
+          appendTerminalLog(`AI routing validation passed (${side}): ${provider} / ${model}`);
+        } catch (err) {
+          failures.push(`${side}: ${err}`);
+          appendTerminalLog(`AI routing validation failed (${side}): ${err}`);
+        }
+      }
+      if (failures.length === 0) {
+        setBothPanesValidationStatus(`Both panes validated — ${getPaneRouteSignature('left').replace('::', ' / ')} · ${getPaneRouteSignature('right').replace('::', ' / ')}`);
+      } else {
+        setBothPanesValidationStatus(`Validation failed — ${failures.join(' | ')}`, true);
+      }
+    }
+
+    function paneMayWrite(side) {
+      return side === 'right' ? currentConfig?.right_pane_ai_write === true : currentConfig?.left_pane_ai_write !== false;
+    }
+
+    function refreshPaneHeaderBadges() {
+      ['left', 'right'].forEach((side) => {
+        const badge = document.getElementById(`${side}-model-badge`);
+        if (!badge) return;
+        const provider = normalizeProviderForV7(currentConfig?.[`${side}_provider`] || 'openai');
+        const model = currentConfig?.[`${side}_model`] || getDefaultModelForPane(side, provider);
+        const readOnly = !paneMayWrite(side);
+        badge.textContent = `${getProviderDisplayName(provider)} · ${model}${readOnly ? ' · 🔒 read-only' : ''}`;
+        badge.classList.toggle('read-only', readOnly);
+        badge.title = readOnly
+          ? `${model} is loaded; this pane cannot write files or run scripts (Settings ▸ AI Models ▸ Pane Permissions)`
+          : `${model} is loaded; this pane may write files and run scripts`;
+      });
+    }
+
     async function initializeApp() {
       try {
         loadProjectTitle();
@@ -3749,6 +3836,9 @@
         document.getElementById('settings-right-provider').value = rightProvider;
         document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
         document.getElementById('settings-right-preserve-thread-history').checked = currentConfig.right_preserve_thread_history !== false;
+        document.getElementById('settings-left-pane-ai-write').checked = currentConfig.left_pane_ai_write !== false;
+        document.getElementById('settings-right-pane-ai-write').checked = currentConfig.right_pane_ai_write === true;
+        refreshPaneHeaderBadges();
         updateModelUI('left', leftModel);
         updateModelUI('right', rightModel);
         const leftCustomInput = document.getElementById('settings-left-model-custom');
@@ -4725,19 +4815,19 @@
     async function executeAssistantFileOp(pane, op) {
       switch (op.op) {
         case 'write': {
-          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content }));
+          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content, pane }));
           const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)`;
           appendTerminalLog(`AI file write [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'append': {
-          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content }));
+          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content, pane }));
           const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)`;
           appendTerminalLog(`AI file append [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'edit': {
-          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks }));
+          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks, pane }));
           const line = `edited ${outcome.relative_path} (${outcome.hunks} hunk${outcome.hunks === 1 ? '' : 's'}, now ${outcome.bytes} bytes)`;
           appendTerminalLog(`AI file edit [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
@@ -4753,7 +4843,7 @@
         }
         case 'run': {
           appendTerminalLog(`AI run [${pane}]: ${op.cmd}`);
-          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout }));
+          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout, pane }));
           if (outcome.stdout) appendTerminalLog(outcome.stdout.replace(/\n$/, ''));
           if (outcome.stderr) appendTerminalLog(outcome.stderr.replace(/\n$/, ''));
           appendTerminalLog(`AI run [${pane}] finished: ${outcome.cancelled ? 'cancelled' : outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
@@ -4770,7 +4860,7 @@
         }
         case 'calc': {
           appendTerminalLog(`AI calc [${pane}]: ${op.code.split('\n').length} line snippet`);
-          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout }));
+          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout, pane }));
           const run = outcome.run || {};
           if (run.stdout) appendTerminalLog(run.stdout.replace(/\n$/, ''));
           if (run.stderr) appendTerminalLog(run.stderr.replace(/\n$/, ''));
@@ -4859,7 +4949,14 @@
         return { needsFollowUp: true, written, outputs, unrecognizedWriteClaim: true };
       }
 
-      const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc');
+      const isMutating = (op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc';
+      const paneWritable = paneMayWrite(pane);
+      if (!paneWritable) {
+        ops.filter(isMutating).forEach((op) => {
+          op.op_refused = `the ${pane} pane is read-only (Settings ▸ AI Models ▸ Pane Permissions)`;
+        });
+      }
+      const mutating = paneWritable ? ops.filter(isMutating) : [];
       if (mutating.length > 0 && currentConfig?.ai_checkpoints_enabled !== false) {
         const label = `Before AI edits/runs [${pane}]: ${mutating.map(describeAssistantFileOp).join(', ')}`;
         try {
@@ -4872,6 +4969,12 @@
         }
       }
       for (const op of ops) {
+        if (op.op_refused) {
+          appendTerminalLog(`AI ${op.op} refused [${pane}] for ${describeAssistantFileOp(op)}: ${op.op_refused}`);
+          results.push(`- REFUSED: ${describeAssistantFileOp(op)} — ${op.op_refused}. Propose the change as text instead.`);
+          needsFollowUp = true;
+          continue;
+        }
         try {
           const outcome = await executeAssistantFileOp(pane, op);
           results.push(outcome.text);
@@ -6893,12 +6996,9 @@ async function restoreVersion() {
       modal.style.display = 'flex';
       updateSaveGateForAiValidation();
 
-      if (providerModelCatalog.openai.length === 0 && getApiKeyForProvider('openai')) {
-        refreshProviderModelCatalog('openai');
-      }
-      if (providerModelCatalog.gemini.length === 0 && getApiKeyForProvider('gemini')) {
-        refreshProviderModelCatalog('gemini');
-      }
+      if (getApiKeyForProvider('openai')) refreshProviderModelCatalog('openai');
+      if (getApiKeyForProvider('gemini')) refreshProviderModelCatalog('gemini');
+      if (typeof refreshLocalAiOverview === 'function') refreshLocalAiOverview();
     }
 
     function closeAiRoutingModal() {
@@ -9511,6 +9611,8 @@ async function restoreVersion() {
       const customBgPanel = document.getElementById('picker-bg-panel').value;
       const leftPreserveThreadHistory = document.getElementById('settings-left-preserve-thread-history').checked;
       const rightPreserveThreadHistory = document.getElementById('settings-right-preserve-thread-history').checked;
+      const leftPaneAiWrite = document.getElementById('settings-left-pane-ai-write').checked;
+      const rightPaneAiWrite = document.getElementById('settings-right-pane-ai-write').checked;
       const aiFileAccessMode = document.getElementById('settings-ai-file-access').value || 'disabled';
       const aiRunEnabled = document.getElementById('settings-ai-run-enabled').checked;
       const aiCheckpointsEnabled = document.getElementById('settings-ai-checkpoints-enabled').checked;
@@ -9542,6 +9644,8 @@ async function restoreVersion() {
         custom_bg_panel: customBgPanel,
         left_preserve_thread_history: leftPreserveThreadHistory,
         right_preserve_thread_history: rightPreserveThreadHistory,
+        left_pane_ai_write: leftPaneAiWrite,
+        right_pane_ai_write: rightPaneAiWrite,
         ai_file_access_mode: aiFileAccessMode,
         ai_run_enabled: aiRunEnabled,
         ai_checkpoints_enabled: aiCheckpointsEnabled,
@@ -9560,8 +9664,8 @@ async function restoreVersion() {
       const rightApiKey = getApiKeyForProvider(rightProvider);
 
       try {
-        await validateAiRouteModelSelection('left', leftProvider, leftModel, leftApiKey, { showStatus: true });
-        await validateAiRouteModelSelection('right', rightProvider, rightModel, rightApiKey, { showStatus: true });
+        if (!isPaneRouteValidated('left')) await validateAiRouteModelSelection('left', leftProvider, leftModel, leftApiKey, { showStatus: true });
+        if (!isPaneRouteValidated('right')) await validateAiRouteModelSelection('right', rightProvider, rightModel, rightApiKey, { showStatus: true });
       } catch (err) {
         isSavingSettings = false;
         saveBtnText.textContent = "Validation Failed";
@@ -9596,6 +9700,9 @@ async function restoreVersion() {
         currentConfig.custom_bg_panel = customBgPanel;
         currentConfig.left_preserve_thread_history = leftPreserveThreadHistory;
         currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
+        currentConfig.left_pane_ai_write = leftPaneAiWrite;
+        currentConfig.right_pane_ai_write = rightPaneAiWrite;
+        refreshPaneHeaderBadges();
         currentConfig.ai_file_access_mode = aiFileAccessMode;
         currentConfig.ai_run_enabled = aiRunEnabled;
         currentConfig.ai_checkpoints_enabled = aiCheckpointsEnabled;
