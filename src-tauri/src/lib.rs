@@ -409,6 +409,10 @@ pub struct AppConfig {
     left_pane_ai_write: bool,
     #[serde(default)]
     right_pane_ai_write: bool,
+    #[serde(default)]
+    left_ollama_options: local_ai::OllamaOptions,
+    #[serde(default)]
+    right_ollama_options: local_ai::OllamaOptions,
     #[serde(default = "default_ai_run_allowlist")]
     ai_run_allowlist: String,
     #[serde(default = "default_ai_run_timeout_seconds")]
@@ -464,6 +468,8 @@ impl Default for AppConfig {
             ai_run_enabled: false,
             left_pane_ai_write: true,
             right_pane_ai_write: false,
+            left_ollama_options: local_ai::OllamaOptions::default(),
+            right_ollama_options: local_ai::OllamaOptions::default(),
             ai_run_allowlist: default_ai_run_allowlist(),
             ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
             ai_checkpoints_enabled: true,
@@ -539,6 +545,10 @@ pub struct SaveUserSettingsPayload {
     pub left_pane_ai_write: bool,
     #[serde(default, alias = "rightPaneAiWrite")]
     pub right_pane_ai_write: bool,
+    #[serde(default, alias = "leftOllamaOptions")]
+    pub left_ollama_options: local_ai::OllamaOptions,
+    #[serde(default, alias = "rightOllamaOptions")]
+    pub right_ollama_options: local_ai::OllamaOptions,
     #[serde(default = "default_ai_run_allowlist", alias = "aiRunAllowlist")]
     pub ai_run_allowlist: String,
     #[serde(default = "default_true", alias = "aiCheckpointsEnabled")]
@@ -3784,6 +3794,11 @@ async fn send_llm_prompt(
     let gemini_api_key = normalize_api_key(&config.gemini_api_key);
     let ollama_host = config.ollama_host.clone();
     let local_idle_mins = config.local_ai_idle_timeout_mins;
+    let ollama_options = if pane.eq_ignore_ascii_case("right") {
+        config.right_ollama_options.clone()
+    } else {
+        config.left_ollama_options.clone()
+    };
     let call_pane = pane.clone();
     let call_app = app.clone();
 
@@ -3791,7 +3806,7 @@ async fn send_llm_prompt(
         match provider_name.as_str() {
             "openai" => call_openai(&openai_api_key, &model, &canonical_messages),
             "gemini" => call_gemini(&gemini_api_key, &model, &canonical_messages),
-            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages, local_idle_mins, &call_pane, &call_app),
+            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages, local_idle_mins, &ollama_options, &call_pane, &call_app),
             other => Err(format!("Unsupported provider '{}'. Choose OpenAI, Gemini, or Local (Ollama).", other)),
         }
     })
@@ -4812,10 +4827,11 @@ fn call_ollama(
     model: &str,
     messages: &[serde_json::Value],
     idle_timeout_mins: u32,
+    options: &local_ai::OllamaOptions,
     pane: &str,
     app: &AppHandle,
 ) -> Result<ProviderReply, String> {
-    let result = local_ai::chat(host, model, messages, idle_timeout_mins, pane, |progress| {
+    let result = local_ai::chat(host, model, messages, idle_timeout_mins, options, pane, |progress| {
         let _ = app.emit("local-ai-progress", serde_json::json!({ "pane": pane, "progress": progress }));
     })?;
     let total = match (result.prompt_tokens, result.output_tokens) {
@@ -4847,6 +4863,33 @@ async fn check_hardware_specs(models_dir: Option<String>, app: tauri::AppHandle)
     })
     .await
     .map_err(|e| format!("Hardware probe task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LocalModelInfoPayload {
+    #[serde(default)]
+    host: String,
+    model: String,
+}
+
+/// `/api/show` for one installed model: Modelfile PARAMETER defaults and trained context length.
+#[tauri::command]
+async fn get_local_model_info(payload: LocalModelInfoPayload, app: tauri::AppHandle) -> Result<String, String> {
+    let host = if payload.host.trim().is_empty() {
+        get_app_config(&app)?.ollama_host
+    } else {
+        payload.host
+    };
+    let model = payload.model.trim().to_string();
+    if model.is_empty() {
+        return Err("No local model selected.".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let info = local_ai::local_model_info(&host, &model)?;
+        serde_json::to_string(&info).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Local model info task failed: {e}"))?
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -11447,6 +11490,8 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.ai_run_enabled = payload.ai_run_enabled;
     config.left_pane_ai_write = payload.left_pane_ai_write;
     config.right_pane_ai_write = payload.right_pane_ai_write;
+    config.left_ollama_options = payload.left_ollama_options;
+    config.right_ollama_options = payload.right_ollama_options;
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
     config.ai_task_token_budget = payload.ai_task_token_budget;
@@ -13252,6 +13297,7 @@ pub fn run() {
             get_initial_state,
             check_hardware_specs,
             get_local_ai_overview,
+            get_local_model_info,
             install_local_model,
             get_help_doc,
             search_help_docs,
