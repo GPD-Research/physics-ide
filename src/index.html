@@ -357,6 +357,20 @@
         font-size: 0.9rem;
       }
 
+      .pane-model-badge {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 1px 8px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 260px;
+        flex: 0 1 auto;
+      }
+      .pane-model-badge.read-only { color: #ffb0b0; border-color: #ffb0b0; }
+
       .pane-header-left {
         display: flex;
         align-items: center;
@@ -1358,6 +1372,7 @@
         <div class="pane-header">
           <div class="pane-header-left">
             <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
+            <span id="left-model-badge" class="pane-model-badge" title="Model loaded in this pane">…</span>
             <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
             <span id="left-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('left')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
             <select id="left-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('left')" onchange="openRecallViewer('left', this.value); this.selectedIndex = 0;">
@@ -1433,6 +1448,7 @@
         <div class="pane-header">
           <div class="pane-header-left">
             <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
+            <span id="right-model-badge" class="pane-model-badge" title="Model loaded in this pane">…</span>
             <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
             <span id="right-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('right')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
             <select id="right-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('right')" onchange="openRecallViewer('right', this.value); this.selectedIndex = 0;">
@@ -1861,8 +1877,10 @@
               </div>
               <div id="ai-route-left-summary" style="font-size: 0.82rem; margin-bottom: 4px; color: var(--text);"></div>
               <div id="ai-route-right-summary" style="font-size: 0.82rem; color: var(--text);"></div>
-              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-                <button type="button" onclick="openAiRoutingModal()" title="Open advanced provider and model routing controls">Advanced AI Routing...</button>
+              <div id="ai-route-both-status" style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">Not validated yet.</div>
+              <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+                <button type="button" onclick="validateBothPanes()" title="Check both pane models against their provider APIs">Validate both panes</button>
+                <button type="button" onclick="openAiRoutingModal()" title="Change providers/models; the provider model lists are re-pulled when this opens">Advanced AI Routing...</button>
               </div>
             </div>
 	          <div style="display: flex; gap: 10px;">
@@ -1879,6 +1897,20 @@
                 <button type="button" style="margin-top: 6px;" onclick="toggleApiKeyVisibility('settings-openai-key', this)" title="Show or hide the OpenAI API key">Show</button>
 	            </div>
 	          </div>
+              <div class="pane-config-block">
+                <h4>Pane Permissions</h4>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-left-pane-ai-write" checked>
+                  <label for="settings-left-pane-ai-write" style="margin: 0;">Left pane AI may write files and run scripts</label>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                  <input type="checkbox" id="settings-right-pane-ai-write">
+                  <label for="settings-right-pane-ai-write" style="margin: 0;">Right pane AI may write files and run scripts</label>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--accent-dim);">
+                  A pane with this off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
+                </div>
+              </div>
               <div class="pane-config-block">
                 <h4>Thread History</h4>
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
@@ -1938,6 +1970,35 @@
               <div id="local-ai-model-list" class="local-ai-model-list">
                 <div style="color: var(--text-muted); padding: 4px 2px;">Click Refresh to list local models.</div>
               </div>
+              <details id="local-ai-custom" style="margin-top: 10px; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px;">
+                <summary style="cursor: pointer; font-weight: bold; font-size: 0.85rem; color: var(--accent-dim);">Custom local model &amp; runtime parameters</summary>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin: 6px 0 8px;">
+                  Pull any Ollama tag, even one not in the list above, and override the model's runtime parameters per pane. Blank fields keep the model's own defaults (shown as placeholders after "Load model defaults"); a smaller context window is the usual trick for running a model at your hardware's limit.
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px;">
+                  <div class="form-group" style="flex: 1 1 240px; margin-bottom: 0;">
+                    <label for="local-ai-custom-tag">Model tag (e.g. qwen2.5-coder:14b-instruct-q4_K_M)</label>
+                    <input type="text" id="local-ai-custom-tag" placeholder="repo:tag as shown on ollama.com/library">
+                  </div>
+                  <button type="button" onclick="pullCustomLocalModel()" title="Open a terminal that pulls this tag with Ollama">Pull</button>
+                  <button type="button" onclick="useCustomLocalModel('left')" title="Assign this tag to the left pane">Use Left</button>
+                  <button type="button" onclick="useCustomLocalModel('right')" title="Assign this tag to the right pane">Use Right</button>
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px;">
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label for="local-ai-options-pane">Parameters for</label>
+                    <select id="local-ai-options-pane" onchange="renderOllamaOptionsForm()">
+                      <option value="left">Left pane</option>
+                      <option value="right">Right pane</option>
+                    </select>
+                  </div>
+                  <button type="button" onclick="loadLocalModelDefaults()" title="Read this pane's model with /api/show and display its default parameters">Load model defaults</button>
+                  <button type="button" onclick="clearOllamaOptions()" title="Remove every override for this pane">Clear overrides</button>
+                  <span id="local-ai-options-model" style="font-size: 0.78rem; color: var(--text-muted);"></span>
+                </div>
+                <div id="local-ai-options-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px;"></div>
+                <div id="local-ai-options-status" style="font-size: 0.76rem; color: var(--text-muted); margin-top: 6px;">Overrides are saved with Settings and sent with every request from that pane.</div>
+              </details>
               <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 6px;">
                 Green = downloaded. Install opens your terminal with the Ollama download commands. Estimates assume a ~9K-token prompt (primer + retrieval) and a ~500-token reply; anything over 60 s per query is marked unusable.
               </div>
@@ -3587,7 +3648,9 @@
       }
 
       syncAiRoutingSummaries();
-      setAiRouteValidationStatus(safeSide, `${getProviderDisplayName(normalizedProvider)} model selected from catalog. Validate before save.`);
+      aiRouteValidationState[safeSide] = { ok: true, stamp: getPaneRouteSignature(safeSide) };
+      setAiRouteValidationStatus(safeSide, `${getProviderDisplayName(normalizedProvider)} model picked from the live catalog — no separate validation needed.`);
+      updateSaveGateForAiValidation();
     }
 
     function getApiKeyForProvider(provider) {
@@ -3697,6 +3760,59 @@
       }
     }
 
+    function isPaneRouteValidated(side) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      const state = aiRouteValidationState[safeSide];
+      return Boolean(state?.ok) && state.stamp === getPaneRouteSignature(safeSide);
+    }
+
+    function setBothPanesValidationStatus(message, isError = false) {
+      const target = document.getElementById('ai-route-both-status');
+      if (!target) return;
+      target.textContent = message;
+      target.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    async function validateBothPanes() {
+      setBothPanesValidationStatus('Validating left and right pane models...');
+      const failures = [];
+      for (const side of ['left', 'right']) {
+        const provider = normalizeProviderForV7(document.getElementById(`settings-${side}-provider`)?.value || 'openai');
+        const model = normalizeModelForProvider(provider, getEffectivePaneModelFromUi(side));
+        try {
+          await validateAiRouteModelSelection(side, provider, model, getApiKeyForProvider(provider), { showStatus: true });
+          appendTerminalLog(`AI routing validation passed (${side}): ${provider} / ${model}`);
+        } catch (err) {
+          failures.push(`${side}: ${err}`);
+          appendTerminalLog(`AI routing validation failed (${side}): ${err}`);
+        }
+      }
+      if (failures.length === 0) {
+        setBothPanesValidationStatus(`Both panes validated — ${getPaneRouteSignature('left').replace('::', ' / ')} · ${getPaneRouteSignature('right').replace('::', ' / ')}`);
+      } else {
+        setBothPanesValidationStatus(`Validation failed — ${failures.join(' | ')}`, true);
+      }
+    }
+
+    function paneMayWrite(side) {
+      return side === 'right' ? currentConfig?.right_pane_ai_write === true : currentConfig?.left_pane_ai_write !== false;
+    }
+
+    function refreshPaneHeaderBadges() {
+      ['left', 'right'].forEach((side) => {
+        const badge = document.getElementById(`${side}-model-badge`);
+        if (!badge) return;
+        const provider = normalizeProviderForV7(currentConfig?.[`${side}_provider`] || 'openai');
+        const model = currentConfig?.[`${side}_model`] || getDefaultModelForPane(side, provider);
+        const readOnly = !paneMayWrite(side);
+        badge.textContent = `${getProviderDisplayName(provider)} · ${model}${readOnly ? ' · 🔒 read-only' : ''}`;
+        badge.classList.toggle('read-only', readOnly);
+        badge.title = readOnly
+          ? `${model} is loaded; this pane cannot write files or run scripts (Settings ▸ AI Models ▸ Pane Permissions)`
+          : `${model} is loaded; this pane may write files and run scripts`;
+      });
+    }
+
     async function initializeApp() {
       try {
         loadProjectTitle();
@@ -3749,6 +3865,12 @@
         document.getElementById('settings-right-provider').value = rightProvider;
         document.getElementById('settings-left-preserve-thread-history').checked = currentConfig.left_preserve_thread_history !== false;
         document.getElementById('settings-right-preserve-thread-history').checked = currentConfig.right_preserve_thread_history !== false;
+        document.getElementById('settings-left-pane-ai-write').checked = currentConfig.left_pane_ai_write !== false;
+        document.getElementById('settings-right-pane-ai-write').checked = currentConfig.right_pane_ai_write === true;
+        ollamaOptionsDraft.left = { ...(currentConfig.left_ollama_options || {}) };
+        ollamaOptionsDraft.right = { ...(currentConfig.right_ollama_options || {}) };
+        renderOllamaOptionsForm();
+        refreshPaneHeaderBadges();
         updateModelUI('left', leftModel);
         updateModelUI('right', rightModel);
         const leftCustomInput = document.getElementById('settings-left-model-custom');
@@ -4725,19 +4847,19 @@
     async function executeAssistantFileOp(pane, op) {
       switch (op.op) {
         case 'write': {
-          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content }));
+          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content, pane }));
           const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)`;
           appendTerminalLog(`AI file write [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'append': {
-          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content }));
+          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content, pane }));
           const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)`;
           appendTerminalLog(`AI file append [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'edit': {
-          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks }));
+          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks, pane }));
           const line = `edited ${outcome.relative_path} (${outcome.hunks} hunk${outcome.hunks === 1 ? '' : 's'}, now ${outcome.bytes} bytes)`;
           appendTerminalLog(`AI file edit [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
@@ -4753,7 +4875,7 @@
         }
         case 'run': {
           appendTerminalLog(`AI run [${pane}]: ${op.cmd}`);
-          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout }));
+          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout, pane }));
           if (outcome.stdout) appendTerminalLog(outcome.stdout.replace(/\n$/, ''));
           if (outcome.stderr) appendTerminalLog(outcome.stderr.replace(/\n$/, ''));
           appendTerminalLog(`AI run [${pane}] finished: ${outcome.cancelled ? 'cancelled' : outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
@@ -4770,7 +4892,7 @@
         }
         case 'calc': {
           appendTerminalLog(`AI calc [${pane}]: ${op.code.split('\n').length} line snippet`);
-          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout }));
+          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout, pane }));
           const run = outcome.run || {};
           if (run.stdout) appendTerminalLog(run.stdout.replace(/\n$/, ''));
           if (run.stderr) appendTerminalLog(run.stderr.replace(/\n$/, ''));
@@ -4859,7 +4981,14 @@
         return { needsFollowUp: true, written, outputs, unrecognizedWriteClaim: true };
       }
 
-      const mutating = ops.filter((op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc');
+      const isMutating = (op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc';
+      const paneWritable = paneMayWrite(pane);
+      if (!paneWritable) {
+        ops.filter(isMutating).forEach((op) => {
+          op.op_refused = `the ${pane} pane is read-only (Settings ▸ AI Models ▸ Pane Permissions)`;
+        });
+      }
+      const mutating = paneWritable ? ops.filter(isMutating) : [];
       if (mutating.length > 0 && currentConfig?.ai_checkpoints_enabled !== false) {
         const label = `Before AI edits/runs [${pane}]: ${mutating.map(describeAssistantFileOp).join(', ')}`;
         try {
@@ -4872,6 +5001,12 @@
         }
       }
       for (const op of ops) {
+        if (op.op_refused) {
+          appendTerminalLog(`AI ${op.op} refused [${pane}] for ${describeAssistantFileOp(op)}: ${op.op_refused}`);
+          results.push(`- REFUSED: ${describeAssistantFileOp(op)} — ${op.op_refused}. Propose the change as text instead.`);
+          needsFollowUp = true;
+          continue;
+        }
         try {
           const outcome = await executeAssistantFileOp(pane, op);
           results.push(outcome.text);
@@ -5721,6 +5856,140 @@
       syncAiRoutingSummaries();
       markAiRouteValidationPending(safeSide, `Local model ${modelName} selected. Validate (or Save) to apply.`);
       appendTerminalLog(`Local AI: ${modelName} assigned to ${safeSide} pane (save settings to apply).`);
+    }
+
+    const OLLAMA_OPTION_FIELDS = [
+      { key: 'num_ctx', label: 'Context window (num_ctx)', type: 'int', min: 512, hint: 'Tokens of prompt+reply the model holds. Lower = less RAM and faster prompt reading; the app otherwise uses 16384.' },
+      { key: 'num_predict', label: 'Max reply tokens (num_predict)', type: 'int', min: -1, hint: '-1 = unlimited, -2 = fill the context.' },
+      { key: 'temperature', label: 'Temperature', type: 'float', min: 0, step: 0.05, hint: '0 = deterministic; math and code like 0–0.3.' },
+      { key: 'top_p', label: 'top_p', type: 'float', min: 0, max: 1, step: 0.05, hint: 'Nucleus sampling cutoff.' },
+      { key: 'top_k', label: 'top_k', type: 'int', min: 1, hint: 'Candidate tokens per step.' },
+      { key: 'repeat_penalty', label: 'Repeat penalty', type: 'float', min: 0, step: 0.05, hint: '1.0 = off; 1.1–1.3 curbs loops in small models.' },
+      { key: 'num_thread', label: 'CPU threads (num_thread)', type: 'int', min: 1, hint: 'Physical cores usually beat logical cores.' },
+      { key: 'num_gpu', label: 'GPU layers (num_gpu)', type: 'int', min: 0, hint: '0 forces CPU; omit to let Ollama decide.' },
+      { key: 'keep_alive', label: 'Keep loaded (keep_alive)', type: 'text', hint: 'e.g. 30m, 2h, -1 = never unload (Ollama default 5m).' }
+    ];
+    const ollamaOptionsDraft = { left: {}, right: {} };
+    const ollamaModelDefaults = { left: null, right: null };
+
+    function getOllamaOptionsPane() {
+      return document.getElementById('local-ai-options-pane')?.value === 'right' ? 'right' : 'left';
+    }
+
+    function paneOllamaModelFromUi(side) {
+      const provider = normalizeProviderForV7(document.getElementById(`settings-${side}-provider`)?.value || currentConfig?.[`${side}_provider`] || '');
+      if (provider !== 'ollama') return '';
+      return getEffectivePaneModelFromUi(side) || currentConfig?.[`${side}_model`] || '';
+    }
+
+    function collectOllamaOptions(side) {
+      const safeSide = side === 'right' ? 'right' : 'left';
+      if (getOllamaOptionsPane() === safeSide) readOllamaOptionsForm();
+      const out = {};
+      OLLAMA_OPTION_FIELDS.forEach(({ key }) => {
+        const value = ollamaOptionsDraft[safeSide]?.[key];
+        if (value !== undefined && value !== null && value !== '') out[key] = value;
+      });
+      return out;
+    }
+
+    function readOllamaOptionsForm() {
+      const side = getOllamaOptionsPane();
+      const draft = {};
+      OLLAMA_OPTION_FIELDS.forEach((field) => {
+        const raw = String(document.getElementById(`ollama-opt-${field.key}`)?.value ?? '').trim();
+        if (!raw) return;
+        if (field.type === 'text') { draft[field.key] = raw; return; }
+        const num = Number(raw);
+        if (!Number.isFinite(num)) return;
+        draft[field.key] = field.type === 'int' ? Math.trunc(num) : num;
+      });
+      ollamaOptionsDraft[side] = draft;
+    }
+
+    function renderOllamaOptionsForm() {
+      const grid = document.getElementById('local-ai-options-grid');
+      if (!grid) return;
+      const side = getOllamaOptionsPane();
+      const draft = ollamaOptionsDraft[side] || {};
+      const defaults = ollamaModelDefaults[side];
+      const model = paneOllamaModelFromUi(side);
+      const modelLabel = document.getElementById('local-ai-options-model');
+      if (modelLabel) {
+        modelLabel.textContent = model
+          ? `${side} pane model: ${model}${defaults ? ` · ${defaults.parameter_size || ''} ${defaults.quantization || ''} · trained context ${defaults.context_length || '?'}` : ''}`
+          : `${side} pane is not on Local AI (Ollama); overrides are kept but unused.`;
+      }
+      grid.innerHTML = OLLAMA_OPTION_FIELDS.map((field) => {
+        const modelDefault = defaults?.parameters?.[field.key];
+        const fallback = field.key === 'num_ctx'
+          ? `model ${modelDefault || defaults?.context_length || '?'} · app ${defaults?.app_default_num_ctx || 16384}`
+          : (modelDefault !== undefined ? `model default ${modelDefault}` : (field.key === 'keep_alive' ? 'Ollama default 5m' : 'model default'));
+        const value = draft[field.key] ?? '';
+        const attrs = field.type === 'text'
+          ? 'type="text"'
+          : `type="number"${field.min !== undefined ? ` min="${field.min}"` : ''}${field.max !== undefined ? ` max="${field.max}"` : ''} step="${field.step || 1}"`;
+        return `<div class="form-group" style="margin-bottom: 0;" title="${escapeHelpHtml(field.hint)}">
+          <label for="ollama-opt-${field.key}" style="font-size: 0.76rem;">${escapeHelpHtml(field.label)}</label>
+          <input id="ollama-opt-${field.key}" ${attrs} value="${escapeHelpHtml(String(value))}" placeholder="${escapeHelpHtml(fallback)}" oninput="readOllamaOptionsForm()">
+        </div>`;
+      }).join('');
+    }
+
+    function setOllamaOptionsStatus(message, isError = false) {
+      const el = document.getElementById('local-ai-options-status');
+      if (!el) return;
+      el.textContent = message;
+      el.style.color = isError ? '#ffb0b0' : 'var(--text-muted)';
+    }
+
+    async function loadLocalModelDefaults() {
+      const side = getOllamaOptionsPane();
+      const model = paneOllamaModelFromUi(side);
+      if (!model) {
+        setOllamaOptionsStatus(`Set the ${side} pane to Local AI (Ollama) and pick a model first.`, true);
+        return;
+      }
+      setOllamaOptionsStatus(`Reading ${model} defaults from Ollama...`);
+      try {
+        const response = await invoke('get_local_model_info', { payload: { host: getOllamaHostFromUi(), model } });
+        ollamaModelDefaults[side] = typeof response === 'string' ? JSON.parse(response) : response;
+        renderOllamaOptionsForm();
+        const params = Object.entries(ollamaModelDefaults[side].parameters || {}).map(([k, v]) => `${k}=${v}`).join(', ');
+        setOllamaOptionsStatus(`${model}: ${params || 'no Modelfile PARAMETER lines (Ollama built-in defaults apply)'}. Only filled fields override these.`);
+      } catch (err) {
+        setOllamaOptionsStatus(`Could not read model defaults: ${err}`, true);
+      }
+    }
+
+    function clearOllamaOptions() {
+      ollamaOptionsDraft[getOllamaOptionsPane()] = {};
+      renderOllamaOptionsForm();
+      setOllamaOptionsStatus('Overrides cleared for this pane (save settings to apply).');
+    }
+
+    function getCustomLocalModelTag() {
+      const tag = String(document.getElementById('local-ai-custom-tag')?.value || '').trim();
+      if (!tag || !/^[A-Za-z0-9][A-Za-z0-9._\/-]*(:[A-Za-z0-9._-]+)?$/.test(tag)) {
+        setLocalAiStatus('Enter a model tag like qwen2.5-coder:14b-instruct-q4_K_M.', true);
+        return '';
+      }
+      return tag;
+    }
+
+    async function pullCustomLocalModel() {
+      const tag = getCustomLocalModelTag();
+      if (tag) await installLocalModel(tag);
+    }
+
+    function useCustomLocalModel(side) {
+      const tag = getCustomLocalModelTag();
+      if (!tag) return;
+      useLocalModel(tag, side);
+      const paneSelect = document.getElementById('local-ai-options-pane');
+      if (paneSelect) paneSelect.value = side === 'right' ? 'right' : 'left';
+      ollamaModelDefaults[side === 'right' ? 'right' : 'left'] = null;
+      renderOllamaOptionsForm();
     }
 
     function getOllamaModelsDirFromUi() {
@@ -6893,12 +7162,9 @@ async function restoreVersion() {
       modal.style.display = 'flex';
       updateSaveGateForAiValidation();
 
-      if (providerModelCatalog.openai.length === 0 && getApiKeyForProvider('openai')) {
-        refreshProviderModelCatalog('openai');
-      }
-      if (providerModelCatalog.gemini.length === 0 && getApiKeyForProvider('gemini')) {
-        refreshProviderModelCatalog('gemini');
-      }
+      if (getApiKeyForProvider('openai')) refreshProviderModelCatalog('openai');
+      if (getApiKeyForProvider('gemini')) refreshProviderModelCatalog('gemini');
+      if (typeof refreshLocalAiOverview === 'function') refreshLocalAiOverview();
     }
 
     function closeAiRoutingModal() {
@@ -9511,6 +9777,8 @@ async function restoreVersion() {
       const customBgPanel = document.getElementById('picker-bg-panel').value;
       const leftPreserveThreadHistory = document.getElementById('settings-left-preserve-thread-history').checked;
       const rightPreserveThreadHistory = document.getElementById('settings-right-preserve-thread-history').checked;
+      const leftPaneAiWrite = document.getElementById('settings-left-pane-ai-write').checked;
+      const rightPaneAiWrite = document.getElementById('settings-right-pane-ai-write').checked;
       const aiFileAccessMode = document.getElementById('settings-ai-file-access').value || 'disabled';
       const aiRunEnabled = document.getElementById('settings-ai-run-enabled').checked;
       const aiCheckpointsEnabled = document.getElementById('settings-ai-checkpoints-enabled').checked;
@@ -9542,6 +9810,10 @@ async function restoreVersion() {
         custom_bg_panel: customBgPanel,
         left_preserve_thread_history: leftPreserveThreadHistory,
         right_preserve_thread_history: rightPreserveThreadHistory,
+        left_pane_ai_write: leftPaneAiWrite,
+        right_pane_ai_write: rightPaneAiWrite,
+        left_ollama_options: collectOllamaOptions('left'),
+        right_ollama_options: collectOllamaOptions('right'),
         ai_file_access_mode: aiFileAccessMode,
         ai_run_enabled: aiRunEnabled,
         ai_checkpoints_enabled: aiCheckpointsEnabled,
@@ -9560,8 +9832,8 @@ async function restoreVersion() {
       const rightApiKey = getApiKeyForProvider(rightProvider);
 
       try {
-        await validateAiRouteModelSelection('left', leftProvider, leftModel, leftApiKey, { showStatus: true });
-        await validateAiRouteModelSelection('right', rightProvider, rightModel, rightApiKey, { showStatus: true });
+        if (!isPaneRouteValidated('left')) await validateAiRouteModelSelection('left', leftProvider, leftModel, leftApiKey, { showStatus: true });
+        if (!isPaneRouteValidated('right')) await validateAiRouteModelSelection('right', rightProvider, rightModel, rightApiKey, { showStatus: true });
       } catch (err) {
         isSavingSettings = false;
         saveBtnText.textContent = "Validation Failed";
@@ -9596,6 +9868,11 @@ async function restoreVersion() {
         currentConfig.custom_bg_panel = customBgPanel;
         currentConfig.left_preserve_thread_history = leftPreserveThreadHistory;
         currentConfig.right_preserve_thread_history = rightPreserveThreadHistory;
+        currentConfig.left_pane_ai_write = leftPaneAiWrite;
+        currentConfig.right_pane_ai_write = rightPaneAiWrite;
+        currentConfig.left_ollama_options = payload.left_ollama_options;
+        currentConfig.right_ollama_options = payload.right_ollama_options;
+        refreshPaneHeaderBadges();
         currentConfig.ai_file_access_mode = aiFileAccessMode;
         currentConfig.ai_run_enabled = aiRunEnabled;
         currentConfig.ai_checkpoints_enabled = aiCheckpointsEnabled;

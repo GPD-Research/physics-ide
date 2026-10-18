@@ -840,6 +840,115 @@ fn build_linux_terminal_command(terminal_app: &str, script: &str) -> (String, Ve
     (terminal_app.to_string(), args)
 }
 
+/// Per-pane Ollama runtime overrides. `None` leaves the model's own default in place
+/// (the app only adds `num_ctx` when unset, see `OLLAMA_NUM_CTX`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OllamaOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_ctx: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_predict: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_thread: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_gpu: Option<i64>,
+    /// Ollama duration string such as "5m", "1h" or "-1" (keep loaded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_alive: Option<String>,
+}
+
+impl OllamaOptions {
+    /// The `options` object sent with a chat request: model defaults for anything unset,
+    /// except `num_ctx`, which falls back to the app's working-context size.
+    pub fn request_options(&self) -> serde_json::Value {
+        let mut o = serde_json::Map::new();
+        o.insert("num_ctx".into(), serde_json::json!(self.num_ctx.unwrap_or(OLLAMA_NUM_CTX)));
+        if let Some(v) = self.num_predict { o.insert("num_predict".into(), serde_json::json!(v)); }
+        if let Some(v) = self.temperature { o.insert("temperature".into(), serde_json::json!(v)); }
+        if let Some(v) = self.top_p { o.insert("top_p".into(), serde_json::json!(v)); }
+        if let Some(v) = self.top_k { o.insert("top_k".into(), serde_json::json!(v)); }
+        if let Some(v) = self.repeat_penalty { o.insert("repeat_penalty".into(), serde_json::json!(v)); }
+        if let Some(v) = self.num_thread { o.insert("num_thread".into(), serde_json::json!(v)); }
+        if let Some(v) = self.num_gpu { o.insert("num_gpu".into(), serde_json::json!(v)); }
+        serde_json::Value::Object(o)
+    }
+
+    pub fn keep_alive(&self) -> Option<&str> {
+        self.keep_alive.as_deref().map(str::trim).filter(|v| !v.is_empty())
+    }
+}
+
+/// What `/api/show` reports about an installed model: its Modelfile PARAMETERs and
+/// the architecture's trained context length, so the UI can show real defaults.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LocalModelInfo {
+    pub model: String,
+    pub family: String,
+    pub parameter_size: String,
+    pub quantization: String,
+    pub context_length: Option<u64>,
+    /// PARAMETER lines from the Modelfile, e.g. {"temperature": "0.7", "num_ctx": "8192", "stop": "<|im_end|>"}.
+    pub parameters: std::collections::BTreeMap<String, String>,
+    pub app_default_num_ctx: u64,
+}
+
+pub fn parse_model_info(model: &str, show: &serde_json::Value) -> LocalModelInfo {
+    let details = show.get("details").cloned().unwrap_or(serde_json::Value::Null);
+    let text = |key: &str| details.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut parameters = std::collections::BTreeMap::new();
+    if let Some(raw) = show.get("parameters").and_then(|v| v.as_str()) {
+        for line in raw.lines() {
+            let mut parts = line.trim().splitn(2, char::is_whitespace);
+            if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+                let value = value.trim().trim_matches('"').to_string();
+                parameters
+                    .entry(key.to_string())
+                    .and_modify(|existing: &mut String| {
+                        existing.push_str(", ");
+                        existing.push_str(&value);
+                    })
+                    .or_insert(value);
+            }
+        }
+    }
+    let context_length = show
+        .get("model_info")
+        .and_then(|v| v.as_object())
+        .and_then(|info| info.iter().find(|(k, _)| k.ends_with(".context_length")).and_then(|(_, v)| v.as_u64()));
+    LocalModelInfo {
+        model: model.to_string(),
+        family: text("family"),
+        parameter_size: text("parameter_size"),
+        quantization: text("quantization_level"),
+        context_length,
+        parameters,
+        app_default_num_ctx: OLLAMA_NUM_CTX,
+    }
+}
+
+pub fn local_model_info(host: &str, model: &str) -> Result<LocalModelInfo, String> {
+    let host = normalize_host(host);
+    let client = http_client(15)?;
+    let response = client
+        .post(format!("{host}/api/show"))
+        .json(&serde_json::json!({ "model": model }))
+        .send()
+        .map_err(|e| format!("Ollama /api/show failed ({host}): {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Ollama has no model '{model}' (HTTP {}). Pull it first.", response.status()));
+    }
+    let show = response.json::<serde_json::Value>().map_err(|e| format!("Unreadable /api/show reply: {e}"))?;
+    Ok(parse_model_info(model, &show))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OllamaChatResult {
     pub content: String,
@@ -1030,6 +1139,7 @@ pub fn chat(
     model: &str,
     messages: &[serde_json::Value],
     idle_timeout_mins: u32,
+    options: &OllamaOptions,
     cancel_key: &str,
     mut on_progress: impl FnMut(&ChatProgress),
 ) -> Result<OllamaChatResult, String> {
@@ -1040,12 +1150,15 @@ pub fn chat(
         .read_timeout(std::time::Duration::from_secs(idle_secs))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "messages": canonical_to_ollama_messages(messages),
         "stream": true,
-        "options": { "num_ctx": OLLAMA_NUM_CTX }
+        "options": options.request_options()
     });
+    if let Some(keep_alive) = options.keep_alive() {
+        body["keep_alive"] = serde_json::json!(keep_alive);
+    }
     take_chat_cancel(cancel_key);
     let acc = Arc::new(Mutex::new(StreamAcc::default()));
     let (tx, rx) = std::sync::mpsc::channel();
@@ -1102,6 +1215,31 @@ async fn stream_chat_task(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ollama_options_only_send_overrides() {
+        let defaults = OllamaOptions::default().request_options();
+        assert_eq!(defaults, serde_json::json!({ "num_ctx": OLLAMA_NUM_CTX }));
+        let custom = OllamaOptions { num_ctx: Some(8192), temperature: Some(0.2), keep_alive: Some(" 30m ".into()), ..Default::default() };
+        assert_eq!(custom.request_options(), serde_json::json!({ "num_ctx": 8192, "temperature": 0.2 }));
+        assert_eq!(custom.keep_alive(), Some("30m"));
+        assert_eq!(OllamaOptions { keep_alive: Some("  ".into()), ..Default::default() }.keep_alive(), None);
+    }
+
+    #[test]
+    fn model_info_parses_show_reply() {
+        let show = serde_json::json!({
+            "details": { "family": "qwen2", "parameter_size": "7.6B", "quantization_level": "Q4_K_M" },
+            "parameters": "num_ctx                        32768\nstop                           \"<|im_start|>\"\nstop                           \"<|im_end|>\"\ntemperature                    0.7",
+            "model_info": { "general.architecture": "qwen2", "qwen2.context_length": 32768 }
+        });
+        let info = parse_model_info("qwen2.5-coder:7b", &show);
+        assert_eq!(info.context_length, Some(32768));
+        assert_eq!(info.parameters["num_ctx"], "32768");
+        assert_eq!(info.parameters["temperature"], "0.7");
+        assert_eq!(info.parameters["stop"], "<|im_start|>, <|im_end|>");
+        assert_eq!(info.quantization, "Q4_K_M");
+    }
+
     use super::*;
 
     #[test]

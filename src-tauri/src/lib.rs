@@ -404,6 +404,15 @@ pub struct AppConfig {
     ai_file_access_mode: String,
     #[serde(default)]
     ai_run_enabled: bool,
+    /// Per-pane write gate: a pane with this off can still READ/SEARCH but its FILE/APPEND/EDIT/RUN/CALC blocks are refused.
+    #[serde(default = "default_true")]
+    left_pane_ai_write: bool,
+    #[serde(default)]
+    right_pane_ai_write: bool,
+    #[serde(default)]
+    left_ollama_options: local_ai::OllamaOptions,
+    #[serde(default)]
+    right_ollama_options: local_ai::OllamaOptions,
     #[serde(default = "default_ai_run_allowlist")]
     ai_run_allowlist: String,
     #[serde(default = "default_ai_run_timeout_seconds")]
@@ -457,6 +466,10 @@ impl Default for AppConfig {
             right_preserve_thread_history: true,
             ai_file_access_mode: default_ai_file_access_mode(),
             ai_run_enabled: false,
+            left_pane_ai_write: true,
+            right_pane_ai_write: false,
+            left_ollama_options: local_ai::OllamaOptions::default(),
+            right_ollama_options: local_ai::OllamaOptions::default(),
             ai_run_allowlist: default_ai_run_allowlist(),
             ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
             ai_checkpoints_enabled: true,
@@ -528,6 +541,14 @@ pub struct SaveUserSettingsPayload {
     pub ai_file_access_mode: String,
     #[serde(default, alias = "aiRunEnabled")]
     pub ai_run_enabled: bool,
+    #[serde(default = "default_true", alias = "leftPaneAiWrite")]
+    pub left_pane_ai_write: bool,
+    #[serde(default, alias = "rightPaneAiWrite")]
+    pub right_pane_ai_write: bool,
+    #[serde(default, alias = "leftOllamaOptions")]
+    pub left_ollama_options: local_ai::OllamaOptions,
+    #[serde(default, alias = "rightOllamaOptions")]
+    pub right_ollama_options: local_ai::OllamaOptions,
     #[serde(default = "default_ai_run_allowlist", alias = "aiRunAllowlist")]
     pub ai_run_allowlist: String,
     #[serde(default = "default_true", alias = "aiCheckpointsEnabled")]
@@ -1783,6 +1804,37 @@ fn ensure_ai_file_access(config: &AppConfig, action: &str, target_path: &Path, w
     }
 
     Ok(())
+}
+
+fn pane_may_write(config: &AppConfig, pane: &str) -> bool {
+    match pane.trim().to_ascii_lowercase().as_str() {
+        "right" => config.right_pane_ai_write,
+        _ => config.left_pane_ai_write,
+    }
+}
+
+fn pane_label(pane: &str) -> &'static str {
+    if pane.trim().eq_ignore_ascii_case("right") { "right" } else { "left" }
+}
+
+fn pane_read_only_notice(pane: &str) -> String {
+    format!(
+        "The {} pane is read-only: FILE, APPEND, EDIT, RUN and CALC blocks from this pane are refused by the application. \
+         You may READ, SEARCH and REMEMBER, and you may propose code or edits as ordinary text for the user (or the other pane) to apply. \
+         Settings ▸ AI Models ▸ Pane permissions changes this.",
+        pane_label(pane)
+    )
+}
+
+/// Gate for mutating AI operations; `pane` is `None` for callers not tied to a pane.
+fn ensure_pane_may_write(config: &AppConfig, pane: Option<&str>, what: &str) -> Result<(), String> {
+    match pane {
+        Some(p) if !pane_may_write(config, p) => Err(format!(
+            "AI {what} blocked: the {} pane is read-only. Enable it under Settings ▸ AI Models ▸ Pane permissions.",
+            pane_label(p)
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn compute_markdown_doc_score(title: &str, content: &str, tokens: &[String]) -> i32 {
@@ -3734,13 +3786,19 @@ async fn send_llm_prompt(
     validate_retrieval_context_budgets(&history)?;
     let config = get_app_config(&app)?;
     let (provider, model) = provider_settings_for_pane(&config, &pane);
-    let canonical_messages = with_file_write_protocol(assemble_canonical_messages(&history).messages, &config);
+    let canonical_messages =
+        with_file_write_protocol_for_pane(assemble_canonical_messages(&history).messages, &config, Some(&pane));
 
     let provider_name = provider.to_ascii_lowercase();
     let openai_api_key = normalize_api_key(&config.openai_api_key);
     let gemini_api_key = normalize_api_key(&config.gemini_api_key);
     let ollama_host = config.ollama_host.clone();
     let local_idle_mins = config.local_ai_idle_timeout_mins;
+    let ollama_options = if pane.eq_ignore_ascii_case("right") {
+        config.right_ollama_options.clone()
+    } else {
+        config.left_ollama_options.clone()
+    };
     let call_pane = pane.clone();
     let call_app = app.clone();
 
@@ -3748,7 +3806,7 @@ async fn send_llm_prompt(
         match provider_name.as_str() {
             "openai" => call_openai(&openai_api_key, &model, &canonical_messages),
             "gemini" => call_gemini(&gemini_api_key, &model, &canonical_messages),
-            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages, local_idle_mins, &call_pane, &call_app),
+            "ollama" => call_ollama(&ollama_host, &model, &canonical_messages, local_idle_mins, &ollama_options, &call_pane, &call_app),
             other => Err(format!("Unsupported provider '{}'. Choose OpenAI, Gemini, or Local (Ollama).", other)),
         }
     })
@@ -4454,14 +4512,28 @@ fn canonical_tier(entry: &serde_json::Value, index: usize, last_index: usize) ->
     }
 }
 
-fn with_file_write_protocol(mut messages: Vec<serde_json::Value>, config: &AppConfig) -> Vec<serde_json::Value> {
+#[cfg(test)]
+fn with_file_write_protocol(messages: Vec<serde_json::Value>, config: &AppConfig) -> Vec<serde_json::Value> {
+    with_file_write_protocol_for_pane(messages, config, None)
+}
+
+fn with_file_write_protocol_for_pane(
+    mut messages: Vec<serde_json::Value>,
+    config: &AppConfig,
+    pane: Option<&str>,
+) -> Vec<serde_json::Value> {
     let already_present = messages
         .iter()
         .any(|message| message.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.contains(AI_SEARCH_BLOCK_OPEN)));
     if already_present {
         return messages;
     }
-    messages.insert(0, serde_json::json!({"role": "system", "content": describe_ai_file_access_for_config(config)}));
+    let mut content = describe_ai_file_access_for_config(config);
+    if let Some(p) = pane.filter(|p| !pane_may_write(config, p)) {
+        content.push_str("\n\n");
+        content.push_str(&pane_read_only_notice(p));
+    }
+    messages.insert(0, serde_json::json!({"role": "system", "content": content}));
     messages
 }
 
@@ -4755,10 +4827,11 @@ fn call_ollama(
     model: &str,
     messages: &[serde_json::Value],
     idle_timeout_mins: u32,
+    options: &local_ai::OllamaOptions,
     pane: &str,
     app: &AppHandle,
 ) -> Result<ProviderReply, String> {
-    let result = local_ai::chat(host, model, messages, idle_timeout_mins, pane, |progress| {
+    let result = local_ai::chat(host, model, messages, idle_timeout_mins, options, pane, |progress| {
         let _ = app.emit("local-ai-progress", serde_json::json!({ "pane": pane, "progress": progress }));
     })?;
     let total = match (result.prompt_tokens, result.output_tokens) {
@@ -4790,6 +4863,33 @@ async fn check_hardware_specs(models_dir: Option<String>, app: tauri::AppHandle)
     })
     .await
     .map_err(|e| format!("Hardware probe task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LocalModelInfoPayload {
+    #[serde(default)]
+    host: String,
+    model: String,
+}
+
+/// `/api/show` for one installed model: Modelfile PARAMETER defaults and trained context length.
+#[tauri::command]
+async fn get_local_model_info(payload: LocalModelInfoPayload, app: tauri::AppHandle) -> Result<String, String> {
+    let host = if payload.host.trim().is_empty() {
+        get_app_config(&app)?.ollama_host
+    } else {
+        payload.host
+    };
+    let model = payload.model.trim().to_string();
+    if model.is_empty() {
+        return Err("No local model selected.".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let info = local_ai::local_model_info(&host, &model)?;
+        serde_json::to_string(&info).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Local model info task failed: {e}"))?
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -10797,14 +10897,15 @@ fn checkpoint_repo(app: &tauri::AppHandle) -> Result<checkpoints::ShadowRepo, St
 }
 
 #[tauri::command]
-async fn run_ai_calc(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || run_ai_calc_blocking(code, timeout_seconds, app))
+async fn run_ai_calc(code: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ai_calc_blocking(code, timeout_seconds, pane, app))
         .await
         .map_err(|e| format!("run_ai_calc task failed: {e}"))?
 }
 
-fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    ensure_pane_may_write(&config, pane.as_deref(), "CALC")?;
     if !config.ai_run_enabled {
         return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Settings to allow CALC blocks.".to_string());
     }
@@ -10897,14 +10998,15 @@ fn revert_project_checkpoint_blocking(sha: String, app: tauri::AppHandle) -> Res
 }
 
 #[tauri::command]
-async fn write_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || write_ai_project_file_blocking(path, content, app))
+async fn write_ai_project_file(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || write_ai_project_file_blocking(path, content, pane, app))
         .await
         .map_err(|e| format!("write_ai_project_file task failed: {e}"))?
 }
 
-fn write_ai_project_file_blocking(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
+fn write_ai_project_file_blocking(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    ensure_pane_may_write(&config, pane.as_deref(), "file write")?;
     let project_root = config.project_root_dir.trim();
     if project_root.is_empty() {
         return Err("AI file write blocked: no project root is configured. Set the project root in Settings first.".to_string());
@@ -11025,14 +11127,15 @@ fn read_ai_project_file_blocking(path: String, app: tauri::AppHandle) -> Result<
 }
 
 #[tauri::command]
-async fn append_ai_project_file(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || append_ai_project_file_blocking(path, content, app))
+async fn append_ai_project_file(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || append_ai_project_file_blocking(path, content, pane, app))
         .await
         .map_err(|e| format!("append_ai_project_file task failed: {e}"))?
 }
 
-fn append_ai_project_file_blocking(path: String, content: String, app: tauri::AppHandle) -> Result<String, String> {
-    let (_config, _root, target_path, relative_path) = ai_project_target(&app, "append", &path)?;
+fn append_ai_project_file_blocking(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    let (config, _root, target_path, relative_path) = ai_project_target(&app, "append", &path)?;
+    ensure_pane_may_write(&config, pane.as_deref(), "file append")?;
     let existed = target_path.exists();
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {e}"))?;
@@ -11056,14 +11159,15 @@ fn append_ai_project_file_blocking(path: String, content: String, app: tauri::Ap
 }
 
 #[tauri::command]
-async fn edit_ai_project_file(path: String, hunks: String, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || edit_ai_project_file_blocking(path, hunks, app))
+async fn edit_ai_project_file(path: String, hunks: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || edit_ai_project_file_blocking(path, hunks, pane, app))
         .await
         .map_err(|e| format!("edit_ai_project_file task failed: {e}"))?
 }
 
-fn edit_ai_project_file_blocking(path: String, hunks: String, app: tauri::AppHandle) -> Result<String, String> {
-    let (_config, _root, target_path, relative_path) = ai_project_target(&app, "edit", &path)?;
+fn edit_ai_project_file_blocking(path: String, hunks: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    let (config, _root, target_path, relative_path) = ai_project_target(&app, "edit", &path)?;
+    ensure_pane_may_write(&config, pane.as_deref(), "file edit")?;
     if !target_path.is_file() {
         return Err(format!("File not found: {relative_path}. Use a FILE block to create it first."));
     }
@@ -11082,14 +11186,15 @@ fn edit_ai_project_file_blocking(path: String, hunks: String, app: tauri::AppHan
 }
 
 #[tauri::command]
-async fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || run_ai_project_command_blocking(cmd, timeout_seconds, app))
+async fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ai_project_command_blocking(cmd, timeout_seconds, pane, app))
         .await
         .map_err(|e| format!("run_ai_project_command task failed: {e}"))?
 }
 
-fn run_ai_project_command_blocking(cmd: String, timeout_seconds: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+fn run_ai_project_command_blocking(cmd: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
     let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    ensure_pane_may_write(&config, pane.as_deref(), "RUN")?;
     if !config.ai_run_enabled {
         return Err("AI script execution is disabled. Enable \"AI may run scripts\" in Settings to allow RUN blocks.".to_string());
     }
@@ -11383,6 +11488,10 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.right_preserve_thread_history = payload.right_preserve_thread_history;
     config.ai_file_access_mode = payload.ai_file_access_mode;
     config.ai_run_enabled = payload.ai_run_enabled;
+    config.left_pane_ai_write = payload.left_pane_ai_write;
+    config.right_pane_ai_write = payload.right_pane_ai_write;
+    config.left_ollama_options = payload.left_ollama_options;
+    config.right_ollama_options = payload.right_ollama_options;
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
     config.ai_task_token_budget = payload.ai_task_token_budget;
@@ -11437,6 +11546,24 @@ mod tests {
             "Dark energy is the inter-brane potential: $$V_{gap} = \\frac{1}{2} k d^2$$ driving expansion.",
         );
         assert!(on_topic > 0.0);
+    }
+
+    #[test]
+    fn right_pane_is_read_only_by_default_and_protocol_says_so() {
+        let config = AppConfig::default();
+        assert!(ensure_pane_may_write(&config, Some("left"), "file write").is_ok());
+        assert!(ensure_pane_may_write(&config, None, "file write").is_ok());
+        let err = ensure_pane_may_write(&config, Some("right"), "RUN").unwrap_err();
+        assert!(err.contains("right pane is read-only"), "{err}");
+
+        let rw = AppConfig { ai_file_access_mode: "read_write".to_string(), ..AppConfig::default() };
+        let right = with_file_write_protocol_for_pane(Vec::new(), &rw, Some("right"));
+        assert!(right[0]["content"].as_str().unwrap().contains("right pane is read-only"));
+        let left = with_file_write_protocol_for_pane(Vec::new(), &rw, Some("left"));
+        assert!(!left[0]["content"].as_str().unwrap().contains("pane is read-only"));
+
+        let opened = AppConfig { right_pane_ai_write: true, ..AppConfig::default() };
+        assert!(ensure_pane_may_write(&opened, Some("right"), "RUN").is_ok());
     }
 
     #[test]
@@ -13170,6 +13297,7 @@ pub fn run() {
             get_initial_state,
             check_hardware_specs,
             get_local_ai_overview,
+            get_local_model_info,
             install_local_model,
             get_help_doc,
             search_help_docs,
