@@ -371,6 +371,17 @@
       }
       .pane-model-badge.read-only { color: #ffb0b0; border-color: #ffb0b0; }
 
+      .gate-card { font-size: 0.72rem; color: var(--text-muted); margin: -4px 0 8px 10px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .gate-card .gate { border: 1px solid var(--border-color); border-radius: 10px; padding: 0 7px; }
+      .gate-card .gate.pass { color: #9fd89f; border-color: #6ea86e; }
+      .gate-card .gate.fail { color: #ffb0b0; border-color: #d07070; }
+      .gate-card .gate.skip { opacity: 0.55; }
+      .gate-card details { display: inline; }
+      .gate-card summary { cursor: pointer; display: inline; }
+      .gate-card ul { margin: 4px 0 0 14px; padding: 0; }
+      .chat-bubble.gate-rejected { opacity: 0.6; border-left: 3px solid #d07070; }
+      .chat-bubble.gate-unverified { border-left: 3px solid #d07070; }
+
       .pane-header-left {
         display: flex;
         align-items: center;
@@ -1907,8 +1918,14 @@
                   <input type="checkbox" id="settings-right-pane-ai-write">
                   <label for="settings-right-pane-ai-write" style="margin: 0;">Right pane AI may write files and run scripts</label>
                 </div>
+                <div class="form-group" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px;">
+                  <label for="settings-left-rigor" style="margin: 0;">Left reply gates</label>
+                  <select id="settings-left-rigor"><option value="">Auto</option><option value="enforce">Enforce (send failed drafts back)</option><option value="report-only">Report only</option><option value="off">Off</option></select>
+                  <label for="settings-right-rigor" style="margin: 0 0 0 8px;">Right reply gates</label>
+                  <select id="settings-right-rigor"><option value="">Auto</option><option value="enforce">Enforce (send failed drafts back)</option><option value="report-only">Report only</option><option value="off">Off</option></select>
+                </div>
                 <div style="font-size: 0.78rem; color: var(--accent-dim);">
-                  A pane with this off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
+                  Reply gates check each AI reply against the app's operation ledger before it counts (G0 protocol, G1 operation truth; more to come). Auto = enforce for a writing pane, report-only for a read-only pane. A pane with write permission off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
                 </div>
               </div>
               <div class="pane-config-block">
@@ -3867,6 +3884,8 @@
         document.getElementById('settings-right-preserve-thread-history').checked = currentConfig.right_preserve_thread_history !== false;
         document.getElementById('settings-left-pane-ai-write').checked = currentConfig.left_pane_ai_write !== false;
         document.getElementById('settings-right-pane-ai-write').checked = currentConfig.right_pane_ai_write === true;
+        document.getElementById('settings-left-rigor').value = currentConfig.left_rigor || '';
+        document.getElementById('settings-right-rigor').value = currentConfig.right_rigor || '';
         ollamaOptionsDraft.left = { ...(currentConfig.left_ollama_options || {}) };
         ollamaOptionsDraft.right = { ...(currentConfig.right_ollama_options || {}) };
         renderOllamaOptionsForm();
@@ -4281,6 +4300,68 @@
       return parts.filter(Boolean).join('\n\n');
     }
 
+    // ---- Reply gates (AI-RIGOR-STRATEGY Tier 1): the app, not the model, decides what reached the thread ----
+    const GATE_MAX_SEND_BACKS = 2;
+    const gateSendBacks = { left: {}, right: {} };
+
+    function paneRigorLevel(pane) {
+      const level = String(currentConfig?.[`${pane}_rigor`] || '').trim();
+      if (level) return level;
+      return paneMayWrite(pane) ? 'enforce' : 'report-only';
+    }
+
+    function lastAiBubble(pane, index) {
+      const strip = document.getElementById(pane === 'left' ? 'left-strip' : 'right-strip');
+      const slot = strip?.children[index];
+      if (!slot) return null;
+      const bubbles = Array.from(slot.querySelectorAll('.chat-bubble.ai'));
+      return bubbles.length ? bubbles[bubbles.length - 1] : null;
+    }
+
+    function renderGateCard(pane, index, results, { rejected = false, unverified = false } = {}) {
+      const bubble = lastAiBubble(pane, index);
+      if (!bubble) return;
+      bubble.classList.toggle('gate-rejected', rejected);
+      bubble.classList.toggle('gate-unverified', unverified);
+      const card = document.createElement('div');
+      card.className = 'gate-card';
+      const chips = results.map((r) => {
+        const cls = r.pass === true ? 'pass' : r.pass === false ? 'fail' : 'skip';
+        const mark = r.pass === true ? '✓' : r.pass === false ? '✗' : '–';
+        const detail = r.detail ? `(${escapeHelpHtml(r.detail)})` : '';
+        return `<span class="gate ${cls}" title="${escapeHelpHtml(r.title || '')}">${escapeHelpHtml(r.gate)} ${mark}${detail}</span>`;
+      }).join('');
+      const issues = results.flatMap((r) => (r.issues || []).map((i) => `<li>${escapeHelpHtml(r.gate)}: ${escapeHelpHtml(i)}</li>`));
+      const label = rejected ? 'draft rejected — sent back to the model' : unverified ? 'UNVERIFIED — send-back budget spent' : '';
+      card.innerHTML = `${chips}${issues.length ? `<details><summary>${escapeHelpHtml(label || `${issues.length} issue(s)`)}</summary><ul>${issues.join('')}</ul></details>` : (label ? `<span>${escapeHelpHtml(label)}</span>` : '')}`;
+      bubble.insertAdjacentElement('afterend', card);
+    }
+
+    async function runReplyGates(pane, index, reply, fileOps) {
+      const results = [];
+      const g0Issues = Array.isArray(fileOps.protocolIssues) ? fileOps.protocolIssues : [];
+      results.push({ gate: 'G0', title: 'Protocol parse: every op marker is a recognised, well-formed operation', pass: g0Issues.length === 0, issues: g0Issues });
+      try {
+        const g1 = JSON.parse(await invoke('verify_action_claims', { payload: { pane, threadId: String(index), reply } }));
+        results.push({ gate: 'G1', title: 'Operation truth: claimed file/run actions resolve to successful ledger operations', pass: Boolean(g1.pass), issues: g1.issues || [], detail: `${g1.ops_checked} ops` });
+      } catch (err) {
+        results.push({ gate: 'G1', title: 'Operation truth', pass: null, detail: 'ledger unavailable', issues: [`gate skipped: ${err}`] });
+      }
+      ['G2', 'G3', 'G4', 'G5'].forEach((g) => results.push({ gate: g, title: 'Not built yet (claim tags, evidence resolution, tool-backed numbers, status consistency)', pass: null }));
+      results.push({ gate: 'G6', title: 'Task completion gate (Task mode only)', pass: taskStateFor(pane, index) ? null : undefined });
+      return results;
+    }
+
+    function gateReportPrompt(results, attempt) {
+      const lines = [`GATE REPORT (draft ${attempt} of ${GATE_MAX_SEND_BACKS + 1})`];
+      results.filter((r) => r.pass === false).forEach((r) => {
+        lines.push(`${r.gate} — FAIL`);
+        (r.issues || []).slice(0, 6).forEach((i) => lines.push(`  - ${i}`));
+      });
+      lines.push('Fix the draft: perform the operation with a real FILE/APPEND/EDIT/RUN/CALC block, or restate honestly that it was not done. Cite operations as op#N from the File System results. Do not add new claims.');
+      return lines.join('\n').slice(0, 1500);
+    }
+
     async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory', attachments = [], provenance = {}) {
       if (!currentConfig) {
         return '';
@@ -4305,6 +4386,7 @@
 
       const index = (pane === 'left') ? leftIndex : rightIndex;
       const provider = (pane === 'left') ? currentConfig.left_provider : currentConfig.right_provider;
+      if (!provenance.source || provenance.source === 'current_request') gateSendBacks[pane][index] = 0;
 
       let messagePayload;
       if (provider === 'gemini') {
@@ -4415,6 +4497,28 @@
         appendChatBubble(pane, index, getProviderDisplayName(provider), reply);
         scheduleThreadAutosave(pane, index);
         const fileOps = await applyAssistantFileBlocks(pane, index, reply);
+        const rigor = paneRigorLevel(pane);
+        if (rigor !== 'off') {
+          const gateResults = await runReplyGates(pane, index, reply, fileOps);
+          const failed = gateResults.filter((r) => r.pass === false);
+          if (failed.length === 0) {
+            renderGateCard(pane, index, gateResults);
+          } else {
+            const attempts = (gateSendBacks[pane][index] || 0) + 1;
+            appendTerminalLog(`Gate ${failed.map((r) => r.gate).join('+')} failed [${pane}] (draft ${attempts}): ${failed.flatMap((r) => r.issues || []).join(' | ')}`);
+            if (rigor === 'enforce' && attempts <= GATE_MAX_SEND_BACKS) {
+              gateSendBacks[pane][index] = attempts;
+              renderGateCard(pane, index, gateResults, { rejected: true });
+              if (taskStateFor(pane, index)) await updateTaskAfterReply(pane, index, reply.replace(TASK_DONE_MARK, '[DONE withheld by gate]'), fileOps);
+              return dispatchPromptToPane(pane, gateReportPrompt(gateResults, attempts), 'System', [], {
+                source: 'gate_send_back',
+                trigger: 'reply_gate',
+                autoContinueDepth: Number(provenance.autoContinueDepth) || 0
+              });
+            }
+            renderGateCard(pane, index, gateResults, { unverified: true });
+          }
+        }
         const taskDecision = await updateTaskAfterReply(pane, index, reply, fileOps);
         if (taskDecision.handled) {
           if (taskDecision.continuePrompt) {
@@ -4453,7 +4557,7 @@
         }
         if (taskStateFor(pane, index)) finishTask(pane, 'stopped', `provider error: ${err}`);
         appendChatBubble(pane, index, "System Error", err);
-        if (provenance.source === 'task_follow_up' || provenance.source === 'file_ops_follow_up') return '';
+        if (provenance.source === 'task_follow_up' || provenance.source === 'file_ops_follow_up' || provenance.source === 'gate_send_back') return '';
         throw err;
       } finally {
         setPaneBusy(pane, false);
@@ -4833,7 +4937,7 @@
         : outcome.timed_out
         ? 'TIMED OUT'
         : outcome.exit_code === 0 ? 'exit 0' : `exit ${outcome.exit_code == null ? 'signal' : outcome.exit_code}`;
-      const lines = [`- RUN \`${outcome.command}\` → ${status} (${outcome.elapsed_seconds}s)`];
+      const lines = [`- RUN \`${outcome.command}\` → ${status} (${outcome.elapsed_seconds}s)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`];
       if (outcome.stdout) {
         lines.push(`  stdout${outcome.stdout_truncated ? ' (truncated)' : ''}:\n\`\`\`text\n${outcome.stdout.replace(/\n$/, '')}\n\`\`\``);
       }
@@ -4847,20 +4951,20 @@
     async function executeAssistantFileOp(pane, op) {
       switch (op.op) {
         case 'write': {
-          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content, pane }));
-          const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)`;
+          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`;
           appendTerminalLog(`AI file write [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'append': {
-          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content, pane }));
-          const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)`;
+          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`;
           appendTerminalLog(`AI file append [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'edit': {
-          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks, pane }));
-          const line = `edited ${outcome.relative_path} (${outcome.hunks} hunk${outcome.hunks === 1 ? '' : 's'}, now ${outcome.bytes} bytes)`;
+          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const line = `edited ${outcome.relative_path} (${outcome.hunks} hunk${outcome.hunks === 1 ? '' : 's'}, now ${outcome.bytes} bytes)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`;
           appendTerminalLog(`AI file edit [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
@@ -4875,7 +4979,7 @@
         }
         case 'run': {
           appendTerminalLog(`AI run [${pane}]: ${op.cmd}`);
-          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout, pane }));
+          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
           if (outcome.stdout) appendTerminalLog(outcome.stdout.replace(/\n$/, ''));
           if (outcome.stderr) appendTerminalLog(outcome.stderr.replace(/\n$/, ''));
           appendTerminalLog(`AI run [${pane}] finished: ${outcome.cancelled ? 'cancelled' : outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
@@ -4892,7 +4996,7 @@
         }
         case 'calc': {
           appendTerminalLog(`AI calc [${pane}]: ${op.code.split('\n').length} line snippet`);
-          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout, pane }));
+          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
           const run = outcome.run || {};
           if (run.stdout) appendTerminalLog(run.stdout.replace(/\n$/, ''));
           if (run.stderr) appendTerminalLog(run.stderr.replace(/\n$/, ''));
@@ -4913,7 +5017,7 @@
     }
 
     function formatCalcOutcome(outcome) {
-      const runText = formatRunOutcome({ ...(outcome.run || {}), command: `CALC ${outcome.script_relative_path}` });
+      const runText = formatRunOutcome({ ...(outcome.run || {}), command: `CALC ${outcome.script_relative_path}`, op_id: outcome.op_id });
       const artifacts = Array.isArray(outcome.artifacts) ? outcome.artifacts : [];
       const lines = [runText];
       if (artifacts.length) {
@@ -4962,8 +5066,9 @@
 
     async function applyAssistantFileBlocks(pane, index, reply) {
       const ops = parseAssistantFileBlocks(reply);
+      const protocolIssues = findUnrecognisedOpMarkers(reply);
       const unverifiedWriteClaim = Boolean(window.physicsIdeAiConfig?.claimsFileWriteWithoutOperation(reply));
-      if (ops.length === 0 && !unverifiedWriteClaim) return { needsFollowUp: false, written: [], outputs: [] };
+      if (ops.length === 0 && !unverifiedWriteClaim) return { needsFollowUp: protocolIssues.length > 0, written: [], outputs: [], protocolIssues };
 
       const results = [];
       const written = [];
@@ -5038,7 +5143,23 @@
       if (touchedFiles && typeof refreshFileTree === 'function') {
         try { await refreshFileTree(); } catch (_) { /* tree refresh is best-effort */ }
       }
-      return { needsFollowUp, written, outputs, unrecognizedWriteClaim };
+      return { needsFollowUp, written, outputs, unrecognizedWriteClaim, protocolIssues };
+    }
+
+    const KNOWN_OP_MARKERS = new Set(['FILE', 'END FILE', 'APPEND', 'END APPEND', 'EDIT', 'END EDIT', 'READ', 'RUN', 'CALC', 'END CALC', 'SEARCH', 'REMEMBER', 'END REMEMBER', 'PLAN', 'END PLAN', 'STEP', 'DONE', 'BLOCKED', 'FIND', 'REPLACE', 'END HUNK']);
+    // G0: `<<<WRITE path="x">>>`-style markers look like operations but are never executed; name them so the model fixes the marker instead of narrating success.
+    function findUnrecognisedOpMarkers(reply) {
+      const fenced = fencedRanges(String(reply || ''));
+      const issues = [];
+      const re = /<<<\s*([A-Z][A-Z _]*?)(?=[\s>])[^>\n]*>>>+/g;
+      let m;
+      while ((m = re.exec(String(reply || ''))) !== null) {
+        if (fenced.some(([a, b]) => m.index >= a && m.index < b)) continue;
+        const word = m[1].trim();
+        if (KNOWN_OP_MARKERS.has(word)) continue;
+        issues.push(`\`${m[0].slice(0, 60)}\` is not an operation the app executes; use <<<FILE path="…">>> … <<<END FILE>>> (or APPEND/EDIT/READ/RUN/CALC/SEARCH/REMEMBER).`);
+      }
+      return issues;
     }
 
     function evaluateProbeReply(reply, expectedToken) {
@@ -9814,6 +9935,8 @@ async function restoreVersion() {
         right_pane_ai_write: rightPaneAiWrite,
         left_ollama_options: collectOllamaOptions('left'),
         right_ollama_options: collectOllamaOptions('right'),
+        left_rigor: document.getElementById('settings-left-rigor').value || '',
+        right_rigor: document.getElementById('settings-right-rigor').value || '',
         ai_file_access_mode: aiFileAccessMode,
         ai_run_enabled: aiRunEnabled,
         ai_checkpoints_enabled: aiCheckpointsEnabled,
@@ -9872,6 +9995,8 @@ async function restoreVersion() {
         currentConfig.right_pane_ai_write = rightPaneAiWrite;
         currentConfig.left_ollama_options = payload.left_ollama_options;
         currentConfig.right_ollama_options = payload.right_ollama_options;
+        currentConfig.left_rigor = payload.left_rigor;
+        currentConfig.right_rigor = payload.right_rigor;
         refreshPaneHeaderBadges();
         currentConfig.ai_file_access_mode = aiFileAccessMode;
         currentConfig.ai_run_enabled = aiRunEnabled;

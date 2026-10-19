@@ -3362,6 +3362,7 @@ dependencies = [
  "pbkdf2",
  "pdf-extract",
  "rand 0.8.7",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
