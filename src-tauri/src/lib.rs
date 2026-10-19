@@ -17,6 +17,7 @@ mod ai_file_ops;
 mod checkpoints;
 mod local_ai;
 mod math_fixer;
+mod op_ledger;
 mod system_monitor;
 
 #[derive(Deserialize, Default)]
@@ -413,6 +414,11 @@ pub struct AppConfig {
     left_ollama_options: local_ai::OllamaOptions,
     #[serde(default)]
     right_ollama_options: local_ai::OllamaOptions,
+    /// Reply-gate level per pane: "" (auto: enforce when the pane may write, else report-only), "off", "report-only", "enforce".
+    #[serde(default)]
+    left_rigor: String,
+    #[serde(default)]
+    right_rigor: String,
     #[serde(default = "default_ai_run_allowlist")]
     ai_run_allowlist: String,
     #[serde(default = "default_ai_run_timeout_seconds")]
@@ -470,6 +476,8 @@ impl Default for AppConfig {
             right_pane_ai_write: false,
             left_ollama_options: local_ai::OllamaOptions::default(),
             right_ollama_options: local_ai::OllamaOptions::default(),
+            left_rigor: String::new(),
+            right_rigor: String::new(),
             ai_run_allowlist: default_ai_run_allowlist(),
             ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
             ai_checkpoints_enabled: true,
@@ -549,6 +557,10 @@ pub struct SaveUserSettingsPayload {
     pub left_ollama_options: local_ai::OllamaOptions,
     #[serde(default, alias = "rightOllamaOptions")]
     pub right_ollama_options: local_ai::OllamaOptions,
+    #[serde(default, alias = "leftRigor")]
+    pub left_rigor: String,
+    #[serde(default, alias = "rightRigor")]
+    pub right_rigor: String,
     #[serde(default = "default_ai_run_allowlist", alias = "aiRunAllowlist")]
     pub ai_run_allowlist: String,
     #[serde(default = "default_true", alias = "aiCheckpointsEnabled")]
@@ -10431,6 +10443,153 @@ fn open_thread_store(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     Ok(connection)
 }
 
+fn open_op_ledger(app: &AppHandle) -> Result<rusqlite::Connection, String> {
+    let mut path = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+    path.push("ledger");
+    fs::create_dir_all(&path).map_err(|e| format!("Failed to create ledger directory: {e}"))?;
+    path.push("op_ledger.sqlite3");
+    let connection = rusqlite::Connection::open(&path)
+        .map_err(|e| format!("Failed to open operation ledger {}: {e}", path.to_string_lossy()))?;
+    op_ledger::init(&connection)?;
+    Ok(connection)
+}
+
+/// Records one app-mediated AI operation and, on success, stamps the returned JSON with `op_id`.
+fn ledger_record(
+    app: &AppHandle,
+    pane: &Option<String>,
+    thread: &Option<String>,
+    kind: &str,
+    target: &str,
+    sha_before: String,
+    sha_after: String,
+    outcome: &Result<String, String>,
+) -> Result<String, String> {
+    let (status, result) = match outcome {
+        Ok(json) => {
+            let status = serde_json::from_str::<serde_json::Value>(json)
+                .ok()
+                .and_then(|v| {
+                    let run = v.get("run").cloned().unwrap_or(v.clone());
+                    if run.get("cancelled").and_then(|b| b.as_bool()) == Some(true) {
+                        Some("cancelled")
+                    } else if run.get("timed_out").and_then(|b| b.as_bool()) == Some(true) {
+                        Some("timeout")
+                    } else if run.get("exit_code").is_some() && run.get("exit_code").and_then(|c| c.as_i64()) != Some(0) {
+                        Some("failed")
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("ok");
+            (status, json.clone())
+        }
+        Err(err) => (if err.contains("blocked") || err.contains("read-only") || err.contains("disabled") { "refused" } else { "failed" }, err.clone()),
+    };
+    let rec = op_ledger::OpRecord {
+        id: 0,
+        pane: pane.clone().unwrap_or_default(),
+        thread: thread.clone().unwrap_or_default(),
+        kind: kind.to_string(),
+        target: target.to_string(),
+        status: status.to_string(),
+        result,
+        sha_before,
+        sha_after: sha_after.clone(),
+        created_unix: unix_now_seconds(),
+    };
+    let id = open_op_ledger(app).and_then(|c| op_ledger::record(&c, &rec)).unwrap_or(0);
+    match outcome {
+        Ok(json) => {
+            let mut v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("op_id".into(), serde_json::json!(id));
+                obj.insert("op_status".into(), serde_json::json!(status));
+                if !sha_after.is_empty() {
+                    obj.insert("sha256".into(), serde_json::json!(sha_after));
+                }
+                return Ok(v.to_string());
+            }
+            Ok(json.clone())
+        }
+        Err(err) => Err(if id > 0 { format!("{err} [op#{id} {status}]") } else { err.clone() }),
+    }
+}
+
+fn ledger_target_path(app: &AppHandle, path: &str) -> Option<PathBuf> {
+    let config = load_app_config(app).ok()?;
+    let root = PathBuf::from(config.project_root_dir.trim());
+    if root.as_os_str().is_empty() {
+        return None;
+    }
+    Some(normalize_path_for_scope_check(Path::new(path.trim()), &root))
+}
+
+fn ledger_relative(app: &AppHandle, target: &Path) -> String {
+    load_app_config(app)
+        .ok()
+        .and_then(|c| {
+            let root = PathBuf::from(c.project_root_dir.trim());
+            let root = root.canonicalize().unwrap_or(root);
+            target.strip_prefix(&root).ok().map(|p| p.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| target.to_string_lossy().to_string())
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LedgerQueryPayload {
+    pane: String,
+    #[serde(default)]
+    thread_id: String,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[tauri::command]
+async fn list_op_ledger(payload: LedgerQueryPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        let rows = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), payload.limit.unwrap_or(200).clamp(1, 2000))?;
+        serde_json::to_string(&rows).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("list_op_ledger task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct VerifyClaimsPayload {
+    pane: String,
+    #[serde(default)]
+    thread_id: String,
+    reply: String,
+}
+
+/// G1 operation-truth gate: action claims in `reply` vs. this thread's ledger, plus a
+/// fresh-state check of every successful write.
+#[tauri::command]
+async fn verify_action_claims(payload: VerifyClaimsPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        let ops = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), 500)?;
+        let mut issues = op_ledger::unbacked_action_claims(&payload.reply, &ops);
+        if let Ok(config) = load_app_config(&app) {
+            let root = PathBuf::from(config.project_root_dir.trim());
+            if root.is_dir() {
+                issues.extend(op_ledger::stale_writes(&ops, &root));
+            }
+        }
+        serde_json::to_string(&serde_json::json!({
+            "gate": "G1",
+            "pass": issues.is_empty(),
+            "issues": issues,
+            "ops_checked": ops.len(),
+        }))
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("verify_action_claims task failed: {e}"))?
+}
+
 fn unix_now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -10897,10 +11056,19 @@ fn checkpoint_repo(app: &tauri::AppHandle) -> Result<checkpoints::ShadowRepo, St
 }
 
 #[tauri::command]
-async fn run_ai_calc(code: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || run_ai_calc_blocking(code, timeout_seconds, pane, app))
-        .await
-        .map_err(|e| format!("run_ai_calc task failed: {e}"))?
+async fn run_ai_calc(code: String, timeout_seconds: Option<u64>, pane: Option<String>, thread_id: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = run_ai_calc_blocking(code, timeout_seconds, pane.clone(), app.clone());
+        let target = outcome
+            .as_ref()
+            .ok()
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+            .and_then(|v| v.get("script_relative_path").and_then(|p| p.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "CALC".to_string());
+        ledger_record(&app, &pane, &thread_id, "calc", &target, String::new(), String::new(), &outcome)
+    })
+    .await
+    .map_err(|e| format!("run_ai_calc task failed: {e}"))?
 }
 
 fn run_ai_calc_blocking(code: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
@@ -10998,10 +11166,17 @@ fn revert_project_checkpoint_blocking(sha: String, app: tauri::AppHandle) -> Res
 }
 
 #[tauri::command]
-async fn write_ai_project_file(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || write_ai_project_file_blocking(path, content, pane, app))
-        .await
-        .map_err(|e| format!("write_ai_project_file task failed: {e}"))?
+async fn write_ai_project_file(path: String, content: String, pane: Option<String>, thread_id: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = ledger_target_path(&app, &path);
+        let before = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let outcome = write_ai_project_file_blocking(path.clone(), content, pane.clone(), app.clone());
+        let after = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let rel = target.as_deref().map(|t| ledger_relative(&app, t)).unwrap_or(path);
+        ledger_record(&app, &pane, &thread_id, "write", &rel, before, after, &outcome)
+    })
+    .await
+    .map_err(|e| format!("write_ai_project_file task failed: {e}"))?
 }
 
 fn write_ai_project_file_blocking(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
@@ -11127,10 +11302,17 @@ fn read_ai_project_file_blocking(path: String, app: tauri::AppHandle) -> Result<
 }
 
 #[tauri::command]
-async fn append_ai_project_file(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || append_ai_project_file_blocking(path, content, pane, app))
-        .await
-        .map_err(|e| format!("append_ai_project_file task failed: {e}"))?
+async fn append_ai_project_file(path: String, content: String, pane: Option<String>, thread_id: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = ledger_target_path(&app, &path);
+        let before = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let outcome = append_ai_project_file_blocking(path.clone(), content, pane.clone(), app.clone());
+        let after = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let rel = target.as_deref().map(|t| ledger_relative(&app, t)).unwrap_or(path);
+        ledger_record(&app, &pane, &thread_id, "append", &rel, before, after, &outcome)
+    })
+    .await
+    .map_err(|e| format!("append_ai_project_file task failed: {e}"))?
 }
 
 fn append_ai_project_file_blocking(path: String, content: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
@@ -11159,10 +11341,17 @@ fn append_ai_project_file_blocking(path: String, content: String, pane: Option<S
 }
 
 #[tauri::command]
-async fn edit_ai_project_file(path: String, hunks: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || edit_ai_project_file_blocking(path, hunks, pane, app))
-        .await
-        .map_err(|e| format!("edit_ai_project_file task failed: {e}"))?
+async fn edit_ai_project_file(path: String, hunks: String, pane: Option<String>, thread_id: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = ledger_target_path(&app, &path);
+        let before = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let outcome = edit_ai_project_file_blocking(path.clone(), hunks, pane.clone(), app.clone());
+        let after = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let rel = target.as_deref().map(|t| ledger_relative(&app, t)).unwrap_or(path);
+        ledger_record(&app, &pane, &thread_id, "edit", &rel, before, after, &outcome)
+    })
+    .await
+    .map_err(|e| format!("edit_ai_project_file task failed: {e}"))?
 }
 
 fn edit_ai_project_file_blocking(path: String, hunks: String, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
@@ -11186,10 +11375,13 @@ fn edit_ai_project_file_blocking(path: String, hunks: String, pane: Option<Strin
 }
 
 #[tauri::command]
-async fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || run_ai_project_command_blocking(cmd, timeout_seconds, pane, app))
-        .await
-        .map_err(|e| format!("run_ai_project_command task failed: {e}"))?
+async fn run_ai_project_command(cmd: String, timeout_seconds: Option<u64>, pane: Option<String>, thread_id: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = run_ai_project_command_blocking(cmd.clone(), timeout_seconds, pane.clone(), app.clone());
+        ledger_record(&app, &pane, &thread_id, "run", cmd.trim(), String::new(), String::new(), &outcome)
+    })
+    .await
+    .map_err(|e| format!("run_ai_project_command task failed: {e}"))?
 }
 
 fn run_ai_project_command_blocking(cmd: String, timeout_seconds: Option<u64>, pane: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
@@ -11492,6 +11684,8 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.right_pane_ai_write = payload.right_pane_ai_write;
     config.left_ollama_options = payload.left_ollama_options;
     config.right_ollama_options = payload.right_ollama_options;
+    config.left_rigor = payload.left_rigor.trim().to_string();
+    config.right_rigor = payload.right_rigor.trim().to_string();
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
     config.ai_task_token_budget = payload.ai_task_token_budget;
@@ -13298,6 +13492,8 @@ pub fn run() {
             check_hardware_specs,
             get_local_ai_overview,
             get_local_model_info,
+            list_op_ledger,
+            verify_action_claims,
             install_local_model,
             get_help_doc,
             search_help_docs,

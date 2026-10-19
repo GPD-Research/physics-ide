@@ -76,3 +76,11 @@ test('ai thread snapshots wrap long code blocks and inline content within the bu
   assert.ok(html.includes('.chat-bubble code'), 'expected the bubble to constrain inline code and snapshot content');
   assert.ok(html.includes('overflow-wrap: anywhere'), 'expected long snapshot content to wrap before reaching the bubble edge');
 });
+
+test('reply gates run after file ops and render a gate card instead of trusting the model narration', () => {
+  assert.ok(html.includes("invoke('verify_action_claims'"), 'expected the G1 operation-truth gate to query the ledger');
+  assert.ok(html.includes('function renderGateCard'), 'expected a gate card renderer under AI bubbles');
+  assert.ok(html.includes("source: 'gate_send_back'"), 'expected failed drafts to be sent back to the model');
+  assert.ok(html.includes('findUnrecognisedOpMarkers'), 'expected G0 to name pseudo-op markers such as <<<WRITE>>>');
+  assert.ok(html.includes("threadId: String(pane === 'left' ? leftIndex : rightIndex)"), 'expected mutating ops to carry the thread id into the ledger');
+});
