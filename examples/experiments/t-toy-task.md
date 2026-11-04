@@ -1,6 +1,7 @@
 ---
 title: "T: toy omega task (task mode end to end)"
 mode: task
+rigor: enforce
 max_rounds: 8
 token_budget: 120000
 requires: [write, run]

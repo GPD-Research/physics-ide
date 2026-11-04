@@ -1,6 +1,7 @@
 ---
 title: "A: fixes.md false write (read-only pane)"
 mode: chat
+rigor: enforce
 requires: [read-only]
 setup:
   params/toy.json: |
