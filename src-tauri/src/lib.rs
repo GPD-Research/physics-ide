@@ -20,6 +20,7 @@ mod math_fixer;
 mod fetch;
 mod op_ledger;
 mod watch;
+mod experiment;
 mod system_monitor;
 
 #[derive(Deserialize, Default)]
@@ -10701,6 +10702,271 @@ async fn export_thread_audit(payload: ThreadAuditPayload, app: tauri::AppHandle)
     .map_err(|e| format!("export_thread_audit task failed: {e}"))?
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ExperimentLoadPayload {
+    path: String,
+}
+
+fn read_experiment_file(path: &str) -> Result<(PathBuf, String, String), String> {
+    use sha2::{Digest, Sha256};
+    let p = PathBuf::from(path.trim());
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !matches!(ext.as_str(), "md" | "markdown" | "txt") {
+        return Err("An experiment must be a .md or .txt file.".into());
+    }
+    let meta = fs::metadata(&p).map_err(|e| format!("Cannot read {}: {e}", p.to_string_lossy()))?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file.", p.to_string_lossy()));
+    }
+    if meta.len() as usize > experiment::MAX_EXPERIMENT_BYTES {
+        return Err(format!("Experiment file is larger than {} KB.", experiment::MAX_EXPERIMENT_BYTES / 1024));
+    }
+    let bytes = fs::read(&p).map_err(|e| format!("Cannot read {}: {e}", p.to_string_lossy()))?;
+    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let text = String::from_utf8(bytes).map_err(|_| "Experiment file is not UTF-8 text.".to_string())?;
+    Ok((p, text, sha))
+}
+
+fn experiment_project_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let config = load_app_config(app).map_err(|e| format!("Failed to load app config: {e}"))?;
+    let root = config.project_root_dir.trim();
+    if root.is_empty() {
+        return Err("no project root is configured (Settings)".into());
+    }
+    let path = PathBuf::from(root);
+    if !path.is_dir() {
+        return Err(format!("project root does not exist: {root}"));
+    }
+    Ok(path.canonicalize().unwrap_or(path))
+}
+
+/// Setup files and `file:` checks resolve inside the project root only, after symlinks.
+fn resolve_experiment_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    if let Some(issue) = experiment::setup_path_issue(rel) {
+        return Err(issue);
+    }
+    let target = normalize_path_for_scope_check(Path::new(rel.trim()), root);
+    if !target.starts_with(root) {
+        return Err("resolves outside the project root".into());
+    }
+    if target.is_dir() {
+        return Err("is a directory".into());
+    }
+    Ok(target)
+}
+
+fn experiment_setup_preview(root: &Result<PathBuf, String>, exp: &experiment::Experiment) -> Vec<serde_json::Value> {
+    exp.setup
+        .iter()
+        .map(|f| {
+            let (state, issue) = match root.as_ref().map_err(|e| e.clone()).and_then(|r| resolve_experiment_path(r, &f.path)) {
+                Err(issue) => ("invalid", issue),
+                Ok(t) if !t.exists() => ("new", String::new()),
+                Ok(t) => match fs::read(&t) {
+                    Ok(bytes) if bytes == f.content.as_bytes() => ("same", String::new()),
+                    _ => ("overwrite", String::new()),
+                },
+            };
+            serde_json::json!({ "path": f.path, "bytes": f.content.len(), "state": state, "issue": issue })
+        })
+        .collect()
+}
+
+/// Reads and parses an experiment for the preview card. Nothing is written or run.
+#[tauri::command]
+async fn experiment_load(payload: ExperimentLoadPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (path, text, sha) = read_experiment_file(&payload.path)?;
+        let exp = experiment::parse(&text);
+        let root = experiment_project_root(&app);
+        Ok(serde_json::json!({
+            "path": path.to_string_lossy(),
+            "name": path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            "sha": sha,
+            "experiment": exp,
+            "setup": experiment_setup_preview(&root, &exp),
+            "project_root": root.as_ref().map(|r| r.to_string_lossy().to_string()).unwrap_or_default(),
+            "root_issue": root.err().unwrap_or_default(),
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| format!("experiment_load task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ExperimentStartPayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    path: String,
+    sha: String,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+/// User clicked Start: re-checks the file is the one previewed, writes setup files (ledgered as
+/// `setup`, never credited to the AI) and records `experiment_start`.
+#[tauri::command]
+async fn experiment_start(payload: ExperimentStartPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (path, text, sha) = read_experiment_file(&payload.path)?;
+        if sha != payload.sha.trim() {
+            return Err("The experiment file changed since the preview; load it again.".into());
+        }
+        let exp = experiment::parse(&text);
+        if !exp.errors.is_empty() {
+            return Err(format!("The experiment has errors: {}", exp.errors.join("; ")));
+        }
+        let (pane, thread) = (Some(payload.pane.trim().to_string()), Some(payload.thread_id.trim().to_string()));
+        let mut setup_ops = Vec::new();
+        if !exp.setup.is_empty() {
+            let root = experiment_project_root(&app).map_err(|e| format!("Setup files blocked: {e}"))?;
+            let targets = exp
+                .setup
+                .iter()
+                .map(|f| resolve_experiment_path(&root, &f.path).map(|t| (f, t)).map_err(|e| format!("setup `{}`: {e}", f.path)))
+                .collect::<Result<Vec<_>, String>>()?;
+            let overwrites: Vec<&str> = targets.iter().filter(|(f, t)| t.exists() && fs::read(t).ok().as_deref() != Some(f.content.as_bytes())).map(|(f, _)| f.path.as_str()).collect();
+            if !overwrites.is_empty() && !payload.overwrite {
+                return Err(format!("Setup would overwrite {}; confirm the overwrite first.", overwrites.join(", ")));
+            }
+            for (f, target) in targets {
+                let before = op_ledger::sha256_file(&target);
+                let outcome = target
+                    .parent()
+                    .map(fs::create_dir_all)
+                    .transpose()
+                    .and_then(|_| fs::write(&target, f.content.as_bytes()))
+                    .map(|_| serde_json::json!({ "relative_path": f.path, "bytes": f.content.len(), "by": "experiment setup (user-approved)" }).to_string())
+                    .map_err(|e| format!("failed to write {}: {e}", f.path));
+                let after = op_ledger::sha256_file(&target);
+                let recorded = ledger_record(&app, &pane, &thread, "setup", &f.path, before, after, &outcome)?;
+                setup_ops.push(serde_json::from_str::<serde_json::Value>(&recorded).unwrap_or(serde_json::Value::Null));
+            }
+        }
+        let started_unix = unix_now_seconds();
+        let c = open_op_ledger(&app)?;
+        let start_op_id = op_ledger::record(
+            &c,
+            &op_ledger::OpRecord {
+                id: 0,
+                pane: pane.clone().unwrap_or_default(),
+                thread: thread.clone().unwrap_or_default(),
+                kind: "experiment_start".into(),
+                target: path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                status: "ok".into(),
+                result: serde_json::json!({ "title": exp.title, "path": path.to_string_lossy(), "sha256": sha, "mode": exp.mode, "rigor": exp.rigor, "expect": exp.expect }).to_string(),
+                sha_before: String::new(),
+                sha_after: sha.clone(),
+                created_unix: started_unix,
+            },
+        )?;
+        // Setup rows precede the start row, so the run window starts at the first setup op.
+        let first_op_id = setup_ops.iter().filter_map(|v| v["op_id"].as_i64()).min().unwrap_or(start_op_id);
+        Ok(serde_json::json!({ "experiment": exp, "sha": sha, "path": path.to_string_lossy(), "start_op_id": first_op_id, "started_unix": started_unix, "setup_ops": setup_ops }).to_string())
+    })
+    .await
+    .map_err(|e| format!("experiment_start task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ExperimentFinishPayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    title: String,
+    path: String,
+    sha: String,
+    #[serde(alias = "startOpId")]
+    start_op_id: i64,
+    #[serde(alias = "startedUnix")]
+    started_unix: i64,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    expect: Vec<String>,
+    #[serde(default)]
+    transcript: String,
+}
+
+/// End of run: evaluates `expect` against this run's ledger rows, gate runs and disk, and writes
+/// `.scratch/experiments/<title>-<utc>.md` + `.json` in the project root.
+#[tauri::command]
+async fn experiment_finish(payload: ExperimentFinishPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = experiment_project_root(&app).map_err(|e| format!("Experiment audit blocked: {e}"))?;
+        let (pane, thread) = (payload.pane.trim().to_string(), payload.thread_id.trim().to_string());
+        let ended_unix = unix_now_seconds();
+        let c = open_op_ledger(&app)?;
+        op_ledger::record(
+            &c,
+            &op_ledger::OpRecord {
+                id: 0,
+                pane: pane.clone(),
+                thread: thread.clone(),
+                kind: "experiment_end".into(),
+                target: payload.title.clone(),
+                status: "ok".into(),
+                result: serde_json::json!({ "reason": payload.reason }).to_string(),
+                sha_before: String::new(),
+                sha_after: payload.sha.clone(),
+                created_unix: ended_unix,
+            },
+        )?;
+        let ops: Vec<op_ledger::OpRecord> = op_ledger::list(&c, &pane, &thread, 5000)?.into_iter().filter(|o| o.id >= payload.start_op_id).collect();
+        let gates: Vec<op_ledger::GateRun> = op_ledger::list_gate_runs(&c, &pane, &thread, 5000)?.into_iter().filter(|g| g.created_unix >= payload.started_unix).collect();
+        let file_state = |rel: &str| -> experiment::FileState {
+            match resolve_experiment_path(&root, rel) {
+                Err(e) => experiment::FileState::Invalid(e),
+                Ok(t) if !t.exists() => experiment::FileState::Missing,
+                Ok(t) => {
+                    let mut buf = Vec::new();
+                    let read = fs::File::open(&t).and_then(|f| std::io::Read::read_to_end(&mut std::io::Read::take(f, 2 * 1024 * 1024), &mut buf));
+                    match read {
+                        Ok(_) => experiment::FileState::Present(String::from_utf8_lossy(&buf).to_string()),
+                        Err(e) => experiment::FileState::Invalid(format!("unreadable: {e}")),
+                    }
+                }
+            }
+        };
+        let results = experiment::evaluate(&payload.expect, &ops, &gates, &file_state);
+        let count = |s: &str| results.iter().filter(|r| r.status == s).count();
+        let sha12: String = payload.sha.chars().take(12).collect();
+        let mut md = format!(
+            "# Experiment: {}\n\nFile: `{}` (sha256 `{sha12}`)  \nPane: {pane} · thread `{thread}`  \nStarted (UTC): {} · ended: {} — {}  \nOps in this run: {} · gate runs: {}\n\n",
+            payload.title,
+            payload.path,
+            experiment::utc_stamp(payload.started_unix),
+            experiment::utc_stamp(ended_unix),
+            if payload.reason.is_empty() { "finished" } else { payload.reason.as_str() },
+            ops.len(),
+            gates.len()
+        );
+        md.push_str(&experiment::expectations_markdown(&results));
+        md.push_str("---\n\n");
+        md.push_str(&op_ledger::audit_markdown(&pane, &thread, &ops, &gates, &payload.transcript, ended_unix));
+        let dir = root.join(".scratch").join("experiments");
+        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.to_string_lossy()))?;
+        let stem = format!("{}-{}", experiment::slug(&payload.title), experiment::utc_stamp(ended_unix));
+        let (md_path, json_path) = (dir.join(format!("{stem}.md")), dir.join(format!("{stem}.json")));
+        let raw = serde_json::json!({
+            "experiment": { "title": payload.title, "path": payload.path, "sha256": payload.sha, "reason": payload.reason, "started_unix": payload.started_unix, "ended_unix": ended_unix },
+            "pane": pane, "thread": thread, "expectations": results, "ops": ops, "gate_runs": gates,
+        });
+        fs::write(&md_path, md.as_bytes()).map_err(|e| format!("Failed to write {}: {e}", md_path.to_string_lossy()))?;
+        fs::write(&json_path, serde_json::to_string_pretty(&raw).map_err(|e| e.to_string())?.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {e}", json_path.to_string_lossy()))?;
+        Ok(serde_json::json!({
+            "path": md_path.to_string_lossy(), "json_path": json_path.to_string_lossy(),
+            "pass": count("pass"), "fail": count("fail"), "unchecked": count("unchecked"), "results": results,
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| format!("experiment_finish task failed: {e}"))?
+}
+
 #[tauri::command]
 async fn list_op_ledger(payload: LedgerQueryPayload, app: tauri::AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -13933,6 +14199,9 @@ pub fn run() {
             record_gate_run,
             list_gate_runs,
             export_thread_audit,
+            experiment_load,
+            experiment_start,
+            experiment_finish,
             watch_propose,
             watch_list,
             watch_update,

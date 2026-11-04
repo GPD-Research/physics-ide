@@ -107,3 +107,11 @@ test('thread tools can export an audit of the ledger and gate runs', () => {
   assert.ok(html.includes("add('Export audit…', () => exportThreadAudit(pane)"), 'expected an Export audit item in Thread tools');
   assert.ok(html.includes("invoke('export_thread_audit'"), 'expected the export to go through the Rust ledger command');
 });
+
+test('experiments load through a preview with an explicit Start and app-checked expectations', () => {
+  assert.ok(html.includes("add('Load experiment…', () => loadExperiment(pane)"), 'expected Load experiment in Thread tools');
+  assert.ok(html.includes("invoke('experiment_load'") && html.includes("invoke('experiment_start'") && html.includes("invoke('experiment_finish'"), 'expected the Rust experiment commands');
+  assert.ok(html.includes('id="experiment-start-btn" onclick="startLoadedExperiment()"'), 'expected Start to be a button click, never automatic');
+  assert.ok(html.includes('confirm(`Overwrite ${overwrites.length} existing file(s)'), 'expected a second confirmation before setup overwrites');
+  assert.ok(html.includes('await lastGateRecord[pane];'), 'expected the audit to wait for the last gate run to be recorded');
+});

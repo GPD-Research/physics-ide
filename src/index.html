@@ -910,6 +910,14 @@
       }
   
   
+    .experiment-preview { overflow: auto; font-size: 0.82rem; text-align: left; }
+    .experiment-preview h4 { margin: 10px 0 4px; font-size: 0.85rem; }
+    .experiment-preview ul { margin: 0; padding-left: 18px; }
+    .exp-goal { white-space: pre-wrap; background: rgba(0,0,0,0.25); padding: 6px 8px; border-radius: 4px; max-height: 180px; overflow: auto; font-family: monospace; font-size: 0.78rem; }
+    .exp-meta, .exp-none { opacity: 0.8; }
+    .exp-met { color: #a6e3a1; }
+    .exp-unmet { color: #f38ba8; }
+    .experiment-row { display: flex; gap: 6px; align-items: center; justify-content: space-between; font-size: 0.75rem; margin: 3px 0; text-align: left; }
     .local-ai-model-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; }
     .local-ai-row { display: grid; grid-template-columns: minmax(170px, 1.4fr) 70px 70px 60px minmax(150px, 1fr) auto; gap: 8px; align-items: center; font-size: 0.78rem; padding: 4px 6px; border-radius: 4px; }
     .local-ai-row.header { font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); }
@@ -1564,6 +1572,16 @@
           </div>
 
           <div class="panel-section">
+            <div class="panel-section-title">🧪 Experiments</div>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-bottom:6px; text-align:left;">Load a .md/.txt experiment (written anywhere) into a pane. You see a preview first; nothing is written or sent until you click Start. At the end the app checks the file's expectations against the ledger and saves an audit in .scratch/experiments/.</div>
+            <div style="display:flex; gap:6px;">
+              <button type="button" onclick="loadExperiment('left')">Load into left…</button>
+              <button type="button" onclick="loadExperiment('right')">Load into right…</button>
+            </div>
+            <div id="experiment-status"></div>
+          </div>
+
+          <div class="panel-section">
             <div class="panel-section-title">🔁 Watches</div>
             <div style="font-size:0.75rem; color:#a6adc8; margin-bottom:6px; text-align:left;">Rerun a script when its inputs change or on a schedule; a run is reported (and sent to the AI) only when a RESULT moves by more than 2σ, disappears/appears, or the run fails. Nothing runs until you Arm it; watches pause when the app restarts.</div>
             <div id="watch-list"></div>
@@ -1768,6 +1786,16 @@
     </div>
   </div>
 
+  <div id="experiment-modal" class="modal" style="z-index: 1125;">
+    <div class="modal-content doc-glass" style="width: min(760px, 92vw); max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header" id="experiment-title">Experiment</div>
+      <div id="experiment-body" class="experiment-preview"></div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+        <button onclick="closeExperimentPreview()">Cancel</button>
+        <button id="experiment-start-btn" onclick="startLoadedExperiment()">Start</button>
+      </div>
+    </div>
+  </div>
   <div id="thread-reset-modal" class="modal" style="z-index: 1130;">
     <div class="modal-content doc-glass" style="width: 380px;">
       <div class="modal-header" id="thread-reset-title">Reset thread</div>
@@ -4350,7 +4378,13 @@
       return Number.isFinite(n) ? Math.max(0, Math.min(5, Math.floor(n))) : 2;
     }
 
+    // Run-scoped experiment state; an experiment's `rigor` applies only while it runs and is never saved to Settings.
+    const experimentStates = { left: null, right: null };
+    const lastGateRecord = { left: Promise.resolve(), right: Promise.resolve() };
+
     function paneRigorLevel(pane) {
+      const exp = experimentStates[pane];
+      if (exp?.active && exp.rigor && (pane === 'left' ? leftIndex : rightIndex) === exp.index) return exp.rigor;
       const level = String(currentConfig?.[`${pane}_rigor`] || '').trim();
       if (level) return level;
       return paneMayWrite(pane) ? 'enforce' : 'report-only';
@@ -4571,7 +4605,7 @@
           const results = gateResults || [{ gate: 'G0', title: 'Reply gates', status: 'error', issues: [], reason: 'reply-gates.js did not load' }];
           renderGateCard(pane, index, results, verdict, { attempt, budget });
           noteGateOnTranscript(pane, index, verdict);
-          invoke('record_gate_run', { payload: { pane, threadId: ledgerThreadId(pane, index), attempt, verdict, results: JSON.stringify(results) } })
+          lastGateRecord[pane] = invoke('record_gate_run', { payload: { pane, threadId: ledgerThreadId(pane, index), attempt, verdict, results: JSON.stringify(results) } })
             .catch((err) => appendTerminalLog(`Gate run not recorded [${pane}]: ${err}`));
           if (verdict !== 'pass') {
             const failing = results.filter((r) => r.status === 'fail' || r.status === 'error');
@@ -4835,10 +4869,10 @@
       });
     }
 
-    async function startTask(pane) {
+    async function startTask(pane, overrides = {}) {
       if (!currentConfig) return;
       const inputEl = document.getElementById(`${pane}-task-input`);
-      const goal = (inputEl?.value || '').trim();
+      const goal = String(overrides.goal ?? inputEl?.value ?? '').trim();
       if (!goal) { appendTerminalLog('Task: enter a goal first.'); return; }
       if (taskStates[pane]?.active) { appendTerminalLog(`Task already running in ${pane} pane.`); return; }
       const index = pane === 'left' ? leftIndex : rightIndex;
@@ -4851,9 +4885,9 @@
         awaitingApproval: false,
         approveEach: Boolean(document.getElementById(`${pane}-task-approve`)?.checked),
         rounds: 0,
-        maxRounds: Math.max(1, Number(currentConfig.ai_task_max_rounds) || 12),
+        maxRounds: overrides.maxRounds ?? Math.max(1, Number(currentConfig.ai_task_max_rounds) || 12),
         tokens: 0,
-        tokenBudget: Math.max(0, Number(currentConfig.ai_task_token_budget) || 0),
+        tokenBudget: overrides.tokenBudget ?? Math.max(0, Number(currentConfig.ai_task_token_budget) || 0),
         plan: [],
         currentStep: 0,
         pendingPrompt: null,
@@ -4894,6 +4928,8 @@
       st.phase = phase;
       appendTerminalLog(`Task ${phase} [${pane}]${note ? `: ${note}` : ''}`);
       renderTaskPanel(pane);
+      const exp = experimentStates[pane];
+      if (exp?.active && exp.mode === 'task' && exp.index === st.index) finishExperiment(pane, `task ${phase}`);
     }
 
     const TASK_PLACEHOLDER_PATTERN = /\b(TODO|FIXME|XXX|placeholders?|stub(?:bed)?|not (?:yet )?implemented|NotImplementedError)\b/i;
@@ -10803,6 +10839,7 @@ async function restoreVersion() {
       };
       add('Reset thread…', () => openThreadResetConfirm(pane), 'Clear this pane\'s history and re-inject the baseline primer (asks first)');
       add('Thread logs', () => openThreadLogs(pane), 'Show this pane\'s terminal log lines and the current thread\'s message ledger');
+      add('Load experiment…', () => loadExperiment(pane), 'Load a .md/.txt experiment into this pane: preview, then Start; the app checks its expectations and saves an audit');
       add('Export audit…', () => exportThreadAudit(pane), 'Save this thread\'s operation ledger, gate runs and transcript as Markdown (+ raw .json) for review');
       document.body.appendChild(menu);
       docActionsMenuEl = menu;
@@ -10877,6 +10914,161 @@ async function restoreVersion() {
       } catch (err) {
         appendTerminalLog(`Thread audit export failed: ${err}`);
       }
+    }
+    // ---- experiment files (Thread tools ▸ Load experiment…) ----
+    let experimentPreview = null;
+    function renderExperimentPanel() {
+      const el = document.getElementById('experiment-status');
+      if (!el) return;
+      el.innerHTML = '';
+      ['left', 'right'].forEach((pane) => {
+        const exp = experimentStates[pane];
+        if (!exp) return;
+        const row = document.createElement('div');
+        row.className = 'experiment-row';
+        const label = document.createElement('span');
+        const S = window.physicsIdeExperiment;
+        label.textContent = exp.active
+          ? `🧪 ${pane}: ${exp.title} — running (${exp.mode})`
+          : `🧪 ${pane}: ${exp.title} — ${exp.result ? S.checksSummary(exp.result) : exp.error || 'finishing…'}`;
+        row.appendChild(label);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        if (exp.active) {
+          btn.textContent = 'Finish now';
+          btn.title = 'Stop the run, check the expectations and write the audit';
+          btn.onclick = () => finishExperimentNow(pane);
+        } else if (exp.result?.path) {
+          btn.textContent = 'Open audit';
+          btn.title = exp.result.path;
+          btn.onclick = () => openDocEditor({ path: exp.result.path });
+        }
+        if (btn.textContent) row.appendChild(btn);
+        el.appendChild(row);
+      });
+    }
+    async function loadExperiment(pane) {
+      let selected;
+      try {
+        selected = await window.__TAURI__.dialog.open({
+          directory: false, multiple: false, title: `Load an experiment into the ${pane} pane`,
+          defaultPath: (currentWorkspacePath || currentConfig?.project_root_dir || '').trim() || undefined,
+          filters: [{ name: 'Experiment', extensions: ['md', 'markdown', 'txt'] }]
+        });
+      } catch (err) { appendTerminalLog(`Open dialog failed: ${err}`); return; }
+      if (!selected) return;
+      try {
+        const preview = JSON.parse(await invoke('experiment_load', { payload: { path: selected } }));
+        openExperimentPreview(pane, preview);
+      } catch (err) {
+        appendTerminalLog(`Experiment load failed: ${err}`);
+      }
+    }
+    function experimentBlockers(pane, preview) {
+      const S = window.physicsIdeExperiment;
+      const reqs = S.requirementStatus(preview.experiment.requires, currentConfig, pane, paneMayWrite(pane));
+      const blockers = S.startBlockers(preview, reqs, {
+        busy: paneBusyCounter[pane] > 0,
+        taskActive: Boolean(taskStates[pane]?.active),
+        experimentActive: Boolean(experimentStates[pane]?.active)
+      });
+      if (preview.setup.length && preview.root_issue) blockers.push(`Setup files: ${preview.root_issue}`);
+      return { reqs, blockers };
+    }
+    function openExperimentPreview(pane, preview) {
+      experimentPreview = { pane, preview };
+      const exp = preview.experiment;
+      const { reqs, blockers } = experimentBlockers(pane, preview);
+      const esc = escapeHelpHtml;
+      const list = (items) => items.length ? `<ul>${items.join('')}</ul>` : '<div class="exp-none">none</div>';
+      const setupLabel = { new: 'new', same: 'unchanged (identical)', overwrite: 'WOULD OVERWRITE', invalid: 'invalid' };
+      const goal = exp.body.length > 1600 ? `${exp.body.slice(0, 1600)}\n…` : exp.body;
+      document.getElementById('experiment-title').textContent = `Experiment → ${pane} pane: ${exp.title}`;
+      document.getElementById('experiment-body').innerHTML = `
+        <div class="exp-meta">${esc(preview.name)} · sha ${esc(preview.sha.slice(0, 12))} · mode <b>${esc(exp.mode)}</b>${exp.rigor ? ` · gates <b>${esc(exp.rigor)}</b> for this run` : ''}${exp.max_rounds ? ` · ${exp.max_rounds} rounds` : ''}${exp.token_budget != null ? ` · ${Number(exp.token_budget).toLocaleString()} tokens` : ''}</div>
+        <h4>Goal (sent to the AI as ${exp.mode === 'task' ? 'TASK' : 'a chat message'})</h4>
+        <div class="exp-goal">${esc(goal)}</div>
+        ${exp.operator_notes ? `<h4>Notes for you (not sent to the AI)</h4><div class="exp-goal">${esc(exp.operator_notes)}</div>` : ''}
+        <h4>Requirements (checked, never switched on)</h4>
+        ${list(reqs.map((r) => `<li class="${r.met ? 'exp-met' : 'exp-unmet'}">${r.met ? '✓' : '✗'} ${esc(r.name)} — ${esc(r.detail)}</li>`))}
+        <h4>Setup files the app writes on Start (ledgered as setup, not credited to the AI)</h4>
+        ${list(preview.setup.map((s) => `<li class="${s.state === 'overwrite' || s.state === 'invalid' ? 'exp-unmet' : ''}"><code>${esc(s.path)}</code> — ${s.bytes} B — ${esc(setupLabel[s.state] || s.state)}${s.issue ? `: ${esc(s.issue)}` : ''}</li>`))}
+        <h4>Expectations the app checks at the end</h4>
+        ${list(exp.expect.map((e) => `<li><code>${esc(e)}</code></li>`))}
+        ${blockers.length ? `<h4 class="exp-unmet">Start is disabled</h4>${list(blockers.map((b) => `<li class="exp-unmet">${esc(b)}</li>`))}` : ''}`;
+      const btn = document.getElementById('experiment-start-btn');
+      btn.disabled = blockers.length > 0;
+      btn.title = blockers.length ? blockers.join('\n') : 'Write the setup files and start the run';
+      document.getElementById('experiment-modal').style.display = 'flex';
+    }
+    function closeExperimentPreview() {
+      experimentPreview = null;
+      document.getElementById('experiment-modal').style.display = 'none';
+    }
+    async function startLoadedExperiment() {
+      if (!experimentPreview) return;
+      const { pane, preview } = experimentPreview;
+      const { blockers } = experimentBlockers(pane, preview);
+      if (blockers.length) { openExperimentPreview(pane, preview); return; }
+      const overwrites = window.physicsIdeExperiment.setupOverwrites(preview);
+      if (overwrites.length && !confirm(`Overwrite ${overwrites.length} existing file(s) in the project?\n\n${overwrites.join('\n')}`)) return;
+      closeExperimentPreview();
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      const threadId = ledgerThreadId(pane, index);
+      let started;
+      try {
+        started = JSON.parse(await invoke('experiment_start', { payload: { pane, threadId, path: preview.path, sha: preview.sha, overwrite: overwrites.length > 0 } }));
+      } catch (err) {
+        appendTerminalLog(`Experiment not started [${pane}]: ${err}`);
+        return;
+      }
+      const exp = started.experiment;
+      (started.setup_ops || []).forEach((o) => appendTerminalLog(`Experiment setup [${pane}]: ${o?.relative_path || '?'} written [op#${o?.op_id ?? '?'}]`));
+      experimentStates[pane] = {
+        active: true, pane, index, threadId, title: exp.title, mode: exp.mode, rigor: exp.rigor,
+        expect: exp.expect, path: started.path, sha: started.sha,
+        startOpId: started.start_op_id, startedUnix: started.started_unix
+      };
+      renderExperimentPanel();
+      appendTerminalLog(`Experiment started [${pane}]: ${exp.title} (${exp.mode}, ${exp.expect.length} expectation(s))`);
+      if (exp.mode === 'task') {
+        await startTask(pane, { goal: exp.body, ...window.physicsIdeExperiment.experimentTaskLimits(exp, currentConfig) });
+        if (!taskStates[pane]?.active && experimentStates[pane]?.active) finishExperiment(pane, `task ${taskStates[pane]?.phase || 'did not start'}`);
+        return;
+      }
+      try {
+        await dispatchPromptToPane(pane, exp.body, 'Gregory', [], { source: 'current_request', trigger: 'experiment_start' });
+      } catch (err) {
+        appendTerminalLog(`Experiment chat turn failed [${pane}]: ${err}`);
+      }
+      await finishExperiment(pane, 'chat reply settled');
+    }
+    async function finishExperimentNow(pane) {
+      const exp = experimentStates[pane];
+      if (!exp?.active) return;
+      if (exp.mode === 'task' && taskStates[pane]?.active) { await stopTask(pane); return; }
+      await finishExperiment(pane, 'finished by user');
+    }
+    async function finishExperiment(pane, reason) {
+      const exp = experimentStates[pane];
+      if (!exp?.active) return;
+      exp.active = false;
+      renderExperimentPanel();
+      await lastGateRecord[pane];
+      try {
+        exp.result = JSON.parse(await invoke('experiment_finish', {
+          payload: {
+            pane, threadId: exp.threadId, title: exp.title, path: exp.path, sha: exp.sha,
+            startOpId: exp.startOpId, startedUnix: exp.startedUnix, reason, expect: exp.expect,
+            transcript: threadLogsText(pane)
+          }
+        }));
+        appendTerminalLog(`Experiment finished [${pane}]: ${exp.title} — ${window.physicsIdeExperiment.checksSummary(exp.result)} (${reason}); audit: ${exp.result.path}`);
+      } catch (err) {
+        exp.error = `audit failed: ${err}`;
+        appendTerminalLog(`Experiment audit failed [${pane}]: ${err}`);
+      }
+      renderExperimentPanel();
     }
     function closeThreadLogs() {
       document.getElementById('thread-logs-modal').style.display = 'none';
@@ -11585,6 +11777,8 @@ async function restoreVersion() {
     window.physicsIdeReplyGates = replyGates;
     import * as watchMode from './watch-mode.js';
     window.physicsIdeWatch = watchMode;
+    import * as experimentFiles from './experiment.js';
+    window.physicsIdeExperiment = experimentFiles;
   </script>
 </body>
 </html>
