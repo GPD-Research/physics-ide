@@ -19,6 +19,7 @@ mod local_ai;
 mod math_fixer;
 mod fetch;
 mod op_ledger;
+mod watch;
 mod system_monitor;
 
 #[derive(Deserialize, Default)]
@@ -1187,6 +1188,7 @@ const AI_SEARCH_BLOCK_OPEN: &str = "<<<SEARCH";
 const AI_CALC_BLOCK_OPEN: &str = "<<<CALC>>>";
 const AI_CALC_BLOCK_CLOSE: &str = "<<<END CALC>>>";
 const AI_REMEMBER_BLOCK_OPEN: &str = "<<<REMEMBER";
+const AI_WATCH_BLOCK_OPEN: &str = "<<<WATCH";
 const AI_REMEMBER_BLOCK_CLOSE: &str = "<<<END REMEMBER>>>";
 const PROJECT_MEMORY_FILE: &str = "project_memory.md";
 const PROJECT_MEMORY_PRIMER_MAX_CHARS: usize = 8_000;
@@ -1288,6 +1290,15 @@ fn ai_calc_protocol_instructions() -> String {
     )
 }
 
+fn ai_watch_protocol_instructions() -> String {
+    format!(
+        "Watch mode: to have an experiment script rerun when its inputs change or on a schedule, propose a watch on its own line:\n  {open} cmd=\"python3 relative/script.py\" inputs=\"relative/params.yaml,data/*.csv\" every=\"600\">>>\n  every is in seconds (omit it to rerun on input changes only; minimum {min}). The user must arm the watch in Workflow ▸ Watches; until then nothing runs, so never say a watch is running or armed unless the app reports it. The script must print RESULT: name=value±err unit lines: the first good run becomes the baseline, and a later run is reported when a value moves by more than {sigma}σ, a RESULT line disappears or appears, its unit changes, or the run fails. A watch report arrives as a message from Watch with an op#; cite that op#.",
+        open = AI_WATCH_BLOCK_OPEN,
+        min = watch::MIN_EVERY_SECONDS,
+        sigma = watch::MOVED_SIGMA
+    )
+}
+
 fn describe_ai_file_access_mode(mode: &str) -> String {
     describe_ai_file_access(mode, false, ai_file_ops::DEFAULT_RUN_ALLOWLIST, ai_file_ops::DEFAULT_RUN_TIMEOUT_SECONDS)
 }
@@ -1311,6 +1322,8 @@ fn describe_ai_file_access(mode: &str, run_enabled: bool, run_allowlist: &str, r
         text.push_str(&ai_run_protocol_instructions(run_allowlist, run_timeout_seconds));
         text.push(' ');
         text.push_str(&ai_calc_protocol_instructions());
+        text.push(' ');
+        text.push_str(&ai_watch_protocol_instructions());
     }
     text.push('\n');
     text.push_str(&ai_retrieval_protocol_instructions());
@@ -10550,6 +10563,7 @@ fn open_op_ledger(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     let connection = rusqlite::Connection::open(&path)
         .map_err(|e| format!("Failed to open operation ledger {}: {e}", path.to_string_lossy()))?;
     op_ledger::init(&connection)?;
+    watch::init(&connection)?;
     Ok(connection)
 }
 
@@ -10757,6 +10771,182 @@ async fn list_gate_runs(payload: LedgerQueryPayload, app: tauri::AppHandle) -> R
     })
     .await
     .map_err(|e| format!("list_gate_runs task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WatchProposePayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    cmd: String,
+    #[serde(default)]
+    inputs: String,
+    #[serde(default)]
+    every: i64,
+}
+
+fn watch_project_root(config: &AppConfig) -> Result<PathBuf, String> {
+    let root = config.project_root_dir.trim();
+    if root.is_empty() {
+        return Err("Watch blocked: no project root is configured.".to_string());
+    }
+    let path = PathBuf::from(root);
+    if !path.is_dir() {
+        return Err(format!("Watch blocked: project root does not exist: {root}"));
+    }
+    Ok(path.canonicalize().unwrap_or(path))
+}
+
+fn op_id_from_error(err: &str) -> i64 {
+    err.rsplit("[op#").next().and_then(|t| t.split_whitespace().next()).and_then(|n| n.parse::<i64>().ok()).unwrap_or(0)
+}
+
+/// The model (or the Watches panel) proposes; nothing runs until the user arms it.
+#[tauri::command]
+async fn watch_propose(payload: WatchProposePayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = (|| -> Result<String, String> {
+            let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+            let root = watch_project_root(&config)?;
+            let allowlist = ai_file_ops::parse_allowlist(&config.ai_run_allowlist);
+            ai_file_ops::validate_run_command(&payload.cmd, &allowlist, &root)?;
+            watch::expand_inputs(&root, &payload.inputs)?;
+            let c = open_op_ledger(&app)?;
+            let mut w = watch::Watch {
+                pane: payload.pane.trim().to_string(),
+                thread: payload.thread_id.trim().to_string(),
+                cmd: payload.cmd.trim().to_string(),
+                inputs: payload.inputs.trim().to_string(),
+                every_seconds: watch::clamp_every(payload.every),
+                status: "proposed".to_string(),
+                created_unix: unix_now_seconds(),
+                ..Default::default()
+            };
+            w.id = watch::insert(&c, &w)?;
+            serde_json::to_string(&w).map_err(|e| e.to_string())
+        })();
+        ledger_record(&app, &Some(payload.pane.clone()), &Some(payload.thread_id.clone()), "watch_propose", payload.cmd.trim(), String::new(), String::new(), &outcome)
+    })
+    .await
+    .map_err(|e| format!("watch_propose task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn watch_list(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        serde_json::to_string(&watch::list(&c)?).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("watch_list task failed: {e}"))?
+}
+
+/// action: arm | pause | rebaseline | remove. Arming re-checks pane write + "AI may run scripts".
+#[tauri::command]
+async fn watch_update(id: i64, action: String, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        if action == "remove" {
+            watch::delete(&c, id)?;
+            return Ok(serde_json::json!({ "removed": id }).to_string());
+        }
+        let mut w = watch::get(&c, id)?;
+        match action.as_str() {
+            "arm" => {
+                let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+                ensure_pane_may_write(&config, Some(&w.pane), "WATCH")?;
+                if !config.ai_run_enabled {
+                    return Err("Arming a watch needs \"AI may run scripts\" enabled in Settings.".to_string());
+                }
+                let root = watch_project_root(&config)?;
+                let files = watch::expand_inputs(&root, &w.inputs)?;
+                let next = watch::refresh_fingerprint(&root, &files, &w.fingerprint);
+                if !w.fingerprint.is_empty() {
+                    for f in watch::changed_inputs(&w.fingerprint, &next) {
+                        if !w.changed.contains(&f) {
+                            w.changed.push(f);
+                        }
+                    }
+                }
+                w.dirty = !w.changed.is_empty();
+                w.fingerprint = next;
+                w.status = "armed".to_string();
+            }
+            "pause" => w.status = "paused".to_string(),
+            "rebaseline" => {
+                w.baseline.clear();
+                w.last_run_unix = 0;
+            }
+            other => return Err(format!("unknown watch action '{other}'")),
+        }
+        watch::update(&c, &w)?;
+        serde_json::to_string(&w).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("watch_update task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn watch_pause_all(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        Ok(serde_json::json!({ "paused": watch::pause_all_armed(&c)? }).to_string())
+    })
+    .await
+    .map_err(|e| format!("watch_pause_all task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn watch_tick(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = load_app_config(&app).map_err(|e| format!("Failed to load app config: {e}"))?;
+        let Ok(root) = watch_project_root(&config) else { return Ok("[]".to_string()) };
+        let c = open_op_ledger(&app)?;
+        serde_json::to_string(&watch::tick(&c, &root, unix_now_seconds())?).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("watch_tick task failed: {e}"))?
+}
+
+/// Runs one watch through the normal RUN path (allowlist, sandbox, timeout, pane permission),
+/// ledgers it as `watch_run` in the watch's thread, and folds the output into baseline/compare.
+#[tauri::command]
+async fn watch_run(id: i64, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        let mut w = watch::get(&c, id)?;
+        if w.status == "proposed" {
+            return Err(format!("watch #{id} is only proposed; arm it first"));
+        }
+        let outcome = run_ai_project_command_blocking(w.cmd.clone(), None, Some(w.pane.clone()), app.clone());
+        let recorded = ledger_record(&app, &Some(w.pane.clone()), &Some(w.thread.clone()), "watch_run", &w.cmd, String::new(), String::new(), &outcome);
+        let (ok, stdout, failure, op_id, run) = match &recorded {
+            Ok(json) => {
+                let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+                let exit = v["exit_code"].as_i64();
+                let timed_out = v["timed_out"].as_bool() == Some(true);
+                let cancelled = v["cancelled"].as_bool() == Some(true);
+                let ok = exit == Some(0) && !timed_out && !cancelled;
+                let stderr_tail: String = v["stderr"].as_str().unwrap_or("").chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect();
+                let failure = if ok {
+                    String::new()
+                } else if timed_out {
+                    "timed out".to_string()
+                } else if cancelled {
+                    "cancelled".to_string()
+                } else {
+                    format!("exit {}: {}", exit.map(|e| e.to_string()).unwrap_or_else(|| "?".into()), stderr_tail.trim())
+                };
+                (ok, v["stdout"].as_str().unwrap_or("").to_string(), failure, v["op_id"].as_i64().unwrap_or(0), v)
+            }
+            Err(e) => (false, String::new(), e.clone(), op_id_from_error(e), serde_json::Value::Null),
+        };
+        let report = watch::apply_run(&mut w, ok, &stdout, &failure, unix_now_seconds(), op_id);
+        watch::update(&c, &w)?;
+        Ok(serde_json::json!({ "report": report, "watch": w, "run": run }).to_string())
+    })
+    .await
+    .map_err(|e| format!("watch_run task failed: {e}"))?
 }
 
 fn unix_now_seconds() -> i64 {
@@ -13699,6 +13889,12 @@ pub fn run() {
             record_refused_op,
             record_gate_run,
             list_gate_runs,
+            watch_propose,
+            watch_list,
+            watch_update,
+            watch_pause_all,
+            watch_tick,
+            watch_run,
             fetch_ai_url,
             install_local_model,
             get_help_doc,

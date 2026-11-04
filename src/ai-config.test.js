@@ -88,6 +88,14 @@ test('reply gates run after file ops and render a gate card instead of trusting 
   assert.ok(html.includes("window.physicsIdeReplyGates = replyGates;"), 'expected the tested gate pipeline module to be loaded');
 });
 
+test('watch mode: proposals never run until armed, reports go through the gated dispatch path', () => {
+  assert.ok(html.includes("invoke('watch_propose'"), 'expected WATCH lines and the panel to create proposals only');
+  assert.ok(html.includes("invoke('watch_pause_all'"), 'expected armed watches to pause at app start');
+  assert.ok(html.includes("source: 'watch_report'"), 'expected moved/failed runs to be sent to the AI as watch reports');
+  assert.ok(html.includes('It is NOT running: the user must arm it'), 'expected the File System result to say a proposal is not running');
+  assert.ok(html.includes("window.physicsIdeWatch = watchMode;"), 'expected the tested watch helpers to be loaded');
+});
+
 test('FETCH is a settings-gated, ledgered, untrusted read', () => {
   assert.ok(html.includes("invoke('fetch_ai_url'"), 'expected FETCH ops to go through the Rust allowlist command');
   assert.ok(html.includes('UNTRUSTED EXTERNAL CONTENT'), 'expected fetched text to be labelled untrusted');
