@@ -82,5 +82,8 @@ test('reply gates run after file ops and render a gate card instead of trusting 
   assert.ok(html.includes('function renderGateCard'), 'expected a gate card renderer under AI bubbles');
   assert.ok(html.includes("source: 'gate_send_back'"), 'expected failed drafts to be sent back to the model');
   assert.ok(html.includes('findUnrecognisedOpMarkers'), 'expected G0 to name pseudo-op markers such as <<<WRITE>>>');
-  assert.ok(html.includes("threadId: String(pane === 'left' ? leftIndex : rightIndex)"), 'expected mutating ops to carry the thread id into the ledger');
+  assert.ok(html.includes('const threadId = ledgerThreadId(pane, index);'), 'expected ops to carry the thread session key into the ledger');
+  assert.ok(html.includes("invoke('record_gate_run'"), 'expected every gate verdict to be persisted');
+  assert.ok(html.includes("invoke('record_refused_op'"), 'expected refused ops to get a ledger row');
+  assert.ok(html.includes("window.physicsIdeReplyGates = replyGates;"), 'expected the tested gate pipeline module to be loaded');
 });

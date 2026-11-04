@@ -427,6 +427,9 @@ pub struct AppConfig {
     ai_checkpoints_enabled: bool,
     #[serde(default = "default_ai_task_max_rounds")]
     ai_task_max_rounds: u32,
+    /// How many times a failed draft is sent back to the model before it is shown as UNVERIFIED.
+    #[serde(default = "default_ai_gate_send_back_budget")]
+    ai_gate_send_back_budget: u32,
     #[serde(default = "default_ai_task_token_budget")]
     ai_task_token_budget: u64,
     #[serde(default = "default_local_ai_idle_timeout_mins")]
@@ -482,6 +485,7 @@ impl Default for AppConfig {
             ai_run_timeout_seconds: default_ai_run_timeout_seconds(),
             ai_checkpoints_enabled: true,
             ai_task_max_rounds: default_ai_task_max_rounds(),
+            ai_gate_send_back_budget: default_ai_gate_send_back_budget(),
             ai_task_token_budget: default_ai_task_token_budget(),
             local_ai_idle_timeout_mins: default_local_ai_idle_timeout_mins(),
             ollama_host: default_ollama_host(),
@@ -567,6 +571,8 @@ pub struct SaveUserSettingsPayload {
     pub ai_checkpoints_enabled: bool,
     #[serde(default = "default_ai_task_max_rounds", alias = "aiTaskMaxRounds")]
     pub ai_task_max_rounds: u32,
+    #[serde(default = "default_ai_gate_send_back_budget", alias = "aiGateSendBackBudget")]
+    pub ai_gate_send_back_budget: u32,
     #[serde(default = "default_ai_task_token_budget", alias = "aiTaskTokenBudget")]
     pub ai_task_token_budget: u64,
     #[serde(default = "default_local_ai_idle_timeout_mins", alias = "localAiIdleTimeoutMins")]
@@ -1192,6 +1198,12 @@ const AI_TASK_BLOCKED: &str = "<<<BLOCKED>>>";
 
 fn default_ai_task_max_rounds() -> u32 {
     12
+}
+
+const AI_GATE_SEND_BACK_LIMIT: u32 = 5;
+
+fn default_ai_gate_send_back_budget() -> u32 {
+    2
 }
 
 fn default_local_ai_idle_timeout_mins() -> u32 {
@@ -9374,6 +9386,7 @@ fn compile_ai_briefing_blocking(current_path: String, app: tauri::AppHandle) -> 
         "ai_run_enabled": config.ai_run_enabled,
         "ai_checkpoints_enabled": config.ai_checkpoints_enabled,
         "ai_task_max_rounds": config.ai_task_max_rounds,
+        "ai_gate_send_back_budget": config.ai_gate_send_back_budget,
         "ai_task_token_budget": config.ai_task_token_budget,
         "local_ai_idle_timeout_mins": config.local_ai_idle_timeout_mins,
         "ollama_models_dir": config.ollama_models_dir,
@@ -10484,7 +10497,7 @@ fn ledger_record(
                 .unwrap_or("ok");
             (status, json.clone())
         }
-        Err(err) => (if err.contains("blocked") || err.contains("read-only") || err.contains("disabled") { "refused" } else { "failed" }, err.clone()),
+        Err(err) => (if err.starts_with("refused") || err.contains("blocked") || err.contains("read-only") || err.contains("disabled") { "refused" } else { "failed" }, err.clone()),
     };
     let rec = op_ledger::OpRecord {
         id: 0,
@@ -10539,7 +10552,7 @@ fn ledger_relative(app: &AppHandle, target: &Path) -> String {
 #[derive(Debug, Deserialize, Default)]
 struct LedgerQueryPayload {
     pane: String,
-    #[serde(default)]
+    #[serde(default, alias = "threadId")]
     thread_id: String,
     #[serde(default)]
     limit: Option<usize>,
@@ -10559,7 +10572,7 @@ async fn list_op_ledger(payload: LedgerQueryPayload, app: tauri::AppHandle) -> R
 #[derive(Debug, Deserialize, Default)]
 struct VerifyClaimsPayload {
     pane: String,
-    #[serde(default)]
+    #[serde(default, alias = "threadId")]
     thread_id: String,
     reply: String,
 }
@@ -10571,23 +10584,93 @@ async fn verify_action_claims(payload: VerifyClaimsPayload, app: tauri::AppHandl
     tauri::async_runtime::spawn_blocking(move || {
         let c = open_op_ledger(&app)?;
         let ops = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), 500)?;
-        let mut issues = op_ledger::unbacked_action_claims(&payload.reply, &ops);
+        let issues = op_ledger::unbacked_action_claims(&payload.reply, &ops);
+        let mut warnings = Vec::new();
         if let Ok(config) = load_app_config(&app) {
             let root = PathBuf::from(config.project_root_dir.trim());
             if root.is_dir() {
-                issues.extend(op_ledger::stale_writes(&ops, &root));
+                warnings.extend(op_ledger::stale_writes(&ops, &root));
             }
         }
         serde_json::to_string(&serde_json::json!({
             "gate": "G1",
             "pass": issues.is_empty(),
             "issues": issues,
+            "warnings": warnings,
             "ops_checked": ops.len(),
         }))
         .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("verify_action_claims task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RefusedOpPayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    kind: String,
+    target: String,
+    reason: String,
+}
+
+/// Ops the frontend refuses before they reach the backend (read-only pane, G0 hold) still get a ledger row.
+#[tauri::command]
+async fn record_refused_op(payload: RefusedOpPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome: Result<String, String> = Err(format!("refused: {}", payload.reason));
+        let id = ledger_record(&app, &Some(payload.pane), &Some(payload.thread_id), payload.kind.trim(), payload.target.trim(), String::new(), String::new(), &outcome)
+            .err()
+            .and_then(|e| e.rsplit("[op#").next().and_then(|t| t.split_whitespace().next()).and_then(|n| n.parse::<i64>().ok()))
+            .unwrap_or(0);
+        Ok(serde_json::json!({ "op_id": id }).to_string())
+    })
+    .await
+    .map_err(|e| format!("record_refused_op task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GateRunPayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    attempt: i64,
+    verdict: String,
+    results: String,
+}
+
+#[tauri::command]
+async fn record_gate_run(payload: GateRunPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        let id = op_ledger::record_gate_run(
+            &c,
+            &op_ledger::GateRun {
+                id: 0,
+                pane: payload.pane.trim().to_string(),
+                thread: payload.thread_id.trim().to_string(),
+                attempt: payload.attempt,
+                verdict: payload.verdict.trim().to_string(),
+                results: payload.results,
+                created_unix: unix_now_seconds(),
+            },
+        )?;
+        Ok(serde_json::json!({ "id": id }).to_string())
+    })
+    .await
+    .map_err(|e| format!("record_gate_run task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn list_gate_runs(payload: LedgerQueryPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        let rows = op_ledger::list_gate_runs(&c, payload.pane.trim(), payload.thread_id.trim(), payload.limit.unwrap_or(200).clamp(1, 2000))?;
+        serde_json::to_string(&rows).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("list_gate_runs task failed: {e}"))?
 }
 
 fn unix_now_seconds() -> i64 {
@@ -11016,6 +11099,24 @@ async fn search_ai_retrieval(
     query: String,
     limit: Option<usize>,
     evidence_budget_characters: Option<usize>,
+    pane: Option<String>,
+    thread_id: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let target = query.trim().to_string();
+    let outcome = search_ai_retrieval_inner(query, limit, evidence_budget_characters, app.clone()).await;
+    if pane.is_none() {
+        return outcome;
+    }
+    tauri::async_runtime::spawn_blocking(move || ledger_record(&app, &pane, &thread_id, "search", &target, String::new(), String::new(), &outcome))
+        .await
+        .map_err(|e| format!("search_ai_retrieval ledger task failed: {e}"))?
+}
+
+async fn search_ai_retrieval_inner(
+    query: String,
+    limit: Option<usize>,
+    evidence_budget_characters: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let query_text = query.trim().to_string();
@@ -11267,10 +11368,19 @@ fn ai_project_target(app: &tauri::AppHandle, action: &str, path: &str) -> Result
 }
 
 #[tauri::command]
-async fn read_ai_project_file(path: String, app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_ai_project_file_blocking(path, app))
-        .await
-        .map_err(|e| format!("read_ai_project_file task failed: {e}"))?
+async fn read_ai_project_file(path: String, pane: Option<String>, thread_id: Option<String>, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = read_ai_project_file_blocking(path.clone(), app.clone());
+        if pane.is_none() {
+            return outcome;
+        }
+        let target = ledger_target_path(&app, &path);
+        let sha = target.as_deref().map(op_ledger::sha256_file).unwrap_or_default();
+        let rel = target.as_deref().map(|t| ledger_relative(&app, t)).unwrap_or(path);
+        ledger_record(&app, &pane, &thread_id, "read", &rel, sha.clone(), sha, &outcome)
+    })
+    .await
+    .map_err(|e| format!("read_ai_project_file task failed: {e}"))?
 }
 
 fn read_ai_project_file_blocking(path: String, app: tauri::AppHandle) -> Result<String, String> {
@@ -11688,6 +11798,7 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.right_rigor = payload.right_rigor.trim().to_string();
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
+    config.ai_gate_send_back_budget = payload.ai_gate_send_back_budget.min(AI_GATE_SEND_BACK_LIMIT);
     config.ai_task_token_budget = payload.ai_task_token_budget;
     config.local_ai_idle_timeout_mins = payload
         .local_ai_idle_timeout_mins
@@ -13494,6 +13605,9 @@ pub fn run() {
             get_local_model_info,
             list_op_ledger,
             verify_action_claims,
+            record_refused_op,
+            record_gate_run,
+            list_gate_runs,
             install_local_model,
             get_help_doc,
             search_help_docs,

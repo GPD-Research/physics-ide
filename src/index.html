@@ -376,6 +376,10 @@
       .gate-card .gate.pass { color: #9fd89f; border-color: #6ea86e; }
       .gate-card .gate.fail { color: #ffb0b0; border-color: #d07070; }
       .gate-card .gate.skip { opacity: 0.55; }
+      .gate-card .gate.error { color: #ffd38a; border-color: #c9a050; }
+      .gate-card .gate-verdict { font-weight: 600; }
+      .gate-card.verdict-unverified .gate-verdict, .gate-card.verdict-report_only .gate-verdict { color: #ff8080; }
+      .gate-card li.warn { color: #ffd38a; }
       .gate-card details { display: inline; }
       .gate-card summary { cursor: pointer; display: inline; }
       .gate-card ul { margin: 4px 0 0 14px; padding: 0; }
@@ -1923,9 +1927,11 @@
                   <select id="settings-left-rigor"><option value="">Auto</option><option value="enforce">Enforce (send failed drafts back)</option><option value="report-only">Report only</option><option value="off">Off</option></select>
                   <label for="settings-right-rigor" style="margin: 0 0 0 8px;">Right reply gates</label>
                   <select id="settings-right-rigor"><option value="">Auto</option><option value="enforce">Enforce (send failed drafts back)</option><option value="report-only">Report only</option><option value="off">Off</option></select>
+                  <label for="settings-ai-gate-send-backs" style="margin: 0 0 0 8px;">Send-backs per turn (0–5)</label>
+                  <input type="number" id="settings-ai-gate-send-backs" min="0" max="5" step="1" placeholder="2" style="width: 4em;">
                 </div>
                 <div style="font-size: 0.78rem; color: var(--accent-dim);">
-                  Reply gates check each AI reply against the app's operation ledger before it counts (G0 protocol, G1 operation truth; more to come). Auto = enforce for a writing pane, report-only for a read-only pane. A pane with write permission off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
+                  Reply gates check each AI reply against the app's operation ledger before it counts (G0 protocol, G1 operation truth; G2–G5 show as skipped until built). A failed draft is sent back up to the send-back budget, then shown as UNVERIFIED. Auto = enforce for a writing pane, report-only for a read-only pane. A pane with write permission off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
                 </div>
               </div>
               <div class="pane-config-block">
@@ -3886,6 +3892,7 @@
         document.getElementById('settings-right-pane-ai-write').checked = currentConfig.right_pane_ai_write === true;
         document.getElementById('settings-left-rigor').value = currentConfig.left_rigor || '';
         document.getElementById('settings-right-rigor').value = currentConfig.right_rigor || '';
+        document.getElementById('settings-ai-gate-send-backs').value = gateSendBackBudget();
         ollamaOptionsDraft.left = { ...(currentConfig.left_ollama_options || {}) };
         ollamaOptionsDraft.right = { ...(currentConfig.right_ollama_options || {}) };
         renderOllamaOptionsForm();
@@ -4301,13 +4308,23 @@
     }
 
     // ---- Reply gates (AI-RIGOR-STRATEGY Tier 1): the app, not the model, decides what reached the thread ----
-    const GATE_MAX_SEND_BACKS = 2;
+    // Pipeline order, skip/error semantics and verdicts live in reply-gates.js (unit-tested).
     const gateSendBacks = { left: {}, right: {} };
+
+    function gateSendBackBudget() {
+      const n = Number(currentConfig?.ai_gate_send_back_budget);
+      return Number.isFinite(n) ? Math.max(0, Math.min(5, Math.floor(n))) : 2;
+    }
 
     function paneRigorLevel(pane) {
       const level = String(currentConfig?.[`${pane}_rigor`] || '').trim();
       if (level) return level;
       return paneMayWrite(pane) ? 'enforce' : 'report-only';
+    }
+
+    // Ledger rows are keyed by the thread's session key, so a recalled or different thread in the same slot never inherits another thread's ops.
+    function ledgerThreadId(pane, index) {
+      return ensureThreadSession(pane, index).key;
     }
 
     function lastAiBubble(pane, index) {
@@ -4318,48 +4335,60 @@
       return bubbles.length ? bubbles[bubbles.length - 1] : null;
     }
 
-    function renderGateCard(pane, index, results, { rejected = false, unverified = false } = {}) {
+    const GATE_VERDICT_LABELS = {
+      pass: '',
+      send_back: 'draft rejected: sent back to the model',
+      unverified: 'UNVERIFIED',
+      report_only: 'REPORT ONLY: gate failures were not sent back'
+    };
+
+    function renderGateCard(pane, index, results, verdict, { attempt = 1, budget = gateSendBackBudget() } = {}) {
       const bubble = lastAiBubble(pane, index);
       if (!bubble) return;
-      bubble.classList.toggle('gate-rejected', rejected);
-      bubble.classList.toggle('gate-unverified', unverified);
+      bubble.classList.toggle('gate-rejected', verdict === 'send_back');
+      bubble.classList.toggle('gate-unverified', verdict === 'unverified' || verdict === 'report_only');
       const card = document.createElement('div');
-      card.className = 'gate-card';
+      card.className = `gate-card verdict-${verdict}`;
+      const marks = { pass: '✓', fail: '✗', skip: '–', error: '!' };
       const chips = results.map((r) => {
-        const cls = r.pass === true ? 'pass' : r.pass === false ? 'fail' : 'skip';
-        const mark = r.pass === true ? '✓' : r.pass === false ? '✗' : '–';
         const detail = r.detail ? `(${escapeHelpHtml(r.detail)})` : '';
-        return `<span class="gate ${cls}" title="${escapeHelpHtml(r.title || '')}">${escapeHelpHtml(r.gate)} ${mark}${detail}</span>`;
+        const tip = r.reason ? `${r.title} — ${r.reason}` : r.title;
+        return `<span class="gate ${r.status}" title="${escapeHelpHtml(tip || '')}">${escapeHelpHtml(r.gate)} ${marks[r.status] || '?'}${detail}</span>`;
       }).join('');
-      const issues = results.flatMap((r) => (r.issues || []).map((i) => `<li>${escapeHelpHtml(r.gate)}: ${escapeHelpHtml(i)}</li>`));
-      const label = rejected ? 'draft rejected — sent back to the model' : unverified ? 'UNVERIFIED — send-back budget spent' : '';
-      card.innerHTML = `${chips}${issues.length ? `<details><summary>${escapeHelpHtml(label || `${issues.length} issue(s)`)}</summary><ul>${issues.join('')}</ul></details>` : (label ? `<span>${escapeHelpHtml(label)}</span>` : '')}`;
+      const issues = results.flatMap((r) => [
+        ...(r.issues || []).map((i) => `<li>${escapeHelpHtml(r.gate)}: ${escapeHelpHtml(i)}</li>`),
+        ...(r.status === 'error' ? [`<li>${escapeHelpHtml(r.gate)} could not run: ${escapeHelpHtml(r.reason || '')}</li>`] : []),
+        ...(r.warnings || []).map((w) => `<li class="warn">${escapeHelpHtml(r.gate)} warning: ${escapeHelpHtml(w)}</li>`)
+      ]);
+      let label = GATE_VERDICT_LABELS[verdict] || verdict;
+      if (verdict === 'send_back') label += ` (${attempt} of ${budget})`;
+      if (verdict === 'unverified') label += results.some((r) => r.status === 'fail') ? ` (draft ${attempt}; send-back budget ${budget} spent)` : ' (a gate could not run)';
+      const badge = label ? `<span class="gate-verdict">${escapeHelpHtml(label)}</span>` : '';
+      card.innerHTML = `${chips}${badge}${issues.length ? `<details><summary>${issues.length} note(s)</summary><ul>${issues.join('')}</ul></details>` : ''}`;
       bubble.insertAdjacentElement('afterend', card);
     }
 
     async function runReplyGates(pane, index, reply, fileOps) {
-      const results = [];
-      const g0Issues = Array.isArray(fileOps.protocolIssues) ? fileOps.protocolIssues : [];
-      results.push({ gate: 'G0', title: 'Protocol parse: every op marker is a recognised, well-formed operation', pass: g0Issues.length === 0, issues: g0Issues });
-      try {
-        const g1 = JSON.parse(await invoke('verify_action_claims', { payload: { pane, threadId: String(index), reply } }));
-        results.push({ gate: 'G1', title: 'Operation truth: claimed file/run actions resolve to successful ledger operations', pass: Boolean(g1.pass), issues: g1.issues || [], detail: `${g1.ops_checked} ops` });
-      } catch (err) {
-        results.push({ gate: 'G1', title: 'Operation truth', pass: null, detail: 'ledger unavailable', issues: [`gate skipped: ${err}`] });
-      }
-      ['G2', 'G3', 'G4', 'G5'].forEach((g) => results.push({ gate: g, title: 'Not built yet (claim tags, evidence resolution, tool-backed numbers, status consistency)', pass: null }));
-      results.push({ gate: 'G6', title: 'Task completion gate (Task mode only)', pass: taskStateFor(pane, index) ? null : undefined });
-      return results;
+      const RG = window.physicsIdeReplyGates;
+      if (!RG) return null;
+      return RG.runGatePipeline({
+        G0: () => {
+          const issues = Array.isArray(fileOps.protocolIssues) ? fileOps.protocolIssues : [];
+          return issues.length ? RG.gateFail(issues) : RG.gatePass();
+        },
+        G1: async () => {
+          const g1 = JSON.parse(await invoke('verify_action_claims', { payload: { pane, threadId: ledgerThreadId(pane, index), reply } }));
+          return { status: g1.pass ? 'pass' : 'fail', issues: g1.issues || [], warnings: g1.warnings || [], detail: `${g1.ops_checked} ops` };
+        },
+        G6: () => RG.gateSkip(taskStateFor(pane, index) ? 'Task-mode DONE is still checked by the task loop' : 'not a Task-mode turn')
+      }, { pane, index, reply, fileOps });
     }
 
-    function gateReportPrompt(results, attempt) {
-      const lines = [`GATE REPORT (draft ${attempt} of ${GATE_MAX_SEND_BACKS + 1})`];
-      results.filter((r) => r.pass === false).forEach((r) => {
-        lines.push(`${r.gate} — FAIL`);
-        (r.issues || []).slice(0, 6).forEach((i) => lines.push(`  - ${i}`));
-      });
-      lines.push('Fix the draft: perform the operation with a real FILE/APPEND/EDIT/RUN/CALC block, or restate honestly that it was not done. Cite operations as op#N from the File System results. Do not add new claims.');
-      return lines.join('\n').slice(0, 1500);
+    function noteGateOnTranscript(pane, index, verdict) {
+      const rows = threadTranscripts[pane][index] || [];
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        if (rows[i].role === 'assistant') { rows[i].gate = verdict; break; }
+      }
     }
 
     async function dispatchPromptToPane(pane, text, senderLabel = 'Gregory', attachments = [], provenance = {}) {
@@ -4386,7 +4415,7 @@
 
       const index = (pane === 'left') ? leftIndex : rightIndex;
       const provider = (pane === 'left') ? currentConfig.left_provider : currentConfig.right_provider;
-      if (!provenance.source || provenance.source === 'current_request') gateSendBacks[pane][index] = 0;
+      if (!provenance.source || provenance.source === 'current_request' || provenance.source === 'task_follow_up') gateSendBacks[pane][index] = 0;
 
       let messagePayload;
       if (provider === 'gemini') {
@@ -4498,28 +4527,34 @@
         scheduleThreadAutosave(pane, index);
         const fileOps = await applyAssistantFileBlocks(pane, index, reply);
         const rigor = paneRigorLevel(pane);
+        let taskReply = reply;
         if (rigor !== 'off') {
+          const budget = gateSendBackBudget();
+          const attempt = (gateSendBacks[pane][index] || 0) + 1;
+          const RG = window.physicsIdeReplyGates;
           const gateResults = await runReplyGates(pane, index, reply, fileOps);
-          const failed = gateResults.filter((r) => r.pass === false);
-          if (failed.length === 0) {
-            renderGateCard(pane, index, gateResults);
-          } else {
-            const attempts = (gateSendBacks[pane][index] || 0) + 1;
-            appendTerminalLog(`Gate ${failed.map((r) => r.gate).join('+')} failed [${pane}] (draft ${attempts}): ${failed.flatMap((r) => r.issues || []).join(' | ')}`);
-            if (rigor === 'enforce' && attempts <= GATE_MAX_SEND_BACKS) {
-              gateSendBacks[pane][index] = attempts;
-              renderGateCard(pane, index, gateResults, { rejected: true });
-              if (taskStateFor(pane, index)) await updateTaskAfterReply(pane, index, reply.replace(TASK_DONE_MARK, '[DONE withheld by gate]'), fileOps);
-              return dispatchPromptToPane(pane, gateReportPrompt(gateResults, attempts), 'System', [], {
-                source: 'gate_send_back',
-                trigger: 'reply_gate',
-                autoContinueDepth: Number(provenance.autoContinueDepth) || 0
-              });
-            }
-            renderGateCard(pane, index, gateResults, { unverified: true });
+          const verdict = gateResults ? RG.decideGateVerdict(gateResults, { rigor, attempt, budget }) : 'unverified';
+          const results = gateResults || [{ gate: 'G0', title: 'Reply gates', status: 'error', issues: [], reason: 'reply-gates.js did not load' }];
+          renderGateCard(pane, index, results, verdict, { attempt, budget });
+          noteGateOnTranscript(pane, index, verdict);
+          invoke('record_gate_run', { payload: { pane, threadId: ledgerThreadId(pane, index), attempt, verdict, results: JSON.stringify(results) } })
+            .catch((err) => appendTerminalLog(`Gate run not recorded [${pane}]: ${err}`));
+          if (verdict !== 'pass') {
+            const failing = results.filter((r) => r.status === 'fail' || r.status === 'error');
+            appendTerminalLog(`Gate ${verdict} [${pane}] draft ${attempt}: ${failing.map((r) => `${r.gate} ${r.status}: ${(r.issues.length ? r.issues : [r.reason]).join(' | ')}`).join(' ; ')}`);
           }
+          if (verdict === 'send_back') {
+            gateSendBacks[pane][index] = attempt;
+            if (taskStateFor(pane, index)) await updateTaskAfterReply(pane, index, reply.replace(TASK_DONE_MARK, '[DONE withheld by gate]'), fileOps);
+            return dispatchPromptToPane(pane, RG.gateReportPrompt(results, attempt, budget), 'System', [], {
+              source: 'gate_send_back',
+              trigger: 'reply_gate',
+              autoContinueDepth: Number(provenance.autoContinueDepth) || 0
+            });
+          }
+          if (verdict !== 'pass' && results.some((r) => r.status === 'fail')) taskReply = reply.replace(TASK_DONE_MARK, '[DONE withheld by gate]');
         }
-        const taskDecision = await updateTaskAfterReply(pane, index, reply, fileOps);
+        const taskDecision = await updateTaskAfterReply(pane, index, taskReply, fileOps);
         if (taskDecision.handled) {
           if (taskDecision.continuePrompt) {
             return dispatchPromptToPane(pane, taskDecision.continuePrompt, 'System', [], {
@@ -4948,28 +4983,29 @@
       return lines.join('\n');
     }
 
-    async function executeAssistantFileOp(pane, op) {
+    async function executeAssistantFileOp(pane, op, index = pane === 'left' ? leftIndex : rightIndex) {
+      const threadId = ledgerThreadId(pane, index);
       switch (op.op) {
         case 'write': {
-          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const outcome = JSON.parse(await invoke('write_ai_project_file', { path: op.path, content: op.content, pane, threadId }));
           const line = `${outcome.action} ${outcome.relative_path} (${outcome.bytes} bytes)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`;
           appendTerminalLog(`AI file write [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'append': {
-          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const outcome = JSON.parse(await invoke('append_ai_project_file', { path: op.path, content: op.content, pane, threadId }));
           const line = `${outcome.action} ${outcome.relative_path} (+${outcome.bytes} bytes)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`;
           appendTerminalLog(`AI file append [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'edit': {
-          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const outcome = JSON.parse(await invoke('edit_ai_project_file', { path: op.path, hunks: op.hunks, pane, threadId }));
           const line = `edited ${outcome.relative_path} (${outcome.hunks} hunk${outcome.hunks === 1 ? '' : 's'}, now ${outcome.bytes} bytes)${outcome.op_id ? ` [op#${outcome.op_id}]` : ''}`;
           appendTerminalLog(`AI file edit [${pane}]: ${line}`);
           return { text: `- OK: ${line}`, needsFollowUp: false };
         }
         case 'read': {
-          const outcome = JSON.parse(await invoke('read_ai_project_file', { path: op.path }));
+          const outcome = JSON.parse(await invoke('read_ai_project_file', { path: op.path, pane, threadId }));
           appendTerminalLog(`AI file read [${pane}]: ${outcome.relative_path} (${outcome.bytes} bytes)`);
           const note = outcome.truncated ? ` — truncated to the first ${outcome.content.length} characters` : '';
           return {
@@ -4979,7 +5015,7 @@
         }
         case 'run': {
           appendTerminalLog(`AI run [${pane}]: ${op.cmd}`);
-          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const outcome = JSON.parse(await invoke('run_ai_project_command', { cmd: op.cmd, timeoutSeconds: op.timeout, pane, threadId }));
           if (outcome.stdout) appendTerminalLog(outcome.stdout.replace(/\n$/, ''));
           if (outcome.stderr) appendTerminalLog(outcome.stderr.replace(/\n$/, ''));
           appendTerminalLog(`AI run [${pane}] finished: ${outcome.cancelled ? 'cancelled' : outcome.timed_out ? 'timed out' : `exit ${outcome.exit_code}`} in ${outcome.elapsed_seconds}s`);
@@ -4988,7 +5024,7 @@
         case 'search': {
           appendTerminalLog(`AI search [${pane}]: ${op.query}`);
           const budget = Math.max(500, Math.min(24000, Number(document.getElementById('retrieval-budget-input')?.value || 6000)));
-          const outcome = JSON.parse(await invoke('search_ai_retrieval', { query: op.query, limit: op.limit, evidenceBudgetCharacters: budget }));
+          const outcome = JSON.parse(await invoke('search_ai_retrieval', { query: op.query, limit: op.limit, evidenceBudgetCharacters: budget, pane, threadId }));
           const sources = Array.isArray(outcome.sources) ? outcome.sources : [];
           appendTerminalLog(`AI search [${pane}] returned ${sources.length} source${sources.length === 1 ? '' : 's'}: ${sources.join(', ') || 'none'}`);
           const body = String(outcome.provider_text || '').trim() || 'No matching theory chunks were found; try a different query or rebuild the retrieval index.';
@@ -4996,7 +5032,7 @@
         }
         case 'calc': {
           appendTerminalLog(`AI calc [${pane}]: ${op.code.split('\n').length} line snippet`);
-          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout, pane, threadId: String(pane === 'left' ? leftIndex : rightIndex) }));
+          const outcome = JSON.parse(await invoke('run_ai_calc', { code: op.code, timeoutSeconds: op.timeout, pane, threadId }));
           const run = outcome.run || {};
           if (run.stdout) appendTerminalLog(run.stdout.replace(/\n$/, ''));
           if (run.stderr) appendTerminalLog(run.stderr.replace(/\n$/, ''));
@@ -5083,7 +5119,7 @@
           trigger: 'assistant_file_block',
           volatility: 'dynamic'
         });
-        return { needsFollowUp: true, written, outputs, unrecognizedWriteClaim: true };
+        return { needsFollowUp: true, written, outputs, unrecognizedWriteClaim: true, protocolIssues };
       }
 
       const isMutating = (op) => op.op === 'write' || op.op === 'append' || op.op === 'edit' || op.op === 'run' || op.op === 'calc';
@@ -5108,12 +5144,16 @@
       for (const op of ops) {
         if (op.op_refused) {
           appendTerminalLog(`AI ${op.op} refused [${pane}] for ${describeAssistantFileOp(op)}: ${op.op_refused}`);
-          results.push(`- REFUSED: ${describeAssistantFileOp(op)} — ${op.op_refused}. Propose the change as text instead.`);
+          let refusedId = 0;
+          try {
+            refusedId = JSON.parse(await invoke('record_refused_op', { payload: { pane, threadId: ledgerThreadId(pane, index), kind: op.op, target: op.path || op.cmd || 'CALC', reason: op.op_refused } })).op_id || 0;
+          } catch (_) { /* ledger unavailable: G1 still sees no successful op */ }
+          results.push(`- REFUSED: ${describeAssistantFileOp(op)} — ${op.op_refused}${refusedId ? ` [op#${refusedId}]` : ''}. Propose the change as text instead.`);
           needsFollowUp = true;
           continue;
         }
         try {
-          const outcome = await executeAssistantFileOp(pane, op);
+          const outcome = await executeAssistantFileOp(pane, op, index);
           results.push(outcome.text);
           outputs.push({ op: op.op, text: outcome.text });
           if (op.op === 'write' || op.op === 'append' || op.op === 'edit') written.push(op.path);
@@ -5146,20 +5186,10 @@
       return { needsFollowUp, written, outputs, unrecognizedWriteClaim, protocolIssues };
     }
 
-    const KNOWN_OP_MARKERS = new Set(['FILE', 'END FILE', 'APPEND', 'END APPEND', 'EDIT', 'END EDIT', 'READ', 'RUN', 'CALC', 'END CALC', 'SEARCH', 'REMEMBER', 'END REMEMBER', 'PLAN', 'END PLAN', 'STEP', 'DONE', 'BLOCKED', 'FIND', 'REPLACE', 'END HUNK']);
-    // G0: `<<<WRITE path="x">>>`-style markers look like operations but are never executed; name them so the model fixes the marker instead of narrating success.
+    // G0: markers that look like operations but never execute (`<<<WRITE>>>`, missing path=, no END marker) are named so the model fixes the marker instead of narrating success.
     function findUnrecognisedOpMarkers(reply) {
-      const fenced = fencedRanges(String(reply || ''));
-      const issues = [];
-      const re = /<<<\s*([A-Z][A-Z _]*?)(?=[\s>])[^>\n]*>>>+/g;
-      let m;
-      while ((m = re.exec(String(reply || ''))) !== null) {
-        if (fenced.some(([a, b]) => m.index >= a && m.index < b)) continue;
-        const word = m[1].trim();
-        if (KNOWN_OP_MARKERS.has(word)) continue;
-        issues.push(`\`${m[0].slice(0, 60)}\` is not an operation the app executes; use <<<FILE path="…">>> … <<<END FILE>>> (or APPEND/EDIT/READ/RUN/CALC/SEARCH/REMEMBER).`);
-      }
-      return issues;
+      const RG = window.physicsIdeReplyGates;
+      return RG ? RG.findProtocolIssues(reply) : [];
     }
 
     function evaluateProbeReply(reply, expectedToken) {
@@ -9906,6 +9936,8 @@ async function restoreVersion() {
       const aiRunAllowlist = (document.getElementById('settings-ai-run-allowlist').value || '').trim() || 'python3,python,bash,sh,node';
       const aiRunTimeoutSeconds = Math.max(1, Math.min(600, parseInt(document.getElementById('settings-ai-run-timeout').value, 10) || 60));
       const aiTaskMaxRounds = Math.max(1, Math.min(100, parseInt(document.getElementById('settings-ai-task-rounds').value, 10) || 12));
+      const sendBackInput = parseInt(document.getElementById('settings-ai-gate-send-backs').value, 10);
+      const aiGateSendBackBudget = Number.isFinite(sendBackInput) ? Math.max(0, Math.min(5, sendBackInput)) : 2;
       const aiTaskTokenBudget = Math.max(0, parseInt(document.getElementById('settings-ai-task-tokens').value, 10) || 0);
       const localAiIdleTimeoutMins = Math.max(1, Math.min(1440, parseInt(document.getElementById('settings-local-ai-idle').value, 10) || 60));
 
@@ -9943,6 +9975,7 @@ async function restoreVersion() {
         ai_run_allowlist: aiRunAllowlist,
         ai_run_timeout_seconds: aiRunTimeoutSeconds,
         ai_task_max_rounds: aiTaskMaxRounds,
+        ai_gate_send_back_budget: aiGateSendBackBudget,
         ai_task_token_budget: aiTaskTokenBudget,
         local_ai_idle_timeout_mins: localAiIdleTimeoutMins
       };
@@ -10004,6 +10037,7 @@ async function restoreVersion() {
         currentConfig.ai_run_allowlist = aiRunAllowlist;
         currentConfig.ai_run_timeout_seconds = aiRunTimeoutSeconds;
         currentConfig.ai_task_max_rounds = aiTaskMaxRounds;
+        currentConfig.ai_gate_send_back_budget = aiGateSendBackBudget;
         currentConfig.ai_task_token_budget = aiTaskTokenBudget;
         currentConfig.local_ai_idle_timeout_mins = localAiIdleTimeoutMins;
         currentConfig.ollama_host = ollamaHost;
@@ -11301,7 +11335,9 @@ async function restoreVersion() {
   <script type="module">
     import { getModelOptions } from './ai-config.js';
     import { claimsFileWriteWithoutOperation } from './ai-file-claims.js';
+    import * as replyGates from './reply-gates.js';
     window.physicsIdeAiConfig = { getModelOptions, claimsFileWriteWithoutOperation };
+    window.physicsIdeReplyGates = replyGates;
   </script>
 </body>
 </html>
