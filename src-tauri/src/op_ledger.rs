@@ -1,4 +1,4 @@
-//! Canonical operation ledger: every app-mediated AI operation (FILE/APPEND/EDIT/RUN/CALC)
+//! Canonical operation ledger: every app-mediated AI operation (FILE/APPEND/EDIT/RUN/CALC/READ/SEARCH)
 //! is recorded here with its observed outcome. Gates read these rows instead of trusting
 //! the model's narration (AI-RIGOR-STRATEGY.md, Tier 1).
 
@@ -13,7 +13,7 @@ pub struct OpRecord {
     pub id: i64,
     pub pane: String,
     pub thread: String,
-    /// "write" | "append" | "edit" | "run" | "calc"
+    /// "write" | "append" | "edit" | "run" | "calc" | "read" | "search"
     pub kind: String,
     /// Relative path for file ops; the command line for run; the scratch script for calc.
     pub target: String,
@@ -61,7 +61,17 @@ pub fn init(connection: &rusqlite::Connection) -> Result<(), String> {
                  sha_after TEXT NOT NULL DEFAULT '',
                  created_unix INTEGER NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_ops_thread ON ops(pane, thread, id);",
+             CREATE INDEX IF NOT EXISTS idx_ops_thread ON ops(pane, thread, id);
+             CREATE TABLE IF NOT EXISTS gate_runs (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 pane TEXT NOT NULL,
+                 thread TEXT NOT NULL,
+                 attempt INTEGER NOT NULL,
+                 verdict TEXT NOT NULL,
+                 results TEXT NOT NULL DEFAULT '',
+                 created_unix INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_gate_runs_thread ON gate_runs(pane, thread, id);",
         )
         .map_err(|e| format!("Failed to initialize operation ledger: {e}"))
 }
@@ -118,21 +128,37 @@ pub fn list(connection: &rusqlite::Connection, pane: &str, thread: &str, limit: 
 const WRITE_VERBS: &str = r"(?:created|wrote|written|saved|placed|generated|updated|edited|appended|patched|produced)";
 const RUN_VERBS: &str = r"(?:ran|executed|tested|verified by running|run and)";
 const NEGATION: &str = r"(?:not|never|unable|cannot|can't|couldn't|didn't|failed to|no)\b[^.!?\n]{0,40}$";
+/// Run/test outcomes reported without naming a file ("all tests passed", "I ran the simulation").
+const PATHLESS_RUN_CLAIM: &str = r"(?i)\b(?:(?:all\s+)?(?:the\s+)?tests?\s+(?:now\s+)?(?:pass(?:ed|es)?|succeed(?:ed|s)?)|(?:ran|executed)\s+(?:the\s+|a\s+|my\s+)?(?:script|tests?|simulation|calculation|code|sweep)s?)\b";
 const PATH_RE: &str = r"(?:[\w.-]+/)*[\w.-]+\.(?:md|txt|json|ya?ml|py|rs|js|ts|html|tex|csv|ipynb|docx?|png|svg)";
 
 fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).trim_matches(|c| c == '`' || c == '"' || c == '\'').to_ascii_lowercase()
 }
 
+fn path_mentions(sentence: &str, path_re: &regex::Regex) -> Vec<String> {
+    let is_delim = |c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?' | '*' | '[' | ']');
+    path_re
+        .find_iter(sentence)
+        .filter(|m| {
+            let before = sentence[..m.start()].chars().next_back();
+            let after = sentence[m.end()..].chars().next();
+            before.map_or(true, |c| is_delim(c) && c != '.') && after.map_or(true, is_delim)
+        })
+        .map(|m| m.as_str().to_string())
+        .collect()
+}
+
 /// Operation-truth gate (G1): every past-tense action claim about a file or run in `reply`
 /// must be backed by an `ok` ledger row of the right kind for that target in this thread,
 /// and every `op#N` citation must resolve. Returns human-readable issues; empty = pass.
 pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
-    let path_re = regex::Regex::new(&format!(r"(?i)(?:^|[\s\x60\x22\x27(])({PATH_RE})(?:$|[\s\x60\x22\x27).,;:!?])")).unwrap();
+    let path_re = regex::Regex::new(&format!(r"(?i){PATH_RE}")).unwrap();
     let write_re = regex::Regex::new(&format!(r"(?i)\b{WRITE_VERBS}\b")).unwrap();
     let run_re = regex::Regex::new(&format!(r"(?i)\b{RUN_VERBS}\b")).unwrap();
     let neg_re = regex::Regex::new(&format!(r"(?i)\b{NEGATION}")).unwrap();
     let cite_re = regex::Regex::new(r"(?i)\bop#(\d+)\b").unwrap();
+    let pathless_run_re = regex::Regex::new(PATHLESS_RUN_CLAIM).unwrap();
 
     let ok_writes: Vec<String> = ops
         .iter()
@@ -144,40 +170,68 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
         .filter(|o| o.status == "ok" && matches!(o.kind.as_str(), "run" | "calc"))
         .map(|o| o.target.to_ascii_lowercase())
         .collect();
+    let affirmed = |sentence: &str, verb: &regex::Regex| verb.find_iter(sentence).any(|v| !neg_re.is_match(&sentence[..v.start()]));
 
     // Sentence boundaries are punctuation followed by whitespace, so `fixes.md` stays intact.
     let sentence_re = regex::Regex::new(r"[.!?]\s+|\n+").unwrap();
     let mut issues = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
+    // Only reported targets are de-duplicated: an earlier honest sentence about a file must not
+    // hide a later false claim about the same file.
+    let mut reported = std::collections::BTreeSet::new();
+    let mut pathless_reported = false;
     for sentence in sentence_re.split(reply) {
-        let Some(m) = path_re.captures(sentence) else { continue };
-        let path = m.get(1).map(|p| p.as_str()).unwrap_or("");
-        let base = basename(path);
-        if base.is_empty() || !seen.insert(base.clone()) {
-            continue;
+        let claims_write = affirmed(sentence, &write_re);
+        let claims_run = affirmed(sentence, &run_re);
+        let paths = path_mentions(sentence, &path_re);
+        for path in &paths {
+            let base = basename(path);
+            if base.is_empty() || reported.contains(&base) {
+                continue;
+            }
+            if claims_write && !ok_writes.iter().any(|t| t == &base) {
+                let detail = ops
+                    .iter()
+                    .filter(|o| basename(&o.target) == base)
+                    .last()
+                    .map(|o| format!(" (last ledger entry for it: op#{} {} → {})", o.id, o.kind, o.status))
+                    .unwrap_or_default();
+                issues.push(format!(
+                    "\"{}\" claims {path} was written, but the ledger has no successful FILE/APPEND/EDIT operation for it in this thread{detail}.",
+                    sentence.trim().chars().take(100).collect::<String>()
+                ));
+                reported.insert(base);
+            } else if claims_run && !claims_write && !ok_runs.iter().any(|t| t.contains(&base)) {
+                issues.push(format!(
+                    "\"{}\" claims {path} was run, but the ledger has no successful RUN/CALC involving it in this thread.",
+                    sentence.trim().chars().take(100).collect::<String>()
+                ));
+                reported.insert(base);
+            }
         }
-        let claims_write = write_re.find(sentence).is_some_and(|v| !neg_re.is_match(&sentence[..v.start()]));
-        let claims_run = run_re.find(sentence).is_some_and(|v| !neg_re.is_match(&sentence[..v.start()]));
-        if claims_write && !ok_writes.iter().any(|t| t == &base) {
-            let detail = ops
-                .iter()
-                .filter(|o| basename(&o.target) == base)
-                .last()
-                .map(|o| format!(" (last ledger entry for it: op#{} {} → {})", o.id, o.kind, o.status))
-                .unwrap_or_default();
-            issues.push(format!(
-                "\"{}\" claims {path} was written, but the ledger has no successful FILE/APPEND/EDIT operation for it in this thread{detail}.",
-                sentence.trim().chars().take(100).collect::<String>()
-            ));
-        } else if claims_run && !ok_runs.iter().any(|t| t.contains(&base)) {
-            issues.push(format!(
-                "\"{}\" claims {path} was run, but the ledger has no successful RUN/CALC involving it in this thread.",
-                sentence.trim().chars().take(100).collect::<String>()
-            ));
+        if paths.is_empty() && !pathless_reported && ok_runs.is_empty() {
+            if let Some(m) = pathless_run_re.find(sentence) {
+                if !neg_re.is_match(&sentence[..m.start()]) {
+                    let last = ops
+                        .iter()
+                        .filter(|o| matches!(o.kind.as_str(), "run" | "calc"))
+                        .last()
+                        .map(|o| format!(" (last run in the ledger: op#{} → {})", o.id, o.status))
+                        .unwrap_or_default();
+                    issues.push(format!(
+                        "\"{}\" reports a run or test outcome, but the ledger has no successful RUN/CALC in this thread{last}.",
+                        sentence.trim().chars().take(100).collect::<String>()
+                    ));
+                    pathless_reported = true;
+                }
+            }
         }
     }
+    let mut cited = std::collections::BTreeSet::new();
     for cap in cite_re.captures_iter(reply) {
         let id: i64 = cap[1].parse().unwrap_or(-1);
+        if !cited.insert(id) {
+            continue;
+        }
         match ops.iter().find(|o| o.id == id) {
             None => issues.push(format!("op#{id} is cited but does not exist in this thread's ledger.")),
             Some(o) if o.status != "ok" => issues.push(format!("op#{id} is cited as evidence but its status is {}.", o.status)),
@@ -187,10 +241,16 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     issues
 }
 
-/// Fresh-state check: successful write ops whose file has since changed or vanished.
+/// Fresh-state check: the latest successful write per file whose content has since changed or
+/// vanished outside the ledger. These are warnings (the model cannot fix a user's edit), not gate failures.
 pub fn stale_writes(ops: &[OpRecord], root: &Path) -> Vec<String> {
-    ops.iter()
-        .filter(|o| o.status == "ok" && matches!(o.kind.as_str(), "write" | "append" | "edit") && !o.sha_after.is_empty())
+    let mut latest: std::collections::BTreeMap<&str, &OpRecord> = std::collections::BTreeMap::new();
+    for o in ops.iter().filter(|o| matches!(o.kind.as_str(), "write" | "append" | "edit")) {
+        latest.insert(o.target.as_str(), o);
+    }
+    latest
+        .values()
+        .filter(|o| o.status == "ok" && !o.sha_after.is_empty())
         .filter_map(|o| {
             let now = sha256_file(&root.join(&o.target));
             if now.is_empty() {
@@ -202,6 +262,54 @@ pub fn stale_writes(ops: &[OpRecord], root: &Path) -> Vec<String> {
             }
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GateRun {
+    #[serde(default)]
+    pub id: i64,
+    pub pane: String,
+    pub thread: String,
+    /// Draft number within the turn (1 = first reply, 2+ = after send-backs).
+    pub attempt: i64,
+    /// "pass" | "send_back" | "unverified" | "report_only"
+    pub verdict: String,
+    /// JSON array of gate results as rendered on the card.
+    pub results: String,
+    #[serde(default)]
+    pub created_unix: i64,
+}
+
+pub fn record_gate_run(connection: &rusqlite::Connection, run: &GateRun) -> Result<i64, String> {
+    connection
+        .execute(
+            "INSERT INTO gate_runs (pane, thread, attempt, verdict, results, created_unix) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![run.pane, run.thread, run.attempt, run.verdict, bound(&run.results), run.created_unix],
+        )
+        .map_err(|e| format!("Failed to record gate run: {e}"))?;
+    Ok(connection.last_insert_rowid())
+}
+
+pub fn list_gate_runs(connection: &rusqlite::Connection, pane: &str, thread: &str, limit: usize) -> Result<Vec<GateRun>, String> {
+    let mut stmt = connection
+        .prepare("SELECT id, pane, thread, attempt, verdict, results, created_unix FROM gate_runs WHERE pane = ?1 AND thread = ?2 ORDER BY id DESC LIMIT ?3")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![pane, thread, limit as i64], |row| {
+            Ok(GateRun {
+                id: row.get(0)?,
+                pane: row.get(1)?,
+                thread: row.get(2)?,
+                attempt: row.get(3)?,
+                verdict: row.get(4)?,
+                results: row.get(5)?,
+                created_unix: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out: Vec<GateRun> = rows.filter_map(Result::ok).collect();
+    out.reverse();
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -253,5 +361,69 @@ mod tests {
         let long = "x".repeat(MAX_RESULT_CHARS + 500);
         let b = bound(&long);
         assert!(b.ends_with("[truncated]") && b.chars().count() <= MAX_RESULT_CHARS);
+    }
+
+    #[test]
+    fn honest_sentence_does_not_hide_a_later_false_claim_about_the_same_file() {
+        let ops = vec![op(1, "read", "fixes.md", "failed")];
+        let reply = "I could not read fixes.md at first. After review, fixes.md has been created with the nine items.";
+        let issues = unbacked_action_claims(reply, &ops);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].contains("has been created"));
+    }
+
+    #[test]
+    fn every_path_in_a_sentence_is_checked() {
+        let ops = vec![op(1, "write", "notes/a.md", "ok")];
+        let issues = unbacked_action_claims("I wrote a.md and b.py for you.", &ops);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].contains("b.py"));
+        assert!(unbacked_action_claims("Created a.md, see https://example.org/x.html for context.", &ops).is_empty());
+    }
+
+    #[test]
+    fn pathless_run_claims_need_a_successful_run() {
+        let failed = vec![op(5, "run", "python3 tests/predictions.py", "failed")];
+        let issues = unbacked_action_claims("All tests passed and the model is consistent.", &failed);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].contains("op#5 → failed"));
+        assert!(unbacked_action_claims("The tests did not pass; see the traceback.", &failed).is_empty());
+        let ok = vec![op(6, "calc", ".scratch/calc_2.py", "ok")];
+        assert!(unbacked_action_claims("I ran the calculation; the value is 3.2 GeV.", &ok).is_empty());
+        assert!(unbacked_action_claims("You could run the tests next.", &[]).is_empty());
+    }
+
+    #[test]
+    fn stale_check_uses_the_latest_write_per_file_only() {
+        let dir = std::env::temp_dir().join(format!("op_ledger_stale_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "v1").unwrap();
+        let v1 = sha256_file(&dir.join("a.md"));
+        std::fs::write(dir.join("a.md"), "v2").unwrap();
+        let v2 = sha256_file(&dir.join("a.md"));
+        let mut first = op(1, "write", "a.md", "ok");
+        first.sha_after = v1;
+        let mut second = op(2, "edit", "a.md", "ok");
+        second.sha_after = v2;
+        assert!(stale_writes(&[first.clone(), second], &dir).is_empty());
+        let stale = stale_writes(&[first], &dir);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        std::fs::remove_file(dir.join("a.md")).unwrap();
+        let mut gone = op(3, "write", "a.md", "ok");
+        gone.sha_after = "x".into();
+        assert!(stale_writes(&[gone], &dir)[0].contains("no longer exists"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gate_runs_roundtrip_per_thread() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        init(&c).unwrap();
+        let run = GateRun { id: 0, pane: "left".into(), thread: "left-0-abc".into(), attempt: 1, verdict: "send_back".into(), results: "[]".into(), created_unix: 1 };
+        record_gate_run(&c, &run).unwrap();
+        record_gate_run(&c, &GateRun { attempt: 2, verdict: "pass".into(), ..run.clone() }).unwrap();
+        let rows = list_gate_runs(&c, "left", "left-0-abc", 10).unwrap();
+        assert_eq!(rows.iter().map(|r| r.verdict.as_str()).collect::<Vec<_>>(), vec!["send_back", "pass"]);
+        assert!(list_gate_runs(&c, "left", "left-1-def", 10).unwrap().is_empty());
     }
 }
