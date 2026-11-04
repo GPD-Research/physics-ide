@@ -10572,6 +10572,49 @@ struct LedgerQueryPayload {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ThreadAuditPayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    path: String,
+    #[serde(default)]
+    transcript: String,
+}
+
+/// User-initiated export (save dialog): `<path>.md` audit plus a sibling `.json` with the raw rows.
+#[tauri::command]
+async fn export_thread_audit(payload: ThreadAuditPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = PathBuf::from(payload.path.trim());
+        if target.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("md")) != Some(true) {
+            return Err("Thread audit must be saved as a .md file.".to_string());
+        }
+        let c = open_op_ledger(&app)?;
+        let (pane, thread) = (payload.pane.trim(), payload.thread_id.trim());
+        let ops = op_ledger::list(&c, pane, thread, 5000)?;
+        let gates = op_ledger::list_gate_runs(&c, pane, thread, 5000)?;
+        let md = op_ledger::audit_markdown(pane, thread, &ops, &gates, &payload.transcript, unix_now_seconds());
+        let json_path = target.with_extension("json");
+        let raw = serde_json::json!({ "pane": pane, "thread": thread, "ops": ops, "gate_runs": gates });
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create {}: {e}", parent.to_string_lossy()))?;
+        }
+        fs::write(&target, md.as_bytes()).map_err(|e| format!("Failed to write {}: {e}", target.to_string_lossy()))?;
+        fs::write(&json_path, serde_json::to_string_pretty(&raw).map_err(|e| e.to_string())?.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {e}", json_path.to_string_lossy()))?;
+        Ok(serde_json::json!({
+            "path": target.to_string_lossy(),
+            "json_path": json_path.to_string_lossy(),
+            "ops": ops.len(),
+            "gate_runs": gates.len(),
+        })
+        .to_string())
+    })
+    .await
+    .map_err(|e| format!("export_thread_audit task failed: {e}"))?
+}
+
 #[tauri::command]
 async fn list_op_ledger(payload: LedgerQueryPayload, app: tauri::AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -13798,6 +13841,7 @@ pub fn run() {
             record_refused_op,
             record_gate_run,
             list_gate_runs,
+            export_thread_audit,
             watch_propose,
             watch_list,
             watch_update,
