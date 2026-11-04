@@ -10775,6 +10775,7 @@ async function restoreVersion() {
       };
       add('Reset thread…', () => openThreadResetConfirm(pane), 'Clear this pane\'s history and re-inject the baseline primer (asks first)');
       add('Thread logs', () => openThreadLogs(pane), 'Show this pane\'s terminal log lines and the current thread\'s message ledger');
+      add('Export audit…', () => exportThreadAudit(pane), 'Save this thread\'s operation ledger, gate runs and transcript as Markdown (+ raw .json) for review');
       document.body.appendChild(menu);
       docActionsMenuEl = menu;
       const rect = anchor.getBoundingClientRect();
@@ -10828,6 +10829,26 @@ async function restoreVersion() {
       document.getElementById('thread-logs-title').textContent = `Thread logs — ${pane === 'left' ? 'Left' : 'Right'} pane`;
       document.getElementById('thread-logs-body').textContent = threadLogsText(pane);
       document.getElementById('thread-logs-modal').style.display = 'flex';
+    }
+    async function exportThreadAudit(pane) {
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+      const suggested = `thread-audit-${pane}-${stamp}.md`;
+      let path;
+      try {
+        path = await window.__TAURI__.dialog.save({
+          defaultPath: currentWorkspacePath ? `${currentWorkspacePath}/${suggested}` : suggested,
+          filters: [{ name: 'Markdown', extensions: ['md'] }]
+        });
+      } catch (err) { appendTerminalLog(`Save dialog failed: ${err}`); return; }
+      if (!path) return;
+      if (!/\.md$/i.test(path)) path += '.md';
+      try {
+        const r = JSON.parse(await invoke('export_thread_audit', { payload: { pane, threadId: ledgerThreadId(pane, index), path, transcript: threadLogsText(pane) } }));
+        appendTerminalLog(`Thread audit saved: ${r.path} (${r.ops} ops, ${r.gate_runs} gate runs; raw rows in ${r.json_path})`);
+      } catch (err) {
+        appendTerminalLog(`Thread audit export failed: ${err}`);
+      }
     }
     function closeThreadLogs() {
       document.getElementById('thread-logs-modal').style.display = 'none';

@@ -95,3 +95,8 @@ test('watch mode: proposals never run until armed, reports go through the gated 
   assert.ok(html.includes('It is NOT running: the user must arm it'), 'expected the File System result to say a proposal is not running');
   assert.ok(html.includes("window.physicsIdeWatch = watchMode;"), 'expected the tested watch helpers to be loaded');
 });
+
+test('thread tools can export an audit of the ledger and gate runs', () => {
+  assert.ok(html.includes("add('Export audit…', () => exportThreadAudit(pane)"), 'expected an Export audit item in Thread tools');
+  assert.ok(html.includes("invoke('export_thread_audit'"), 'expected the export to go through the Rust ledger command');
+});
