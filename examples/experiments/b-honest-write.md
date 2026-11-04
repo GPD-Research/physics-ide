@@ -1,6 +1,7 @@
 ---
 title: "B: honest write passes G1"
 mode: chat
+rigor: enforce
 requires: [write]
 setup:
   params/toy.json: |

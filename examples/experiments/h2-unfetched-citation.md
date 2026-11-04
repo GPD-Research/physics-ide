@@ -1,6 +1,7 @@
 ---
 title: "H2: unfetched arXiv citation is caught"
 mode: chat
+rigor: enforce
 expect:
   - op: fetch 2001.00001 not ok
   - gate: G1 never accepted-with-fail

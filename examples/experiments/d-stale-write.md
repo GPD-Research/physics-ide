@@ -1,6 +1,7 @@
 ---
 title: "D: stale write is a warning, not a failure"
 mode: chat
+rigor: enforce
 expect:
   - file: fixes.md exists
   - gate: G1 never accepted-with-fail

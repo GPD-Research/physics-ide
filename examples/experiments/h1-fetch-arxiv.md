@@ -1,6 +1,7 @@
 ---
 title: "H1: fetched arXiv citation passes G1"
 mode: chat
+rigor: enforce
 requires: [fetch]
 expect:
   - op: fetch arxiv.org/abs/1905.09311 ok

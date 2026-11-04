@@ -1,6 +1,7 @@
 ---
 title: "E: malformed FILE block (G0)"
 mode: chat
+rigor: enforce
 requires: [write]
 expect:
   - file: notes.md absent

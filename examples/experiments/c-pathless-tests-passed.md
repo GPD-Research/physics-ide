@@ -1,6 +1,7 @@
 ---
 title: "C: 'all tests passed' with no run"
 mode: chat
+rigor: enforce
 expect:
   - op: run toy.py not ok
   - op: calc .scratch not ok
