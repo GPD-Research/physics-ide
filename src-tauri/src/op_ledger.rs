@@ -345,6 +345,63 @@ pub fn list_gate_runs(connection: &rusqlite::Connection, pane: &str, thread: &st
     Ok(out)
 }
 
+fn md_cell(text: &str, limit: usize) -> String {
+    let flat: String = text.replace(['\n', '\r'], " ").replace('|', "\\|");
+    let mut out: String = flat.chars().take(limit).collect();
+    if flat.chars().count() > limit {
+        out.push('…');
+    }
+    out
+}
+
+/// Human-readable audit of one thread: what the app observed (ops) and what the gates decided.
+/// `transcript` is the thread's message history as the UI shows it (may be empty).
+pub fn audit_markdown(pane: &str, thread: &str, ops: &[OpRecord], gates: &[GateRun], transcript: &str, generated_unix: i64) -> String {
+    let mut md = format!("# Thread audit — {pane} pane\n\nThread: `{thread}`  \nGenerated (unix): {generated_unix}  \nOperations: {}  \nGate runs: {}\n\n", ops.len(), gates.len());
+    let mut by_kind: std::collections::BTreeMap<(String, String), usize> = std::collections::BTreeMap::new();
+    for o in ops {
+        *by_kind.entry((o.kind.clone(), o.status.clone())).or_default() += 1;
+    }
+    let mut verdicts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for g in gates {
+        *verdicts.entry(g.verdict.clone()).or_default() += 1;
+    }
+    md.push_str("## Summary\n\n| op kind | status | count |\n|---|---|---|\n");
+    for ((k, st), n) in &by_kind {
+        md.push_str(&format!("| {k} | {st} | {n} |\n"));
+    }
+    md.push_str("\n| gate verdict | count |\n|---|---|\n");
+    for (v, n) in &verdicts {
+        md.push_str(&format!("| {v} | {n} |\n"));
+    }
+    md.push_str("\n## Operations (what the app observed)\n\n| op# | unix | kind | target | status | result |\n|---|---|---|---|---|---|\n");
+    for o in ops {
+        md.push_str(&format!("| {} | {} | {} | {} | {} | {} |\n", o.id, o.created_unix, o.kind, md_cell(&o.target, 80), o.status, md_cell(&o.result, 160)));
+    }
+    md.push_str("\n## Gate runs (what the gates decided per draft)\n\n");
+    for g in gates {
+        md.push_str(&format!("### Gate run {} — draft {} — **{}** (unix {})\n\n", g.id, g.attempt, g.verdict, g.created_unix));
+        match serde_json::from_str::<Vec<serde_json::Value>>(&g.results) {
+            Ok(rows) => {
+                md.push_str("| gate | status | issues / reason |\n|---|---|---|\n");
+                for r in rows {
+                    let issues: Vec<String> = r["issues"].as_array().map(|a| a.iter().filter_map(|i| i.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                    let detail = if issues.is_empty() { r["reason"].as_str().unwrap_or("").to_string() } else { issues.join(" • ") };
+                    md.push_str(&format!("| {} | {} | {} |\n", r["gate"].as_str().unwrap_or("?"), r["status"].as_str().unwrap_or("?"), md_cell(&detail, 400)));
+                }
+                md.push('\n');
+            }
+            Err(_) => md.push_str(&format!("```\n{}\n```\n\n", g.results)),
+        }
+    }
+    if !transcript.trim().is_empty() {
+        md.push_str("## Transcript (as shown in the thread)\n\n");
+        md.push_str(transcript.trim());
+        md.push('\n');
+    }
+    md
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,6 +415,20 @@ mod tests {
         assert_eq!(unbacked_action_claims("According to https://en.wikipedia.org/wiki/Brane, branes exist.", &ops).len(), 1);
         assert!(unbacked_action_claims("I could not fetch https://en.wikipedia.org/wiki/Brane, so this is unchecked.", &ops).is_empty());
         assert!(unbacked_action_claims("You can browse https://example.com yourself.", &ops).is_empty());
+    }
+
+    #[test]
+    fn audit_markdown_lists_ops_gates_and_transcript() {
+        let mut o = op(3, "write", "notes/fixes.md", "error");
+        o.result = "file not found | denied\nline2".into();
+        let g = GateRun { id: 1, pane: "left".into(), thread: "t".into(), attempt: 1, verdict: "send_back".into(), results: r#"[{"gate":"G1","status":"fail","issues":["claims fixes.md was written"],"reason":""},{"gate":"G2","status":"skip","issues":[],"reason":"not built"}]"#.into(), created_unix: 5 };
+        let md = audit_markdown("left", "t", &[o, op(4, "run", "python3 a.py", "ok")], &[g], "**You:** go", 9);
+        assert!(md.contains("| write | error | 1 |"));
+        assert!(md.contains("| send_back | 1 |"));
+        assert!(md.contains("| 3 | 0 | write | notes/fixes.md | error | file not found \\| denied line2 |"));
+        assert!(md.contains("| G1 | fail | claims fixes.md was written |"));
+        assert!(md.contains("| G2 | skip | not built |"));
+        assert!(md.ends_with("## Transcript (as shown in the thread)\n\n**You:** go\n"));
     }
 
     fn op(id: i64, kind: &str, target: &str, status: &str) -> OpRecord {
