@@ -19,6 +19,11 @@ test('Start is blocked by file errors, unmet requirements, invalid setup and a b
   assert.equal(blockers.length, 4);
   assert.deepEqual(setupOverwrites(preview), ['b.txt']);
   assert.deepEqual(startBlockers({ experiment: { errors: [] }, setup: [] }, [{ name: 'run', met: true }]), []);
+  const dup = startBlockers(
+    { experiment: { errors: ['unknown requirement `root` (use write, read-only, run, fetch)', 'setup `../x`: `..` is not allowed'] }, setup: [{ path: '../x', state: 'invalid', issue: '`..` is not allowed' }] },
+    [{ name: 'root', met: false, detail: 'unknown requirement' }]
+  );
+  assert.equal(dup.length, 2, 'parse errors are not repeated as requirement/setup blockers');
 });
 
 test('task limits come from the file for this run only', () => {

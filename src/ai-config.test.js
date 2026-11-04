@@ -101,6 +101,15 @@ test('thread tools can export an audit of the ledger and gate runs', () => {
   assert.ok(html.includes("invoke('export_thread_audit'"), 'expected the export to go through the Rust ledger command');
 });
 
+test('Reset thread starts a new ledger thread so earlier ops cannot back later claims', () => {
+  const reset = html.slice(html.indexOf('async function resetSinglePaneContext('), html.indexOf('async function runContextProbe('));
+  assert.ok(reset.includes('threadSessions[pane] = [null, null, null];'), 'expected reset to drop the ledger thread key');
+  assert.ok(reset.includes('threadTranscripts[pane] = [[], [], []];'), 'expected reset to start a fresh transcript');
+  assert.ok(reset.indexOf('await autosaveThread(pane, i)') < reset.indexOf('threadSessions[pane] = [null, null, null];'), 'expected pending autosaves to flush under the old key first');
+  assert.ok(reset.includes("finishExperiment(pane, 'thread reset')"), 'expected an active experiment to finish before its thread is reset');
+  assert.ok(html.includes('threadLogsText(pane, exp.logStart || 0)'), 'expected experiment audits to carry only this run\'s terminal lines');
+});
+
 test('experiments load through a preview with an explicit Start and app-checked expectations', () => {
   assert.ok(html.includes("add('Load experiment…', () => loadExperiment(pane)"), 'expected Load experiment in Thread tools');
   assert.ok(html.includes("invoke('experiment_load'") && html.includes("invoke('experiment_start'") && html.includes("invoke('experiment_finish'"), 'expected the Rust experiment commands');

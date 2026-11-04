@@ -28,9 +28,11 @@ export function requirementStatus(requires, cfg, pane, mayWrite) {
 export function startBlockers(preview, reqs, { busy = false, taskActive = false, experimentActive = false } = {}) {
   const out = [];
   const exp = preview?.experiment || {};
-  (exp.errors || []).forEach((e) => out.push(`File error: ${e}`));
-  reqs.filter((r) => !r.met).forEach((r) => out.push(`Requirement ${r.name}: ${r.detail}`));
-  (preview?.setup || []).filter((s) => s.state === 'invalid').forEach((s) => out.push(`Setup ${s.path}: ${s.issue}`));
+  const errors = exp.errors || [];
+  const errText = errors.join('\n');
+  errors.forEach((e) => out.push(`File error: ${e}`));
+  reqs.filter((r) => !r.met && !errText.includes(`requirement \`${r.name}\``)).forEach((r) => out.push(`Requirement ${r.name}: ${r.detail}`));
+  (preview?.setup || []).filter((s) => s.state === 'invalid' && !errText.includes(`setup \`${s.path}\``)).forEach((s) => out.push(`Setup ${s.path}: ${s.issue}`));
   if (busy) out.push('the pane is still answering');
   if (taskActive) out.push('a task is already running in this pane');
   if (experimentActive) out.push('an experiment is already running in this pane');

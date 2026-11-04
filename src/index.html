@@ -5625,7 +5625,17 @@
         if (!confirmed) return;
       }
 
+      if (experimentStates[pane]?.active) await finishExperiment(pane, 'thread reset');
+      for (let i = 0; i < 3; i += 1) {
+        if (threadAutosaveTimers[pane][i]) {
+          clearTimeout(threadAutosaveTimers[pane][i]);
+          threadAutosaveTimers[pane][i] = null;
+          await autosaveThread(pane, i).catch((err) => appendTerminalLog(`Thread autosave failed [${pane}/${i}]: ${err}`));
+        }
+      }
       chatHistories[pane] = [[], [], []];
+      threadSessions[pane] = [null, null, null];
+      threadTranscripts[pane] = [[], [], []];
       if (pane === 'left') {
         leftIndex = 0;
         document.getElementById('left-strip').style.transform = 'translateY(0%)';
@@ -10843,7 +10853,10 @@ async function restoreVersion() {
       closeThreadResetConfirm();
       if (pane) await resetSinglePaneContext(pane, false);
     }
-    function threadLogsText(pane) {
+    function terminalLogLength() {
+      return document.getElementById('terminal-output')?.children.length || 0;
+    }
+    function threadLogsText(pane, fromLine = 0) {
       const index = pane === 'left' ? leftIndex : rightIndex;
       const paneLabel = pane === 'left' ? 'Left' : 'Right';
       const history = (chatHistories[pane] && chatHistories[pane][index]) || [];
@@ -10858,7 +10871,7 @@ async function restoreVersion() {
       lines.push('', '--- terminal log (this pane) ---');
       const needle = new RegExp(`\\[${pane}\\]|\\(${pane}\\)|\\b${paneLabel} pane\\b`, 'i');
       const body = document.getElementById('terminal-output');
-      const matched = body ? Array.from(body.children).map((el) => el.textContent).filter((t) => needle.test(t)) : [];
+      const matched = body ? Array.from(body.children).slice(fromLine).map((el) => el.textContent).filter((t) => needle.test(t)) : [];
       lines.push(...(matched.length ? matched.slice(-200) : ['(no log lines mention this pane yet)']));
       return lines.join('\n');
     }
@@ -10958,7 +10971,7 @@ async function restoreVersion() {
       document.getElementById('experiment-title').textContent = `Experiment → ${pane} pane: ${exp.title}`;
       document.getElementById('experiment-body').innerHTML = `
         <div class="exp-meta">${esc(preview.name)} · sha ${esc(preview.sha.slice(0, 12))} · mode <b>${esc(exp.mode)}</b>${exp.rigor ? ` · gates <b>${esc(exp.rigor)}</b> for this run` : ''}${exp.max_rounds ? ` · ${exp.max_rounds} rounds` : ''}${exp.token_budget != null ? ` · ${Number(exp.token_budget).toLocaleString()} tokens` : ''}</div>
-        <h4>Goal (sent to the AI as ${exp.mode === 'task' ? 'TASK' : 'a chat message'})</h4>
+        <h4>Goal (${exp.mode === 'task' ? 'sent to the AI as TASK' : exp.mode === 'chat' ? 'sent to the AI as a chat message' : 'not sent: the mode is invalid'})</h4>
         <div class="exp-goal">${esc(goal)}</div>
         ${exp.operator_notes ? `<h4>Notes for you (not sent to the AI)</h4><div class="exp-goal">${esc(exp.operator_notes)}</div>` : ''}
         <h4>Requirements (checked, never switched on)</h4>
@@ -10978,6 +10991,7 @@ async function restoreVersion() {
       document.getElementById('experiment-modal').style.display = 'none';
     }
     async function startLoadedExperiment() {
+      const logStart = terminalLogLength();
       if (!experimentPreview) return;
       const { pane, preview } = experimentPreview;
       const { blockers } = experimentBlockers(pane, preview);
@@ -10999,7 +11013,7 @@ async function restoreVersion() {
       experimentStates[pane] = {
         active: true, pane, index, threadId, title: exp.title, mode: exp.mode, rigor: exp.rigor,
         expect: exp.expect, path: started.path, sha: started.sha,
-        startOpId: started.start_op_id, startedUnix: started.started_unix
+        startOpId: started.start_op_id, startedUnix: started.started_unix, logStart
       };
       renderExperimentPanel();
       appendTerminalLog(`Experiment started [${pane}]: ${exp.title} (${exp.mode}, ${exp.expect.length} expectation(s))`);
@@ -11032,7 +11046,7 @@ async function restoreVersion() {
           payload: {
             pane, threadId: exp.threadId, title: exp.title, path: exp.path, sha: exp.sha,
             startOpId: exp.startOpId, startedUnix: exp.startedUnix, reason, expect: exp.expect,
-            transcript: threadLogsText(pane)
+            transcript: threadLogsText(pane, exp.logStart || 0)
           }
         }));
         appendTerminalLog(`Experiment finished [${pane}]: ${exp.title} — ${window.physicsIdeExperiment.checksSummary(exp.result)} (${reason}); audit: ${exp.result.path}`);
