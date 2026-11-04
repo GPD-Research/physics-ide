@@ -87,3 +87,10 @@ test('reply gates run after file ops and render a gate card instead of trusting 
   assert.ok(html.includes("invoke('record_refused_op'"), 'expected refused ops to get a ledger row');
   assert.ok(html.includes("window.physicsIdeReplyGates = replyGates;"), 'expected the tested gate pipeline module to be loaded');
 });
+
+test('FETCH is a settings-gated, ledgered, untrusted read', () => {
+  assert.ok(html.includes("invoke('fetch_ai_url'"), 'expected FETCH ops to go through the Rust allowlist command');
+  assert.ok(html.includes('UNTRUSTED EXTERNAL CONTENT'), 'expected fetched text to be labelled untrusted');
+  assert.ok(html.includes('id="settings-ai-fetch-enabled"') && html.includes('id="settings-ai-fetch-allowlist"'), 'expected FETCH settings');
+  assert.ok(html.includes('ui.adsabs.harvard.edu') && html.includes('wikipedia.org'), 'expected ADS and Wikipedia on the default allowlist');
+});
