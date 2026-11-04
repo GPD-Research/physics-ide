@@ -83,11 +83,11 @@ export function gateReportPrompt(results, attempt, budget) {
   return lines.join('\n').slice(0, 1500);
 }
 
-export const KNOWN_OP_MARKERS = new Set(['FILE', 'END FILE', 'APPEND', 'END APPEND', 'EDIT', 'END EDIT', 'READ', 'RUN', 'CALC', 'END CALC', 'SEARCH', 'REMEMBER', 'END REMEMBER', 'PLAN', 'END PLAN', 'STEP', 'DONE', 'BLOCKED', 'FIND', 'REPLACE', 'END HUNK']);
+export const KNOWN_OP_MARKERS = new Set(['FILE', 'END FILE', 'APPEND', 'END APPEND', 'EDIT', 'END EDIT', 'READ', 'RUN', 'CALC', 'END CALC', 'SEARCH', 'REMEMBER', 'END REMEMBER', 'PLAN', 'END PLAN', 'STEP', 'DONE', 'BLOCKED', 'FIND', 'REPLACE', 'END HUNK', 'WATCH']);
 
 const BLOCK_OPS = ['FILE', 'APPEND', 'EDIT', 'CALC', 'REMEMBER', 'PLAN'];
 const EDIT_INNER = new Set(['FIND', 'REPLACE', 'END HUNK']);
-const PATH_OPS = { FILE: 'path', APPEND: 'path', EDIT: 'path', READ: 'path', RUN: 'cmd', SEARCH: 'query' };
+const PATH_OPS = { FILE: 'path', APPEND: 'path', EDIT: 'path', READ: 'path', RUN: 'cmd', SEARCH: 'query', WATCH: 'cmd' };
 
 export function fencedRanges(source) {
   const ranges = [];
@@ -125,7 +125,7 @@ export function findProtocolIssues(reply) {
     // Inside a FILE/APPEND/CALC/… body everything is content except that block's own END (and EDIT hunks).
     if (body && word !== `END ${body}` && !(body === 'EDIT' && EDIT_INNER.has(word))) continue;
     if (!KNOWN_OP_MARKERS.has(word)) {
-      issues.push(`${snippet} is not an operation the app executes; use <<<FILE path="…">>> … <<<END FILE>>> (or APPEND/EDIT/READ/RUN/CALC/SEARCH/REMEMBER).`);
+      issues.push(`${snippet} is not an operation the app executes; use <<<FILE path="…">>> … <<<END FILE>>> (or APPEND/EDIT/READ/RUN/CALC/SEARCH/REMEMBER/WATCH).`);
       continue;
     }
     const attr = PATH_OPS[word];

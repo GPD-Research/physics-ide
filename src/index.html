@@ -380,6 +380,15 @@
       .gate-card .gate-verdict { font-weight: 600; }
       .gate-card.verdict-unverified .gate-verdict, .gate-card.verdict-report_only .gate-verdict { color: #ff8080; }
       .gate-card li.warn { color: #ffd38a; }
+      .watch-row { border: 1px solid var(--border-color); border-radius: 6px; padding: 5px 7px; margin-bottom: 6px; font-size: 0.75rem; text-align: left; }
+      .watch-row.armed { border-color: #6ea86e; }
+      .watch-row.proposed { border-style: dashed; }
+      .watch-row code { word-break: break-all; }
+      .watch-meta { color: var(--text-muted); margin-top: 2px; }
+      .watch-meter { font-family: monospace; margin-top: 3px; }
+      .watch-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+      .watch-empty { font-size: 0.75rem; color: var(--text-muted); text-align: left; }
+      .watch-add input, .watch-add select { margin-top: 4px; }
       .gate-card details { display: inline; }
       .gate-card summary { cursor: pointer; display: inline; }
       .gate-card ul { margin: 4px 0 0 14px; padding: 0; }
@@ -1552,6 +1561,22 @@
           <div class="panel-section">
             <div class="panel-section-title" id="briefing-indicator">🤖 AI Context Status</div>
             <div style="font-size:0.75rem; color:#a6adc8; margin-bottom:8px; text-align:left;">Review and edit the primer before syncing context to AI threads.</div>
+          </div>
+
+          <div class="panel-section">
+            <div class="panel-section-title">🔁 Watches</div>
+            <div style="font-size:0.75rem; color:#a6adc8; margin-bottom:6px; text-align:left;">Rerun a script when its inputs change or on a schedule; a run is reported (and sent to the AI) only when a RESULT moves by more than 2σ, disappears/appears, or the run fails. Nothing runs until you Arm it; watches pause when the app restarts.</div>
+            <div id="watch-list"></div>
+            <details class="watch-add">
+              <summary>Add a watch</summary>
+              <input type="text" id="watch-new-cmd" placeholder="python3 sims/tension.py">
+              <input type="text" id="watch-new-inputs" placeholder="params/brane.yaml,data/*.csv">
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input type="number" id="watch-new-every" min="0" step="30" placeholder="0 = on change" style="width:9em;">
+                <select id="watch-new-pane"><option value="left">Left pane</option><option value="right">Right pane</option></select>
+                <button type="button" onclick="proposeWatchFromPanel()">Add</button>
+              </div>
+            </details>
           </div>
 
           <div class="panel-section">
@@ -3938,6 +3963,7 @@
 
           refreshContextProbeIndicator();
         await injectPrimerIntoThreads(true);
+        initWatches();
       } catch (err) {
         appendTerminalLog(`Initialization runtime failure: ${err}`);
       }
@@ -4415,7 +4441,7 @@
 
       const index = (pane === 'left') ? leftIndex : rightIndex;
       const provider = (pane === 'left') ? currentConfig.left_provider : currentConfig.right_provider;
-      if (!provenance.source || provenance.source === 'current_request' || provenance.source === 'task_follow_up') gateSendBacks[pane][index] = 0;
+      if (!provenance.source || provenance.source === 'current_request' || provenance.source === 'task_follow_up' || provenance.source === 'watch_report') gateSendBacks[pane][index] = 0;
 
       let messagePayload;
       if (provider === 'gemini') {
@@ -4596,6 +4622,161 @@
         throw err;
       } finally {
         setPaneBusy(pane, false);
+      }
+    }
+
+    // ---- Watch mode: user-armed reruns. The backend owns baselines and comparisons; this ticks, runs and reports. ----
+    const WATCH_TICK_MS = 30000;
+    let watchTimer = null;
+    let watchRows = [];
+    let watchTicking = false;
+    const watchRunning = {};
+    const watchReportQueue = [];
+
+    async function initWatches() {
+      try {
+        const r = JSON.parse(await invoke('watch_pause_all'));
+        if (r.paused) appendTerminalLog(`${r.paused} watch(es) paused at startup; re-arm them in Workflow ▸ Watches.`);
+      } catch (err) {
+        appendTerminalLog(`Watches unavailable: ${err}`);
+      }
+      await refreshWatches();
+    }
+
+    async function refreshWatches() {
+      try {
+        watchRows = JSON.parse(await invoke('watch_list'));
+      } catch (err) {
+        appendTerminalLog(`Watch list unavailable: ${err}`);
+        watchRows = [];
+      }
+      renderWatchPanel();
+      const armed = watchRows.some((w) => w.status === 'armed');
+      if (armed && !watchTimer) watchTimer = setInterval(watchTick, WATCH_TICK_MS);
+      if (!armed && watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+    }
+
+    function renderWatchPanel() {
+      const list = document.getElementById('watch-list');
+      if (!list) return;
+      const W = window.physicsIdeWatch;
+      list.innerHTML = '';
+      if (!watchRows.length) {
+        list.innerHTML = '<div class="watch-empty">No watches yet. The AI can propose one with a WATCH line, or add one below.</div>';
+        return;
+      }
+      const limit = Number(currentConfig?.ai_run_timeout_seconds) || 60;
+      watchRows.forEach((w) => {
+        const started = watchRunning[w.id];
+        const row = document.createElement('div');
+        row.className = `watch-row ${w.status}`;
+        const last = w.last_run_unix ? new Date(w.last_run_unix * 1000).toLocaleTimeString() : 'never';
+        const baseline = w.baseline?.length ? `baseline: ${w.baseline.length} RESULT(s)` : 'no baseline yet';
+        const meter = started ? `<div class="watch-meter">${escapeHelpHtml(W ? W.runMeter((Date.now() - started) / 1000, limit) : 'running…')}</div>` : '';
+        row.innerHTML = `<div><strong>#${w.id} ${escapeHelpHtml(w.status)}</strong> <code>${escapeHelpHtml(w.cmd)}</code></div>`
+          + `<div class="watch-meta">${escapeHelpHtml(w.pane)} pane · inputs: ${escapeHelpHtml(w.inputs || '—')} · ${escapeHelpHtml(W ? W.describeEvery(w.every_seconds) : '')} · last run ${escapeHelpHtml(last)}${w.last_op_id ? ` (op#${w.last_op_id})` : ''} · ${escapeHelpHtml(baseline)}${w.dirty ? ' · inputs changed' : ''}</div>${meter}`;
+        const actions = document.createElement('div');
+        actions.className = 'watch-actions';
+        const btn = (label, title, fn, disabled = false) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = label;
+          b.title = title;
+          b.disabled = disabled || Boolean(started);
+          b.onclick = fn;
+          actions.appendChild(b);
+        };
+        if (w.status === 'armed') btn('Pause', 'Stop rerunning this watch', () => updateWatch(w.id, 'pause'));
+        else btn('Arm', 'Let this watch rerun when its inputs change or on its schedule', () => updateWatch(w.id, 'arm'));
+        btn('Run now', 'Run once now', () => runWatch(w.id), w.status === 'proposed');
+        btn('Rebaseline', 'The next run becomes the new baseline', () => updateWatch(w.id, 'rebaseline'), !w.baseline?.length);
+        btn('Remove', 'Delete this watch', () => { if (window.confirm(`Remove watch #${w.id}?`)) updateWatch(w.id, 'remove'); });
+        row.appendChild(actions);
+        list.appendChild(row);
+      });
+    }
+
+    async function proposeWatchFromPanel() {
+      const cmd = (document.getElementById('watch-new-cmd').value || '').trim();
+      if (!cmd) return;
+      const pane = document.getElementById('watch-new-pane').value === 'right' ? 'right' : 'left';
+      const index = pane === 'left' ? leftIndex : rightIndex;
+      try {
+        const w = JSON.parse(await invoke('watch_propose', { payload: {
+          pane,
+          threadId: ledgerThreadId(pane, index),
+          cmd,
+          inputs: (document.getElementById('watch-new-inputs').value || '').trim(),
+          every: parseInt(document.getElementById('watch-new-every').value, 10) || 0
+        } }));
+        appendTerminalLog(`Watch #${w.id} added (proposed); Arm it to start.`);
+        document.getElementById('watch-new-cmd').value = '';
+      } catch (err) {
+        appendTerminalLog(`Watch not added: ${err}`);
+      }
+      await refreshWatches();
+    }
+
+    async function updateWatch(id, action) {
+      try {
+        await invoke('watch_update', { id, action });
+        appendTerminalLog(`Watch #${id}: ${action}`);
+      } catch (err) {
+        appendTerminalLog(`Watch #${id} ${action} failed: ${err}`);
+      }
+      await refreshWatches();
+      if (action === 'arm' || action === 'rebaseline') watchTick();
+    }
+
+    async function watchTick() {
+      if (watchTicking) return;
+      watchTicking = true;
+      try {
+        const due = JSON.parse(await invoke('watch_tick'));
+        for (const id of due) await runWatch(id);
+      } catch (err) {
+        appendTerminalLog(`Watch tick failed: ${err}`);
+      } finally {
+        watchTicking = false;
+      }
+      flushWatchReports();
+    }
+
+    async function runWatch(id) {
+      if (watchRunning[id]) return;
+      watchRunning[id] = Date.now();
+      const meterTimer = setInterval(renderWatchPanel, 1000);
+      renderWatchPanel();
+      try {
+        const { report, watch } = JSON.parse(await invoke('watch_run', { id }));
+        appendTerminalLog(`Watch #${id} ${report.status}${report.op_id ? ` [op#${report.op_id}]` : ''}${report.note ? `: ${report.note}` : ''}`);
+        if (report.reportable) watchReportQueue.push({ watch, report });
+      } catch (err) {
+        appendTerminalLog(`Watch #${id} run failed: ${err}`);
+      } finally {
+        clearInterval(meterTimer);
+        delete watchRunning[id];
+        await refreshWatches();
+      }
+      flushWatchReports();
+    }
+
+    // Reportable runs go to the watch's pane as a Watch System message and on to the AI; a busy pane is retried next tick.
+    async function flushWatchReports() {
+      const W = window.physicsIdeWatch;
+      while (W && watchReportQueue.length) {
+        const { watch, report } = watchReportQueue[0];
+        const pane = watch.pane === 'right' ? 'right' : 'left';
+        if ((paneBusyCounter[pane] || 0) > 0) return;
+        watchReportQueue.shift();
+        const index = pane === 'left' ? leftIndex : rightIndex;
+        let text = W.formatWatchReport(report, watch);
+        if (threadSessions[pane][index]?.key !== watch.thread) text += `\n(Watch #${watch.id} was proposed in another thread; its op#${report.op_id || '?'} lives in that thread's ledger.)`;
+        try {
+          await dispatchPromptToPane(pane, text, 'Watch System', [], { source: 'watch_report', trigger: 'watch_run' });
+        } catch (err) {
+          appendTerminalLog(`Watch #${watch.id} report not delivered: ${err}`);
+        }
       }
     }
 
@@ -4894,6 +5075,7 @@
     const AI_SEARCH_BLOCK_PATTERN = /<<<SEARCH\s+query="([^"\n]+)"(?:\s+limit="?(\d+)"?)?\s*>>>+/g;
     const AI_CALC_BLOCK_PATTERN = /<<<CALC(?:\s+timeout="?(\d+)"?)?\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END CALC>>>/g;
     const AI_REMEMBER_BLOCK_PATTERN = /<<<REMEMBER\s*>>>+[ \t]*\r?\n([\s\S]*?)\r?\n?<<<END REMEMBER>>>/g;
+    const AI_WATCH_BLOCK_PATTERN = /<<<WATCH\s+cmd="([^"\n]+)"([^>\n]*)>>>+/g;
     const AI_FILE_OPS_MAX_AUTO_CONTINUE = 3;
 
     function parseAssistantFileBlocks(text) {
@@ -4917,6 +5099,12 @@
       collect(AI_RUN_BLOCK_PATTERN, (m) => ({ op: 'run', cmd: m[1].trim(), timeout: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_SEARCH_BLOCK_PATTERN, (m) => ({ op: 'search', query: m[1].trim(), limit: m[2] ? parseInt(m[2], 10) : null }));
       collect(AI_REMEMBER_BLOCK_PATTERN, (m) => ({ op: 'remember', entry: m[1] }));
+      collect(AI_WATCH_BLOCK_PATTERN, (m) => ({
+        op: 'watch',
+        cmd: m[1].trim(),
+        inputs: (m[2].match(/inputs="([^"\n]*)"/) || [])[1] || '',
+        every: parseInt((m[2].match(/every="?(\d+)"?/) || [])[1] || '0', 10)
+      }));
       collect(AI_CALC_BLOCK_PATTERN, (m) => ({ op: 'calc', code: stripWrappingFence(m[2]), timeout: m[1] ? parseInt(m[1], 10) : null }));
       ops.sort((a, b) => a.position - b.position);
       const fences = fencedRanges(masked);
@@ -4937,7 +5125,7 @@
       return String(body ?? '').replace(/^[ \t]*```[\w+-]*[ \t]*\r?\n/, '').replace(/\r?\n[ \t]*```[ \t]*$/, '');
     }
 
-    const AI_SINGLE_LINE_OPS = new Set(['read', 'run', 'search']);
+    const AI_SINGLE_LINE_OPS = new Set(['read', 'run', 'search', 'watch']);
     const AI_PROTOCOL_EXAMPLE_VALUES = new Set([
       'relative/path.py',
       'relative/path/from/project/root.py',
@@ -5047,6 +5235,13 @@
           appendTerminalLog(`AI project memory [${pane}]: ${line}`);
           return { text: `- REMEMBERED: ${line}`, needsFollowUp: false };
         }
+        case 'watch': {
+          const w = JSON.parse(await invoke('watch_propose', { payload: { pane, threadId, cmd: op.cmd, inputs: op.inputs || '', every: Number(op.every) || 0 } }));
+          appendTerminalLog(`AI watch proposed [${pane}]: #${w.id} ${w.cmd}`);
+          refreshWatches();
+          const every = window.physicsIdeWatch?.describeEvery(w.every_seconds) || '';
+          return { text: `- WATCH PROPOSED #${w.id}: \`${w.cmd}\` (inputs: ${w.inputs || 'none'}; ${every})${w.op_id ? ` [op#${w.op_id}]` : ''}. It is NOT running: the user must arm it in Workflow ▸ Watches.`, needsFollowUp: false };
+        }
         default:
           return { text: `- SKIPPED: unknown operation ${op.op}`, needsFollowUp: false };
       }
@@ -5097,6 +5292,7 @@
       if (op.op === 'run') return `RUN ${op.cmd}`;
       if (op.op === 'search') return `SEARCH ${op.query}`;
       if (op.op === 'remember') return 'REMEMBER project_memory.md';
+      if (op.op === 'watch') return `WATCH ${op.cmd}`;
       return `${op.op.toUpperCase()} ${op.path}`;
     }
 
@@ -11338,6 +11534,8 @@ async function restoreVersion() {
     import * as replyGates from './reply-gates.js';
     window.physicsIdeAiConfig = { getModelOptions, claimsFileWriteWithoutOperation };
     window.physicsIdeReplyGates = replyGates;
+    import * as watchMode from './watch-mode.js';
+    window.physicsIdeWatch = watchMode;
   </script>
 </body>
 </html>
