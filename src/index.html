@@ -345,11 +345,18 @@
       .pane-header {
         background-color: var(--bg-dark);
         border-bottom: 1px solid var(--border-color);
-        padding: 10px;
+        padding: 6px 10px;
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: stretch;
+        gap: 8px;
       }
+      .pane-header-main { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; min-width: 0; }
+      .pane-header-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 20px; }
+      .pane-header-top { display: grid; grid-template-columns: max-content minmax(0, 1fr); }
+      .pane-header-top .pane-title { white-space: nowrap; }
+      .pane-header-menus { justify-content: center; }
+      .pane-header-arrows { display: flex; flex-direction: column; justify-content: space-between; flex: 0 0 auto; }
   
       .pane-title {
         font-weight: bold;
@@ -366,8 +373,9 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 260px;
-        flex: 0 1 auto;
+        max-width: 320px;
+        min-width: 0;
+        justify-self: center;
       }
       .pane-model-badge.read-only { color: #ffb0b0; border-color: #ffb0b0; }
 
@@ -394,13 +402,6 @@
       .gate-card ul { margin: 4px 0 0 14px; padding: 0; }
       .chat-bubble.gate-rejected { opacity: 0.6; border-left: 3px solid #d07070; }
       .chat-bubble.gate-unverified { border-left: 3px solid #d07070; }
-
-      .pane-header-left {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-      }
 
       .ai-activity-led {
         width: 10px;
@@ -1402,17 +1403,23 @@
       <!-- Left Cylinder -->
       <div class="cylinder-pane" id="left-cylinder">
         <div class="pane-header">
-          <div class="pane-header-left">
+          <div class="pane-header-main">
+           <div class="pane-header-row pane-header-top">
             <span class="pane-title" id="left-title">L1: GitHub & Scripting</span>
             <span id="left-model-badge" class="pane-model-badge" title="Model loaded in this pane">…</span>
+           </div>
+           <div class="pane-header-row">
             <span id="left-activity-led" class="ai-activity-led" title="AI idle"></span>
             <span id="left-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('left')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
+           </div>
+           <div class="pane-header-row pane-header-menus">
             <select id="left-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('left')" onchange="openRecallViewer('left', this.value); this.selectedIndex = 0;">
               <option value="">Recall session…</option>
             </select>
             <button class="thread-tools-btn" onclick="openThreadToolsMenu(this, 'left')" title="Thread tools: reset this thread or view its logs">Thread tools ▾</button>
+           </div>
           </div>
-          <div>
+          <div class="pane-header-arrows">
             <button onclick="rotateLeft(-1)" title="Previous analytical slot">▲</button>
             <button onclick="rotateLeft(1)" title="Next analytical slot">▼</button>
           </div>
@@ -1478,17 +1485,23 @@
       <!-- Right Cylinder -->
       <div class="cylinder-pane" id="right-cylinder">
         <div class="pane-header">
-          <div class="pane-header-left">
+          <div class="pane-header-main">
+           <div class="pane-header-row pane-header-top">
             <span class="pane-title" id="right-title">R1: Speculation & Horizons</span>
             <span id="right-model-badge" class="pane-model-badge" title="Model loaded in this pane">…</span>
+           </div>
+           <div class="pane-header-row">
             <span id="right-activity-led" class="ai-activity-led" title="AI idle"></span>
             <span id="right-ai-progress" class="ai-progress" hidden><span class="ai-progress-text"></span><button type="button" onclick="cancelLocalAiRequest('right')" title="Stop this local reply (Ollama stops generating)">stop</button></span>
+           </div>
+           <div class="pane-header-row pane-header-menus">
             <select id="right-recall-select" class="recall-select" title="Recall a recent autosave of this thread (opens a read-only viewer; no AI tokens are used)" onfocus="populateRecallSelect('right')" onchange="openRecallViewer('right', this.value); this.selectedIndex = 0;">
               <option value="">Recall session…</option>
             </select>
             <button class="thread-tools-btn" onclick="openThreadToolsMenu(this, 'right')" title="Thread tools: reset this thread or view its logs">Thread tools ▾</button>
+           </div>
           </div>
-          <div>
+          <div class="pane-header-arrows">
             <button onclick="rotateRight(-1)" title="Previous creative slot">▲</button>
             <button onclick="rotateRight(1)" title="Next creative slot">▼</button>
           </div>
