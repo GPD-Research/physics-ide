@@ -133,6 +133,8 @@ const RETRACTION: &str = r"(?i)\b(?:(?:incorrect|false|wrong|mistaken|erroneous|
 /// A path introduced as the topic of another file ("fixes for `sims/toy.py`") is not the written target.
 const TOPIC_BEFORE: &str = r"(?i)\b(?:for|about|regarding|concerning|of)\s+(?:the\s+)?(?:file\s+|script\s+)?[`'\x22]?$";
 /// Run/test outcomes reported without naming a file ("all tests passed", "I ran the simulation").
+/// A sentence that says the cited op failed is reporting the failure, not citing it as evidence of success.
+const FAILURE_ACK: &str = r"(?i)\b(?:fail(?:ed|ure|ures|s|ing)?|errors?|bugs?|typo|typographical|traceback|exception|crash(?:ed|es)?|refused|denied|blocked|did not|didn't|could not|couldn't|was not|wasn't|timed out|time-?out|cancell?ed|non-?zero|exit (?:code|status) [1-9])\b";
 const PATHLESS_RUN_CLAIM: &str = r"(?i)\b(?:(?:all\s+)?(?:the\s+)?tests?\s+(?:now\s+)?(?:pass(?:ed|es)?|succeed(?:ed|s)?)|(?:ran|executed)\s+(?:the\s+|a\s+|my\s+)?(?:script|tests?|simulation|calculation|code|sweep)s?)\b";
 const FETCH_VERBS: &str = r"(?:fetched|retrieved|downloaded|looked up|according to|as stated (?:on|in|at)|the (?:page|abstract|article) (?:says|states|reports|lists))";
 const UNCHECKED_SOURCE: &str = r"(?i)\b(?:unverified|from memory|not fetched|unchecked|not checked|not verified|could not fetch|couldn't fetch|to be checked)\b";
@@ -168,6 +170,7 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     let topic_re = regex::Regex::new(TOPIC_BEFORE).unwrap();
     let cite_re = regex::Regex::new(r"(?i)\bop#(\d+)\b").unwrap();
     let pathless_run_re = regex::Regex::new(PATHLESS_RUN_CLAIM).unwrap();
+    let failure_ack_re = regex::Regex::new(FAILURE_ACK).unwrap();
 
     let ok_writes: Vec<String> = ops
         .iter()
@@ -279,7 +282,13 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
         }
         match ops.iter().find(|o| o.id == id) {
             None => issues.push(format!("op#{id} is cited but does not exist in this thread's ledger.")),
-            Some(o) if o.status != "ok" => issues.push(format!("op#{id} is cited as evidence but its status is {}.", o.status)),
+            Some(o) if o.status != "ok" => {
+                let own = regex::Regex::new(&format!(r"(?i)\bop#{id}\b")).unwrap();
+                let as_evidence = sentence_re.split(reply).filter(|s| own.is_match(s)).any(|s| !failure_ack_re.is_match(s));
+                if as_evidence {
+                    issues.push(format!("op#{id} is cited as evidence but its status is {}.", o.status));
+                }
+            }
             Some(_) => {}
         }
     }
@@ -485,6 +494,18 @@ mod tests {
         assert!(unbacked_action_claims("Result from op#3: 1.616e-35 m.", &ops).is_empty());
         let bad = unbacked_action_claims("See op#4 and op#9.", &ops);
         assert_eq!(bad.len(), 2, "{bad:?}");
+    }
+
+    #[test]
+    fn reporting_a_failed_op_is_not_citing_it_as_evidence() {
+        let ops = vec![op(77, "watch_run", "python3 sims/toy.py", "failed"), op(30, "write", "fixes.md", "refused")];
+        assert!(unbacked_action_claims("The failure in op#77 is a simple typographical error (a bug) within `sims/toy.py`.", &ops).is_empty());
+        assert!(unbacked_action_claims("The watch run op#77 crashed with an AttributeError.", &ops).is_empty());
+        assert!(unbacked_action_claims("The write was refused (op#30), so fixes.md does not exist.", &ops).is_empty());
+        let bad = unbacked_action_claims("The results in op#77 confirm omega = 3.0.", &ops);
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        let mixed = unbacked_action_claims("op#30 failed at first. The fixes are in place, see op#30.", &ops);
+        assert_eq!(mixed.len(), 1, "a later success citation is still caught: {mixed:?}");
     }
 
     #[test]
