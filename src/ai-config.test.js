@@ -96,6 +96,13 @@ test('watch mode: proposals never run until armed, reports go through the gated 
   assert.ok(html.includes("window.physicsIdeWatch = watchMode;"), 'expected the tested watch helpers to be loaded');
 });
 
+test('FETCH is a settings-gated, ledgered, untrusted read', () => {
+  assert.ok(html.includes("invoke('fetch_ai_url'"), 'expected FETCH ops to go through the Rust allowlist command');
+  assert.ok(html.includes('UNTRUSTED EXTERNAL CONTENT'), 'expected fetched text to be labelled untrusted');
+  assert.ok(html.includes('id="settings-ai-fetch-enabled"') && html.includes('id="settings-ai-fetch-allowlist"'), 'expected FETCH settings');
+  assert.ok(html.includes('ui.adsabs.harvard.edu') && html.includes('wikipedia.org'), 'expected ADS and Wikipedia on the default allowlist');
+});
+
 test('thread tools can export an audit of the ledger and gate runs', () => {
   assert.ok(html.includes("add('Export audit…', () => exportThreadAudit(pane)"), 'expected an Export audit item in Thread tools');
   assert.ok(html.includes("invoke('export_thread_audit'"), 'expected the export to go through the Rust ledger command');
