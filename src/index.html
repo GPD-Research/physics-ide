@@ -10980,16 +10980,19 @@ async function restoreVersion() {
         el.appendChild(row);
       });
     }
+    const LAST_EXPERIMENT_DIR_KEY = 'physics-ide-last-experiment-dir';
     async function loadExperiment(pane) {
       let selected;
       try {
         selected = await window.__TAURI__.dialog.open({
           directory: false, multiple: false, title: `Load an experiment into the ${pane} pane`,
-          defaultPath: (currentWorkspacePath || currentConfig?.project_root_dir || '').trim() || undefined,
+          defaultPath: (localStorage.getItem(LAST_EXPERIMENT_DIR_KEY) || currentWorkspacePath || currentConfig?.project_root_dir || '').trim() || undefined,
           filters: [{ name: 'Experiment', extensions: ['md', 'markdown', 'txt'] }]
         });
       } catch (err) { appendTerminalLog(`Open dialog failed: ${err}`); return; }
       if (!selected) return;
+      const folder = String(selected).replace(/[\\/][^\\/]*$/, '');
+      if (folder) localStorage.setItem(LAST_EXPERIMENT_DIR_KEY, folder);
       try {
         const preview = JSON.parse(await invoke('experiment_load', { payload: { path: selected } }));
         openExperimentPreview(pane, preview);

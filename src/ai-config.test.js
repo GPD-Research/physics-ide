@@ -115,6 +115,12 @@ test('with reply gates on, G1 alone judges write claims and an UNVERIFIED reply 
   assert.ok(html.indexOf('if (fileOps.needsFollowUp && gateHeld)') < html.indexOf('if (fileOps.needsFollowUp && depth < AI_FILE_OPS_MAX_AUTO_CONTINUE)'), 'expected the hold to come before the file-ops auto-continue');
 });
 
+test('Load experiment reopens the folder the last experiment came from', () => {
+  const load = html.slice(html.indexOf('async function loadExperiment('), html.indexOf('function experimentBlockers('));
+  assert.ok(load.includes('defaultPath: (localStorage.getItem(LAST_EXPERIMENT_DIR_KEY) ||'), 'expected the picker to start in the remembered folder');
+  assert.ok(load.includes('localStorage.setItem(LAST_EXPERIMENT_DIR_KEY, folder)'), 'expected the chosen file\'s folder to be remembered');
+});
+
 test('Reset thread starts a new ledger thread so earlier ops cannot back later claims', () => {
   const reset = html.slice(html.indexOf('async function resetSinglePaneContext('), html.indexOf('async function runContextProbe('));
   assert.ok(reset.includes('threadSessions[pane] = [null, null, null];'), 'expected reset to drop the ledger thread key');
