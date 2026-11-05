@@ -108,6 +108,13 @@ test('thread tools can export an audit of the ledger and gate runs', () => {
   assert.ok(html.includes("invoke('export_thread_audit'"), 'expected the export to go through the Rust ledger command');
 });
 
+test('with reply gates on, G1 alone judges write claims and an UNVERIFIED reply does not auto-continue', () => {
+  const apply = html.slice(html.indexOf('async function applyAssistantFileBlocks('), html.indexOf('function findUnrecognisedOpMarkers('));
+  assert.ok(apply.includes("paneRigorLevel(pane) === 'off' && Boolean(window.physicsIdeAiConfig?.claimsFileWriteWithoutOperation(reply))"), 'expected the ledger-blind write-claim nudge only when gates are off');
+  assert.ok(html.includes("gateHeld = verdict === 'unverified' && results.some((r) => r.status === 'fail');"), 'expected an UNVERIFIED verdict to hold the reply');
+  assert.ok(html.indexOf('if (fileOps.needsFollowUp && gateHeld)') < html.indexOf('if (fileOps.needsFollowUp && depth < AI_FILE_OPS_MAX_AUTO_CONTINUE)'), 'expected the hold to come before the file-ops auto-continue');
+});
+
 test('Reset thread starts a new ledger thread so earlier ops cannot back later claims', () => {
   const reset = html.slice(html.indexOf('async function resetSinglePaneContext('), html.indexOf('async function runContextProbe('));
   assert.ok(reset.includes('threadSessions[pane] = [null, null, null];'), 'expected reset to drop the ledger thread key');

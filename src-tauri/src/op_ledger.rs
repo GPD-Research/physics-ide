@@ -128,6 +128,10 @@ pub fn list(connection: &rusqlite::Connection, pane: &str, thread: &str, limit: 
 const WRITE_VERBS: &str = r"(?:created|wrote|written|saved|placed|generated|updated|edited|appended|patched|produced)";
 const RUN_VERBS: &str = r"(?:ran|executed|tested|verified by running|run and)";
 const NEGATION: &str = r"(?:not|never|unable|cannot|can't|couldn't|didn't|failed to|no)\b[^.!?\n]{0,40}$";
+/// A sentence retracting an earlier claim ("the incorrect claim that X was written") is not itself a claim.
+const RETRACTION: &str = r"(?i)\b(?:(?:incorrect|false|wrong|mistaken|erroneous|unbacked|unsupported|inaccurate)\s+(?:claims?|statements?|assertions?|reports?)|(?:falsely|wrongly|incorrectly|mistakenly)\s+(?:claimed|stated|said|reported))\b(?:[^.!?\n]|[.!?]\S){0,80}$";
+/// A path introduced as the topic of another file ("fixes for `sims/toy.py`") is not the written target.
+const TOPIC_BEFORE: &str = r"(?i)\b(?:for|about|regarding|concerning|of)\s+(?:the\s+)?(?:file\s+|script\s+)?[`'\x22]?$";
 /// Run/test outcomes reported without naming a file ("all tests passed", "I ran the simulation").
 const PATHLESS_RUN_CLAIM: &str = r"(?i)\b(?:(?:all\s+)?(?:the\s+)?tests?\s+(?:now\s+)?(?:pass(?:ed|es)?|succeed(?:ed|s)?)|(?:ran|executed)\s+(?:the\s+|a\s+|my\s+)?(?:script|tests?|simulation|calculation|code|sweep)s?)\b";
 const FETCH_VERBS: &str = r"(?:fetched|retrieved|downloaded|looked up|according to|as stated (?:on|in|at)|the (?:page|abstract|article) (?:says|states|reports|lists))";
@@ -139,7 +143,7 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).trim_matches(|c| c == '`' || c == '"' || c == '\'').to_ascii_lowercase()
 }
 
-fn path_mentions(sentence: &str, path_re: &regex::Regex) -> Vec<String> {
+fn path_mentions(sentence: &str, path_re: &regex::Regex) -> Vec<(usize, String)> {
     let is_delim = |c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?' | '*' | '[' | ']');
     path_re
         .find_iter(sentence)
@@ -148,7 +152,7 @@ fn path_mentions(sentence: &str, path_re: &regex::Regex) -> Vec<String> {
             let after = sentence[m.end()..].chars().next();
             before.map_or(true, |c| is_delim(c) && c != '.') && after.map_or(true, is_delim)
         })
-        .map(|m| m.as_str().to_string())
+        .map(|m| (m.start(), m.as_str().to_string()))
         .collect()
 }
 
@@ -160,6 +164,8 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     let write_re = regex::Regex::new(&format!(r"(?i)\b{WRITE_VERBS}\b")).unwrap();
     let run_re = regex::Regex::new(&format!(r"(?i)\b{RUN_VERBS}\b")).unwrap();
     let neg_re = regex::Regex::new(&format!(r"(?i)\b{NEGATION}")).unwrap();
+    let retract_re = regex::Regex::new(RETRACTION).unwrap();
+    let topic_re = regex::Regex::new(TOPIC_BEFORE).unwrap();
     let cite_re = regex::Regex::new(r"(?i)\bop#(\d+)\b").unwrap();
     let pathless_run_re = regex::Regex::new(PATHLESS_RUN_CLAIM).unwrap();
 
@@ -173,7 +179,9 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
         .filter(|o| o.status == "ok" && matches!(o.kind.as_str(), "run" | "calc"))
         .map(|o| o.target.to_ascii_lowercase())
         .collect();
-    let affirmed = |sentence: &str, verb: &regex::Regex| verb.find_iter(sentence).any(|v| !neg_re.is_match(&sentence[..v.start()]));
+    let affirmed = |sentence: &str, verb: &regex::Regex| {
+        verb.find_iter(sentence).any(|v| !neg_re.is_match(&sentence[..v.start()]) && !retract_re.is_match(&sentence[..v.start()]))
+    };
 
     // Sentence boundaries are punctuation followed by whitespace, so `fixes.md` stays intact.
     let sentence_re = regex::Regex::new(r"[.!?]\s+|\n+").unwrap();
@@ -185,8 +193,12 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     for sentence in sentence_re.split(reply) {
         let claims_write = affirmed(sentence, &write_re);
         let claims_run = affirmed(sentence, &run_re);
-        let paths = path_mentions(sentence, &path_re);
-        for path in &paths {
+        let mentions = path_mentions(sentence, &path_re);
+        let is_topic: Vec<bool> = mentions.iter().map(|(at, _)| topic_re.is_match(&sentence[..*at])).collect();
+        // Topic mentions are skipped only when the sentence names another target for the action.
+        let has_target = is_topic.iter().any(|t| !t);
+        let paths: Vec<&String> = mentions.iter().zip(&is_topic).filter(|(_, t)| !(has_target && **t)).map(|((_, p), _)| p).collect();
+        for path in paths.iter().copied() {
             let base = basename(path);
             if base.is_empty() || reported.contains(&base) {
                 continue;
@@ -211,7 +223,7 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
                 reported.insert(base);
             }
         }
-        if paths.is_empty() && !pathless_reported && ok_runs.is_empty() {
+        if mentions.is_empty() && !pathless_reported && ok_runs.is_empty() {
             if let Some(m) = pathless_run_re.find(sentence) {
                 if !neg_re.is_match(&sentence[..m.start()]) {
                     let last = ops
@@ -386,7 +398,11 @@ pub fn audit_markdown(pane: &str, thread: &str, ops: &[OpRecord], gates: &[GateR
                 md.push_str("| gate | status | issues / reason |\n|---|---|---|\n");
                 for r in rows {
                     let issues: Vec<String> = r["issues"].as_array().map(|a| a.iter().filter_map(|i| i.as_str().map(str::to_string)).collect()).unwrap_or_default();
-                    let detail = if issues.is_empty() { r["reason"].as_str().unwrap_or("").to_string() } else { issues.join(" • ") };
+                    let mut detail = if issues.is_empty() { r["reason"].as_str().unwrap_or("").to_string() } else { issues.join(" • ") };
+                    for w in r["warnings"].as_array().into_iter().flatten().filter_map(|w| w.as_str()) {
+                        detail.push_str(if detail.is_empty() { "" } else { " • " });
+                        detail.push_str(&format!("warning: {w}"));
+                    }
                     md.push_str(&format!("| {} | {} | {} |\n", r["gate"].as_str().unwrap_or("?"), r["status"].as_str().unwrap_or("?"), md_cell(&detail, 400)));
                 }
                 md.push('\n');
@@ -421,12 +437,12 @@ mod tests {
     fn audit_markdown_lists_ops_gates_and_transcript() {
         let mut o = op(3, "write", "notes/fixes.md", "error");
         o.result = "file not found | denied\nline2".into();
-        let g = GateRun { id: 1, pane: "left".into(), thread: "t".into(), attempt: 1, verdict: "send_back".into(), results: r#"[{"gate":"G1","status":"fail","issues":["claims fixes.md was written"],"reason":""},{"gate":"G2","status":"skip","issues":[],"reason":"not built"}]"#.into(), created_unix: 5 };
+        let g = GateRun { id: 1, pane: "left".into(), thread: "t".into(), attempt: 1, verdict: "send_back".into(), results: r#"[{"gate":"G1","status":"fail","issues":["claims fixes.md was written"],"reason":"","warnings":["op#2 wrote a.md but the file has changed since (outside the ledger)."]},{"gate":"G2","status":"skip","issues":[],"reason":"not built"}]"#.into(), created_unix: 5 };
         let md = audit_markdown("left", "t", &[o, op(4, "run", "python3 a.py", "ok")], &[g], "**You:** go", 9);
         assert!(md.contains("| write | error | 1 |"));
         assert!(md.contains("| send_back | 1 |"));
         assert!(md.contains("| 3 | 0 | write | notes/fixes.md | error | file not found \\| denied line2 |"));
-        assert!(md.contains("| G1 | fail | claims fixes.md was written |"));
+        assert!(md.contains("| G1 | fail | claims fixes.md was written • warning: op#2 wrote a.md but the file has changed since (outside the ledger). |"));
         assert!(md.contains("| G2 | skip | not built |"));
         assert!(md.ends_with("## Transcript (as shown in the thread)\n\n**You:** go\n"));
     }
@@ -494,6 +510,26 @@ mod tests {
         assert_eq!(issues.len(), 1, "{issues:?}");
         assert!(issues[0].contains("b.py"));
         assert!(unbacked_action_claims("Created a.md, see https://example.org/x.html for context.", &ops).is_empty());
+    }
+
+    #[test]
+    fn a_path_named_as_the_topic_of_a_write_is_not_the_written_file() {
+        let ops = vec![op(35, "write", "fixes.md", "ok"), op(33, "setup", "sims/toy.py", "ok")];
+        assert!(unbacked_action_claims("The file `fixes.md` was successfully created, containing three specific proposed fixes for `sims/toy.py`.", &ops).is_empty());
+        assert!(unbacked_action_claims("The file fixes.md has been created and checked, confirming the listing of fixes for sims/toy.py.", &ops).is_empty());
+        let lone = unbacked_action_claims("Updated the initialization logic for sims/toy.py.", &ops);
+        assert_eq!(lone.len(), 1, "a lone path after `for` is still the claimed target: {lone:?}");
+        let both = unbacked_action_claims("I updated sims/toy.py and wrote fixes.md about it.", &ops);
+        assert_eq!(both.len(), 1, "{both:?}");
+        assert!(both[0].contains("sims/toy.py"));
+    }
+
+    #[test]
+    fn retracting_an_earlier_claim_is_not_a_new_claim() {
+        let ops = vec![op(33, "setup", "sims/toy.py", "ok")];
+        assert!(unbacked_action_claims("The error in the previous responses was an incorrect claim that `sims/toy.py` was written or modified.", &ops).is_empty());
+        assert!(unbacked_action_claims("I falsely claimed that sims/toy.py was updated.", &ops).is_empty());
+        assert_eq!(unbacked_action_claims("I fixed the wrong sign and updated sims/toy.py.", &ops).len(), 1);
     }
 
     #[test]

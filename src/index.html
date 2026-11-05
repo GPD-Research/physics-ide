@@ -4609,6 +4609,7 @@
         const fileOps = await applyAssistantFileBlocks(pane, index, reply);
         const rigor = paneRigorLevel(pane);
         let taskReply = reply;
+        let gateHeld = false;
         if (rigor !== 'off') {
           const budget = gateSendBackBudget();
           const attempt = (gateSendBacks[pane][index] || 0) + 1;
@@ -4633,6 +4634,7 @@
               autoContinueDepth: Number(provenance.autoContinueDepth) || 0
             });
           }
+          gateHeld = verdict === 'unverified' && results.some((r) => r.status === 'fail');
           if (verdict !== 'pass' && results.some((r) => r.status === 'fail')) taskReply = reply.replace(TASK_DONE_MARK, '[DONE withheld by gate]');
         }
         const taskDecision = await updateTaskAfterReply(pane, index, taskReply, fileOps);
@@ -4647,6 +4649,10 @@
           return reply;
         }
         const depth = Number(provenance.autoContinueDepth) || 0;
+        if (fileOps.needsFollowUp && gateHeld) {
+          appendTerminalLog(`AI file ops [${pane}]: no auto-continue; the reply ended UNVERIFIED with the send-back budget spent. Send a message to let the AI proceed.`);
+          return reply;
+        }
         if (fileOps.needsFollowUp && depth < AI_FILE_OPS_MAX_AUTO_CONTINUE) {
           appendTerminalLog(`AI file ops [${pane}]: results need a follow-up; auto-continuing (${depth + 1}/${AI_FILE_OPS_MAX_AUTO_CONTINUE}).`);
           return dispatchPromptToPane(
@@ -5370,7 +5376,8 @@
     async function applyAssistantFileBlocks(pane, index, reply) {
       const ops = parseAssistantFileBlocks(reply);
       const protocolIssues = findUnrecognisedOpMarkers(reply);
-      const unverifiedWriteClaim = Boolean(window.physicsIdeAiConfig?.claimsFileWriteWithoutOperation(reply));
+      // With reply gates on, G1 checks write claims against the ledger within the send-back budget.
+      const unverifiedWriteClaim = paneRigorLevel(pane) === 'off' && Boolean(window.physicsIdeAiConfig?.claimsFileWriteWithoutOperation(reply));
       if (ops.length === 0 && !unverifiedWriteClaim) return { needsFollowUp: protocolIssues.length > 0, written: [], outputs: [], protocolIssues };
 
       const results = [];
