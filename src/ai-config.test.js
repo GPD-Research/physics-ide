@@ -137,3 +137,12 @@ test('experiments load through a preview with an explicit Start and app-checked 
   assert.ok(html.includes('confirm(`Overwrite ${overwrites.length} existing file(s)'), 'expected a second confirmation before setup overwrites');
   assert.ok(html.includes('await lastGateRecord[pane];'), 'expected the audit to wait for the last gate run to be recorded');
 });
+
+test('main window stays hidden behind a splash until startup finishes', () => {
+  const conf = JSON.parse(readFileSync(path.join(testDir, '..', 'src-tauri', 'tauri.conf.json'), 'utf8'));
+  const main = conf.app.windows.find((w) => w.label === 'main');
+  assert.equal(main.visible, false, 'expected the main window to start hidden');
+  assert.equal(main.maximized, true, 'expected the main window to open maximized');
+  assert.ok(readFileSync(path.join(testDir, 'splash.html'), 'utf8').includes('__APP_VERSION__'), 'expected the splash to show the version');
+  assert.ok(html.includes("} finally {\n        invoke('startup_ready')"), 'expected initializeApp to reveal the window even when startup fails');
+});
