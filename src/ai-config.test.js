@@ -146,3 +146,9 @@ test('main window stays hidden behind a splash until startup finishes', () => {
   assert.ok(readFileSync(path.join(testDir, 'splash.html'), 'utf8').includes('__APP_VERSION__'), 'expected the splash to show the version');
   assert.ok(html.includes("} finally {\n        invoke('startup_ready')"), 'expected initializeApp to reveal the window even when startup fails');
 });
+
+test('G4 runs through verify_claim_gates and only warns unless claim gates are set to enforce', () => {
+  assert.ok(html.includes("invoke('verify_claim_gates'"), 'expected G4 to call the Rust claim gates');
+  assert.ok(html.includes("mode === 'enforce' ? RG.gateFail(issues, detail) : { status: 'pass', issues: [], warnings: issues"), 'expected warn mode to report without failing');
+  assert.ok(html.includes('id="settings-claim-gates"'), 'expected a Claim gates setting');
+});

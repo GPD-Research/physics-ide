@@ -1996,6 +1996,8 @@
                   <select id="settings-right-rigor"><option value="">Auto</option><option value="enforce">Enforce (send failed drafts back)</option><option value="report-only">Report only</option><option value="off">Off</option></select>
                   <label for="settings-ai-gate-send-backs" style="margin: 0 0 0 8px;">Send-backs per turn (0–5)</label>
                   <input type="number" id="settings-ai-gate-send-backs" min="0" max="5" step="1" placeholder="2" style="width: 4em;">
+                  <label for="settings-claim-gates" style="margin: 0 0 0 8px;" title="G2–G5 check that reported numbers and claims have a basis in this thread. Warn shows issues on the gate card without sending the reply back.">Claim gates (G2–G5)</label>
+                  <select id="settings-claim-gates"><option value="warn">Warn (show, never send back)</option><option value="enforce">Enforce (send back like G1)</option><option value="off">Off</option></select>
                 </div>
                 <div style="font-size: 0.78rem; color: var(--accent-dim);">
                   Reply gates check each AI reply against the app's operation ledger before it counts (G0 protocol, G1 operation truth; G2–G5 show as skipped until built). A failed draft is sent back up to the send-back budget, then shown as UNVERIFIED. Auto = enforce for a writing pane, report-only for a read-only pane. A pane with write permission off is read-only: its FILE/APPEND/EDIT/RUN/CALC blocks are refused (READ, SEARCH and REMEMBER still work) and its header shows a read-only badge. Global file access and script permissions still apply on top.
@@ -3968,6 +3970,7 @@
         document.getElementById('settings-left-rigor').value = currentConfig.left_rigor || '';
         document.getElementById('settings-right-rigor').value = currentConfig.right_rigor || '';
         document.getElementById('settings-ai-gate-send-backs').value = gateSendBackBudget();
+        document.getElementById('settings-claim-gates').value = claimGatesMode();
         ollamaOptionsDraft.left = { ...(currentConfig.left_ollama_options || {}) };
         ollamaOptionsDraft.right = { ...(currentConfig.right_ollama_options || {}) };
         renderOllamaOptionsForm();
@@ -4389,6 +4392,17 @@
     // Pipeline order, skip/error semantics and verdicts live in reply-gates.js (unit-tested).
     const gateSendBacks = { left: {}, right: {} };
 
+    function claimGatesMode() {
+      const m = currentConfig?.claim_gates_mode;
+      return m === 'enforce' || m === 'off' ? m : 'warn';
+    }
+
+    // Numbers the user (or the app on their behalf) supplied are inputs, not claims needing a tool.
+    function claimGateInputs(pane, index) {
+      const rows = threadTranscripts[pane]?.[index] || [];
+      return rows.filter((r) => r.role !== 'assistant').map((r) => r.text).join('\n').slice(-200000);
+    }
+
     function gateSendBackBudget() {
       const n = Number(currentConfig?.ai_gate_send_back_budget);
       return Number.isFinite(n) ? Math.max(0, Math.min(5, Math.floor(n))) : 2;
@@ -4463,6 +4477,15 @@
         G1: async () => {
           const g1 = JSON.parse(await invoke('verify_action_claims', { payload: { pane, threadId: ledgerThreadId(pane, index), reply } }));
           return { status: g1.pass ? 'pass' : 'fail', issues: g1.issues || [], warnings: g1.warnings || [], detail: `${g1.ops_checked} ops` };
+        },
+        G4: async () => {
+          const mode = claimGatesMode();
+          if (mode === 'off') return RG.gateSkip('claim gates are off in Settings');
+          const r = JSON.parse(await invoke('verify_claim_gates', { payload: { pane, threadId: ledgerThreadId(pane, index), reply, inputs: claimGateInputs(pane, index) } }));
+          const issues = r.g4?.issues || [];
+          const detail = `${r.g4?.numbers_checked || 0} number(s) checked`;
+          if (!issues.length) return RG.gatePass(detail);
+          return mode === 'enforce' ? RG.gateFail(issues, detail) : { status: 'pass', issues: [], warnings: issues, detail: `${detail}; warn mode` };
         },
         G6: () => RG.gateSkip(taskStateFor(pane, index) ? 'Task-mode DONE is still checked by the task loop' : 'not a Task-mode turn')
       }, { pane, index, reply, fileOps });
@@ -10267,6 +10290,7 @@ async function restoreVersion() {
         ai_run_timeout_seconds: aiRunTimeoutSeconds,
         ai_task_max_rounds: aiTaskMaxRounds,
         ai_gate_send_back_budget: aiGateSendBackBudget,
+        claim_gates_mode: document.getElementById('settings-claim-gates').value || 'warn',
         ai_fetch_enabled: aiFetchEnabled,
         ai_fetch_allowlist: aiFetchAllowlist,
         ai_task_token_budget: aiTaskTokenBudget,
@@ -10331,6 +10355,7 @@ async function restoreVersion() {
         currentConfig.ai_run_timeout_seconds = aiRunTimeoutSeconds;
         currentConfig.ai_task_max_rounds = aiTaskMaxRounds;
         currentConfig.ai_gate_send_back_budget = aiGateSendBackBudget;
+        currentConfig.claim_gates_mode = document.getElementById('settings-claim-gates').value || 'warn';
         currentConfig.ai_fetch_enabled = aiFetchEnabled;
         currentConfig.ai_fetch_allowlist = aiFetchAllowlist;
         currentConfig.ai_task_token_budget = aiTaskTokenBudget;

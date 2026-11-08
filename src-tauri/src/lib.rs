@@ -19,6 +19,7 @@ mod local_ai;
 mod math_fixer;
 mod fetch;
 mod op_ledger;
+mod claim_gates;
 mod watch;
 mod experiment;
 mod system_monitor;
@@ -433,6 +434,9 @@ pub struct AppConfig {
     /// How many times a failed draft is sent back to the model before it is shown as UNVERIFIED.
     #[serde(default = "default_ai_gate_send_back_budget")]
     ai_gate_send_back_budget: u32,
+    /// Claim gates G2–G5: "warn" (shown, never sent back), "enforce" or "off".
+    #[serde(default = "default_claim_gates_mode")]
+    claim_gates_mode: String,
     #[serde(default)]
     ai_fetch_enabled: bool,
     #[serde(default = "default_ai_fetch_allowlist")]
@@ -493,6 +497,7 @@ impl Default for AppConfig {
             ai_checkpoints_enabled: true,
             ai_task_max_rounds: default_ai_task_max_rounds(),
             ai_gate_send_back_budget: default_ai_gate_send_back_budget(),
+            claim_gates_mode: default_claim_gates_mode(),
             ai_fetch_enabled: false,
             ai_fetch_allowlist: default_ai_fetch_allowlist(),
             ai_task_token_budget: default_ai_task_token_budget(),
@@ -582,6 +587,8 @@ pub struct SaveUserSettingsPayload {
     pub ai_task_max_rounds: u32,
     #[serde(default = "default_ai_gate_send_back_budget", alias = "aiGateSendBackBudget")]
     pub ai_gate_send_back_budget: u32,
+    #[serde(default = "default_claim_gates_mode", alias = "claimGatesMode")]
+    pub claim_gates_mode: String,
     #[serde(default, alias = "aiFetchEnabled")]
     pub ai_fetch_enabled: bool,
     #[serde(default = "default_ai_fetch_allowlist", alias = "aiFetchAllowlist")]
@@ -1224,6 +1231,17 @@ fn default_ai_gate_send_back_budget() -> u32 {
     2
 }
 
+fn default_claim_gates_mode() -> String {
+    "warn".to_string()
+}
+
+fn normalize_claim_gates_mode(mode: &str) -> String {
+    match mode.trim() {
+        "enforce" | "off" => mode.trim().to_string(),
+        _ => default_claim_gates_mode(),
+    }
+}
+
 fn default_local_ai_idle_timeout_mins() -> u32 {
     local_ai::DEFAULT_IDLE_TIMEOUT_MINS
 }
@@ -1344,8 +1362,12 @@ fn describe_ai_file_access_for_config(config: &AppConfig) -> String {
     );
     text.push('\n');
     text.push_str(&ai_fetch_protocol_instructions(config.ai_fetch_enabled, &config.ai_fetch_allowlist));
+    text.push('\n');
+    text.push_str(AI_NUMBERS_PROTOCOL);
     text
 }
+
+const AI_NUMBERS_PROTOCOL: &str = "Numbers: a value you report as a result (name = value, value ± error, or value with a unit) must come from a RUN/CALC output, a file you READ, a FETCH, or the user's message in this thread. Compute anything new with CALC or RUN first; otherwise label it as an estimate or tentative.";
 
 fn ai_fetch_protocol_instructions(enabled: bool, allowlist: &str) -> String {
     if !enabled {
@@ -9529,6 +9551,7 @@ fn compile_ai_briefing_blocking(current_path: String, app: tauri::AppHandle) -> 
         "ai_checkpoints_enabled": config.ai_checkpoints_enabled,
         "ai_task_max_rounds": config.ai_task_max_rounds,
         "ai_gate_send_back_budget": config.ai_gate_send_back_budget,
+        "claim_gates_mode": normalize_claim_gates_mode(&config.claim_gates_mode),
         "ai_fetch_enabled": config.ai_fetch_enabled,
         "ai_fetch_allowlist": config.ai_fetch_allowlist,
         "ai_task_token_budget": config.ai_task_token_budget,
@@ -11059,6 +11082,33 @@ async fn verify_action_claims(payload: VerifyClaimsPayload, app: tauri::AppHandl
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct ClaimGatesPayload {
+    pane: String,
+    #[serde(default, alias = "threadId")]
+    thread_id: String,
+    reply: String,
+    /// Non-assistant thread text (user messages, task goal, system reports): numbers given as inputs.
+    #[serde(default)]
+    inputs: String,
+}
+
+#[tauri::command]
+async fn verify_claim_gates(payload: ClaimGatesPayload, app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let c = open_op_ledger(&app)?;
+        let ops = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), 500)?;
+        let (g4, checked) = claim_gates::untooled_numbers(&payload.reply, &ops, &payload.inputs);
+        serde_json::to_string(&serde_json::json!({
+            "g4": { "issues": g4, "numbers_checked": checked },
+            "ops_checked": ops.len(),
+        }))
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("verify_claim_gates task failed: {e}"))?
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct RefusedOpPayload {
     pane: String,
     #[serde(default, alias = "threadId")]
@@ -12428,6 +12478,7 @@ fn save_user_settings_blocking(payload: SaveUserSettingsPayload, app: tauri::App
     config.ai_checkpoints_enabled = payload.ai_checkpoints_enabled;
     config.ai_task_max_rounds = payload.ai_task_max_rounds.clamp(1, AI_TASK_MAX_ROUNDS_LIMIT);
     config.ai_gate_send_back_budget = payload.ai_gate_send_back_budget.min(AI_GATE_SEND_BACK_LIMIT);
+    config.claim_gates_mode = normalize_claim_gates_mode(&payload.claim_gates_mode);
     config.ai_fetch_enabled = payload.ai_fetch_enabled;
     config.ai_fetch_allowlist = match payload.ai_fetch_allowlist.trim() {
         "" => default_ai_fetch_allowlist(),
@@ -14241,6 +14292,7 @@ pub fn run() {
             get_local_model_info,
             list_op_ledger,
             verify_action_claims,
+            verify_claim_gates,
             record_refused_op,
             record_gate_run,
             list_gate_runs,
