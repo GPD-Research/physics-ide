@@ -4737,7 +4737,7 @@
         const last = w.last_run_unix ? new Date(w.last_run_unix * 1000).toLocaleTimeString() : 'never';
         const baseline = w.baseline?.length ? `baseline: ${w.baseline.length} RESULT(s)` : 'no baseline yet';
         const meter = started ? `<div class="watch-meter">${escapeHelpHtml(W ? W.runMeter((Date.now() - started) / 1000, limit) : 'running…')}</div>` : '';
-        row.innerHTML = `<div><strong>#${w.id} ${escapeHelpHtml(w.status)}</strong> <code>${escapeHelpHtml(w.cmd)}</code></div>`
+        row.innerHTML = `<div><strong>#${w.id} ${WATCH_STATUS_ICON[w.status] || ''}${escapeHelpHtml(w.status)}</strong> <code>${escapeHelpHtml(w.cmd)}</code></div>`
           + `<div class="watch-meta">${escapeHelpHtml(w.pane)} pane · inputs: ${escapeHelpHtml(w.inputs || '—')} · ${escapeHelpHtml(W ? W.describeEvery(w.every_seconds) : '')} · last run ${escapeHelpHtml(last)}${w.last_op_id ? ` (op#${w.last_op_id})` : ''} · ${escapeHelpHtml(baseline)}${w.dirty ? ' · inputs changed' : ''}</div>${meter}`;
         const actions = document.createElement('div');
         actions.className = 'watch-actions';
@@ -4805,6 +4805,8 @@
       }
       flushWatchReports();
     }
+
+    const WATCH_STATUS_ICON = { paused: '⏸ ', armed: '▶ ' };
 
     async function runWatch(id) {
       if (watchRunning[id]) return;
