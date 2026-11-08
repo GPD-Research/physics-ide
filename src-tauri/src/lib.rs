@@ -1364,8 +1364,12 @@ fn describe_ai_file_access_for_config(config: &AppConfig) -> String {
     text.push_str(&ai_fetch_protocol_instructions(config.ai_fetch_enabled, &config.ai_fetch_allowlist));
     text.push('\n');
     text.push_str(AI_NUMBERS_PROTOCOL);
+    text.push('\n');
+    text.push_str(AI_CLAIMS_PROTOCOL);
     text
 }
+
+const AI_CLAIMS_PROTOCOL: &str = "Claims: when you conclude something (proves, confirms, shows that, rules out), give its basis in the same sentence: the op# of the RUN/CALC/READ it rests on, a source you fetched (a source reports or states something; it does not prove it), or the assumptions it follows from. Otherwise say it is tentative, underdetermined or not checked. Negative and unresolved answers are acceptable.";
 
 const AI_NUMBERS_PROTOCOL: &str = "Numbers: a value you report as a result (name = value, value ± error, or value with a unit) must come from a RUN/CALC output, a file you READ, a FETCH, or the user's message in this thread. Compute anything new with CALC or RUN first; otherwise label it as an estimate or tentative.";
 
@@ -11098,8 +11102,11 @@ async fn verify_claim_gates(payload: ClaimGatesPayload, app: tauri::AppHandle) -
         let c = open_op_ledger(&app)?;
         let ops = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), 500)?;
         let (g4, checked) = claim_gates::untooled_numbers(&payload.reply, &ops, &payload.inputs);
+        let claims = claim_gates::claim_status(&payload.reply, &ops);
         serde_json::to_string(&serde_json::json!({
+            "g2": { "issues": claims.g2, "claims": claims.claims },
             "g4": { "issues": g4, "numbers_checked": checked },
+            "g5": { "issues": claims.g5 },
             "ops_checked": ops.len(),
         }))
         .map_err(|e| e.to_string())

@@ -78,6 +78,97 @@ pub fn untooled_numbers(reply: &str, ops: &[OpRecord], inputs: &str) -> (Vec<Str
     (issues, checked)
 }
 
+/// G2 triggers: sentences that assert a conclusion strongly enough to need a stated basis.
+const CONCLUSION: &str = r"(?i)\b(?:prove[sn]?|proved|confirm(?:s|ed)?|demonstrat(?:es|ed)|establish(?:es|ed)|shows? that|showed that|we find|i find|found that|rules? out|ruled out|this means|is (?:correct|incorrect|wrong|valid|invalid))\b";
+/// G5: wording that claims more than a source or a tentative status can carry.
+const PROOF_WORDS: &str = r"(?i)\b(?:prove[sn]?|proved|confirm(?:s|ed)?|demonstrat(?:es|ed)|establish(?:es|ed)|conclusively|definitively|certainly|beyond doubt)\b";
+const NEGATED: &str = r"(?i)\b(?:not|never|cannot|can't|no|doesn't|does not|didn't|did not|isn't|is not|unable to|without|nor)\b[^.!?\n]{0,30}$";
+const DERIVED: &str = r"(?i)\b(?:assum(?:e|es|ed|ing|ption)|given|if|provided|follows from|from (?:the )?(?:equation|eq\.|formula|relation|definition)|by (?:definition|construction)|deriv(?:e|ed|ation)|substitut(?:e|ing)|therefore|thus|hence)\b";
+const TENTATIVE: &str = r"(?i)\b(?:may|might|could|possibly|perhaps|likely|suggests?|appears?|seems?|plausibl[ey]|tentative(?:ly)?|hypothes[ie]s|speculat\w*)\b";
+const UNRESOLVED: &str = r"(?i)\b(?:underdetermined|unresolved|undetermined|cannot (?:be )?(?:determined|distinguished|told)|not enough|insufficient|unknown|not checked|unchecked|unverified|from memory|unclear)\b";
+const TOOL_REF: &str = r"(?i)\b(?:run|output|calculation|calc|simulation|results?|watch|script)\b";
+const SOURCE_REF: &str = r"(?i)\b(?:paper|abstract|article|page|source|according to)\b|arxiv";
+
+/// A claim's status from the vocabulary in AI-RIGOR-STRATEGY.md, as far as the sentence shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimStatus {
+    VerifiedOperation,
+    SourceBacked,
+    DerivedConditionally,
+    Tentative,
+    Unresolved,
+    NoBasis,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Claim {
+    pub quote: String,
+    pub status: ClaimStatus,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+pub struct ClaimReport {
+    pub claims: Vec<Claim>,
+    pub g2: Vec<String>,
+    pub g5: Vec<String>,
+}
+
+fn affirmed_match(sentence: &str, re: &regex::Regex, neg: &regex::Regex) -> Option<String> {
+    re.find_iter(sentence).find(|m| !neg.is_match(&sentence[..m.start()])).map(|m| m.as_str().to_string())
+}
+
+/// G2 (claim extraction) and G5 (status consistency). G2: a conclusion-shaped sentence needs a
+/// basis (a successful op, a fetched source, a derivation) or an honest tentative/unresolved label.
+/// G5: a source reports rather than proves, and a tentative claim cannot be called proven.
+pub fn claim_status(reply: &str, ops: &[OpRecord]) -> ClaimReport {
+    let prose = strip_non_prose(reply);
+    let re = |p: &str| regex::Regex::new(p).unwrap();
+    let (conclusion, proof, neg) = (re(CONCLUSION), re(PROOF_WORDS), re(NEGATED));
+    let (derived, tentative, unresolved) = (re(DERIVED), re(TENTATIVE), re(UNRESOLVED));
+    let (tool_ref, source_ref, cite) = (re(TOOL_REF), re(SOURCE_REF), re(r"(?i)\bop#(\d+)\b"));
+    let arxiv = re(r"(?i)\barxiv(?:\.org/(?:abs|pdf)/|:\s*|\s+)(\d{4}\.\d{4,5})");
+    let ok = |kinds: &[&str]| ops.iter().any(|o| o.status == "ok" && kinds.contains(&o.kind.as_str()));
+    let fetched: Vec<String> = ops.iter().filter(|o| o.status == "ok" && o.kind == "fetch").map(|o| o.target.to_ascii_lowercase()).collect();
+    let mut report = ClaimReport::default();
+    let sentence_re = re(r"[.!?]\s+|\n+");
+    for sentence in sentence_re.split(&prose) {
+        let end = sentence.as_ptr() as usize - prose.as_ptr() as usize + sentence.len();
+        if sentence.trim_end().ends_with('?') || prose[end..].starts_with('?') || sentence.trim().is_empty() {
+            continue;
+        }
+        let Some(trigger) = affirmed_match(sentence, &conclusion, &neg) else { continue };
+        let quote: String = sentence.trim().chars().take(100).collect();
+        let cited: Vec<&OpRecord> = cite.captures_iter(sentence).filter_map(|c| c[1].parse::<i64>().ok()).filter_map(|id| ops.iter().find(|o| o.id == id && o.status == "ok")).collect();
+        let cited_tool = cited.iter().any(|o| o.kind != "fetch") || (tool_ref.is_match(sentence) && ok(&["run", "calc", "watch_run"]));
+        let cited_source = cited.iter().any(|o| o.kind == "fetch")
+            || arxiv.captures_iter(sentence).any(|c| fetched.iter().any(|t| t.contains(&c[1])))
+            || (source_ref.is_match(sentence) && !fetched.is_empty() && !arxiv.is_match(sentence));
+        let status = if unresolved.is_match(sentence) {
+            ClaimStatus::Unresolved
+        } else if tentative.is_match(sentence) {
+            ClaimStatus::Tentative
+        } else if cited_tool {
+            ClaimStatus::VerifiedOperation
+        } else if cited_source {
+            ClaimStatus::SourceBacked
+        } else if derived.is_match(sentence) {
+            ClaimStatus::DerivedConditionally
+        } else {
+            ClaimStatus::NoBasis
+        };
+        let strong = affirmed_match(sentence, &proof, &neg);
+        match (status, strong) {
+            (ClaimStatus::NoBasis, _) => report.g2.push(format!("\"{quote}\" asserts a conclusion (\"{trigger}\") with no basis: cite the op#, the fetched source, or the assumptions it follows from, or mark it tentative / not checked.")),
+            (ClaimStatus::SourceBacked, Some(w)) => report.g5.push(format!("\"{quote}\" says a source \"{w}\" it; a source-backed claim reports what the source says (\"reports\", \"states\", \"finds\"), not that it is proven.")),
+            (ClaimStatus::Tentative | ClaimStatus::Unresolved, Some(w)) => report.g5.push(format!("\"{quote}\" is hedged or unchecked but says \"{w}\"; keep the wording as tentative as the status.")),
+            _ => {}
+        }
+        report.claims.push(Claim { quote, status });
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +216,44 @@ mod tests {
         let ops = run94();
         assert!(untooled_numbers("I made 3 small edits and 2 sims.", &ops, "").0.is_empty());
         assert_eq!(untooled_numbers("It took 12 ms.", &ops, "").0.len(), 1);
+    }
+
+    fn fetch85() -> OpRecord {
+        op(85, "fetch", "https://arxiv.org/abs/1905.09311", "text")
+    }
+
+    #[test]
+    fn conclusions_need_a_basis_or_an_honest_label() {
+        let ops = run94();
+        let r = claim_status("This proves the brane tension is 1 TeV.", &ops);
+        assert_eq!(r.g2.len(), 1, "{r:?}");
+        assert_eq!(r.claims[0].status, ClaimStatus::NoBasis);
+        for ok in [
+            "The run (op#94) confirms omega = 2.0000 rad/s.",
+            "The simulation output shows that omega doubles when k quadruples.",
+            "Assuming a harmonic potential, this shows that omega scales as sqrt(k).",
+            "This might mean the tension is 1 TeV.",
+            "Whether this rules out the model is underdetermined.",
+            "This does not prove anything about the tension.",
+            "Does this prove the tension is 1 TeV?",
+            "The script printed two RESULT lines.",
+        ] {
+            let r = claim_status(ok, &ops);
+            assert!(r.g2.is_empty() && r.g5.is_empty(), "{ok}: {r:?}");
+        }
+        assert!(claim_status("The simulation output shows that omega doubles.", &[]).g2.len() == 1, "a tool reference needs a real op");
+    }
+
+    #[test]
+    fn sources_report_and_tentative_claims_stay_tentative() {
+        let ops = vec![fetch85()];
+        let r = claim_status("arXiv:1905.09311 proves that repulsion grows as energy falls.", &ops);
+        assert_eq!((r.g2.len(), r.g5.len()), (0, 1), "{r:?}");
+        assert_eq!(r.claims[0].status, ClaimStatus::SourceBacked);
+        assert!(claim_status("arXiv:1905.09311 finds that repulsion grows; the paper shows that it drops below 11.5 GeV.", &ops).g5.is_empty());
+        let t = claim_status("It seems likely, and this conclusively proves, that k sets omega.", &run94());
+        assert_eq!(t.g5.len(), 1, "{t:?}");
+        let unfetched = claim_status("arXiv:2001.00001 proves the tension is 1 TeV.", &ops);
+        assert_eq!(unfetched.g2.len(), 1, "an unfetched citation is no basis: {unfetched:?}");
     }
 }

@@ -4469,6 +4469,19 @@
     async function runReplyGates(pane, index, reply, fileOps) {
       const RG = window.physicsIdeReplyGates;
       if (!RG) return null;
+      const mode = claimGatesMode();
+      let claimRun = null;
+      // G2, G4 and G5 share one backend call per draft.
+      const claimChecks = () => {
+        if (mode === 'off') return Promise.resolve(null);
+        claimRun ||= invoke('verify_claim_gates', { payload: { pane, threadId: ledgerThreadId(pane, index), reply, inputs: claimGateInputs(pane, index) } }).then((t) => JSON.parse(t));
+        return claimRun;
+      };
+      const claimGateResult = (issues, detail) => {
+        if (!issues.length) return RG.gatePass(detail);
+        if (mode === 'enforce') return RG.gateFail(issues, detail);
+        return { status: 'pass', issues: [], warnings: issues, detail: detail ? `${detail}; warn mode` : 'warn mode' };
+      };
       return RG.runGatePipeline({
         G0: () => {
           const issues = Array.isArray(fileOps.protocolIssues) ? fileOps.protocolIssues : [];
@@ -4478,14 +4491,23 @@
           const g1 = JSON.parse(await invoke('verify_action_claims', { payload: { pane, threadId: ledgerThreadId(pane, index), reply } }));
           return { status: g1.pass ? 'pass' : 'fail', issues: g1.issues || [], warnings: g1.warnings || [], detail: `${g1.ops_checked} ops` };
         },
+        G2: async () => {
+          const r = await claimChecks();
+          if (!r) return RG.gateSkip('claim gates are off in Settings');
+          const claims = r.g2?.claims || [];
+          const counts = claims.reduce((acc, c) => ({ ...acc, [c.status]: (acc[c.status] || 0) + 1 }), {});
+          const detail = claims.length ? `${claims.length} claim(s): ${Object.entries(counts).map(([s, n]) => `${s.replace(/_/g, ' ')} ${n}`).join(', ')}` : 'no conclusion-shaped claims';
+          return claimGateResult(r.g2?.issues || [], detail);
+        },
         G4: async () => {
-          const mode = claimGatesMode();
-          if (mode === 'off') return RG.gateSkip('claim gates are off in Settings');
-          const r = JSON.parse(await invoke('verify_claim_gates', { payload: { pane, threadId: ledgerThreadId(pane, index), reply, inputs: claimGateInputs(pane, index) } }));
-          const issues = r.g4?.issues || [];
-          const detail = `${r.g4?.numbers_checked || 0} number(s) checked`;
-          if (!issues.length) return RG.gatePass(detail);
-          return mode === 'enforce' ? RG.gateFail(issues, detail) : { status: 'pass', issues: [], warnings: issues, detail: `${detail}; warn mode` };
+          const r = await claimChecks();
+          if (!r) return RG.gateSkip('claim gates are off in Settings');
+          return claimGateResult(r.g4?.issues || [], `${r.g4?.numbers_checked || 0} number(s) checked`);
+        },
+        G5: async () => {
+          const r = await claimChecks();
+          if (!r) return RG.gateSkip('claim gates are off in Settings');
+          return claimGateResult(r.g5?.issues || [], '');
         },
         G6: () => RG.gateSkip(taskStateFor(pane, index) ? 'Task-mode DONE is still checked by the task loop' : 'not a Task-mode turn')
       }, { pane, index, reply, fileOps });
