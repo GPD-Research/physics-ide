@@ -8188,7 +8188,7 @@ async function restoreVersion() {
           const { done, total, file } = event.payload || {};
           if (!summary || !total) return;
           const pct = Math.round((Number(done) / Number(total)) * 100);
-          summary.innerHTML = `Scanning ${done}/${total} files (${pct}%) <span style="color:var(--text-muted)">${escapeHtml(String(file || ''))}</span>`
+          summary.innerHTML = `Scanning ${done}/${total} files (${pct}%) <span style="color:var(--text-muted)">${escapeHelpHtml(String(file || ''))}</span>`
             + `<div style="height:4px;background:var(--border-panel);border-radius:2px;margin-top:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--accent)"></div></div>`;
         });
         const report = await invoke('scan_math_fixer', { request: { scope, path: path || null } });
@@ -10715,7 +10715,7 @@ async function restoreVersion() {
       }
       const current = document.getElementById('settings-word-processor')?.value?.trim() || '';
       select.innerHTML = '<option value="">System default application</option>'
-        + wordProcessorChoices.map((c) => `<option value="${escapeHtml(c.command)}">${escapeHtml(c.label)}</option>`).join('')
+        + wordProcessorChoices.map((c) => `<option value="${escapeHelpHtml(c.command)}">${escapeHelpHtml(c.label)}</option>`).join('')
         + '<option value="__custom__">Custom command…</option>';
       syncWordProcessorSelect();
       if (!current) select.value = '';
