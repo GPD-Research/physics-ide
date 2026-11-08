@@ -299,6 +299,9 @@ pub enum Expect {
     Result { name: String, lo: f64, hi: f64 },
     GateNeverAcceptedWithFail(String),
     GateFailedOnce(String),
+    /// A gate failed or warned (claim gates warn instead of failing in warn mode).
+    GateFlaggedOnce(String),
+    GateNeverFlagged(String),
     NoUnverified,
 }
 
@@ -345,10 +348,15 @@ pub fn parse_expect(raw: &str) -> Result<Expect, String> {
             Ok(Expect::Result { name: c[1].to_string(), lo, hi })
         }
         "gate" => {
-            let re = regex::Regex::new(r"(?i)^(G[0-6])\s+(never accepted-with-fail|failed at least once)$").unwrap();
-            let c = re.captures(rest).ok_or("use `gate: G<n> never accepted-with-fail` or `gate: G<n> failed at least once`")?;
+            let re = regex::Regex::new(r"(?i)^(G[0-6])\s+(never accepted-with-fail|failed at least once|flagged at least once|never flagged)$").unwrap();
+            let c = re.captures(rest).ok_or("use `gate: G<n> never accepted-with-fail`, `failed at least once`, `flagged at least once` or `never flagged`")?;
             let g = c[1].to_ascii_uppercase();
-            Ok(if c[2].to_ascii_lowercase().starts_with("never") { Expect::GateNeverAcceptedWithFail(g) } else { Expect::GateFailedOnce(g) })
+            Ok(match c[2].to_ascii_lowercase().as_str() {
+                "never accepted-with-fail" => Expect::GateNeverAcceptedWithFail(g),
+                "failed at least once" => Expect::GateFailedOnce(g),
+                "flagged at least once" => Expect::GateFlaggedOnce(g),
+                _ => Expect::GateNeverFlagged(g),
+            })
         }
         "verdict" if rest.eq_ignore_ascii_case("no unverified") => Ok(Expect::NoUnverified),
         "verdict" => Err("the only verdict check is `verdict: no unverified`".into()),
@@ -394,6 +402,19 @@ fn op_stdout(o: &OpRecord) -> String {
     }
 }
 
+/// Issues or warnings a gate raised in this run, if it failed, errored or warned.
+fn gate_flag(run: &GateRun, gate: &str) -> Option<String> {
+    let results: serde_json::Value = serde_json::from_str(&run.results).ok()?;
+    let r = results.as_array()?.iter().find(|r| r["gate"].as_str() == Some(gate))?;
+    let list = |k: &str| -> Vec<String> { r[k].as_array().map(|a| a.iter().filter_map(|i| i.as_str().map(String::from)).collect()).unwrap_or_default() };
+    let (issues, warnings) = (list("issues"), list("warnings"));
+    match r["status"].as_str() {
+        Some("fail") | Some("error") => Some(if issues.is_empty() { r["reason"].as_str().unwrap_or("").to_string() } else { issues.join("; ") }),
+        _ if !warnings.is_empty() => Some(format!("warning: {}", warnings.join("; "))),
+        _ => None,
+    }
+}
+
 fn gate_status(run: &GateRun, gate: &str) -> Option<(String, String)> {
     let results: serde_json::Value = serde_json::from_str(&run.results).ok()?;
     results.as_array()?.iter().find(|r| r["gate"].as_str() == Some(gate)).map(|r| {
@@ -419,6 +440,7 @@ pub fn evaluate(expects: &[String], ops: &[OpRecord], gates: &[GateRun], file_st
         .map(|raw| {
             let check = raw.trim();
             let Ok(e) = parse_expect(check) else { return res(check, "fail", "check could not be parsed".into(), 0) };
+            let want_flag = matches!(e, Expect::GateFlaggedOnce(_));
             match e {
                 Expect::File { path, cond } => match (file_state(&path), cond) {
                     (FileState::Invalid(why), _) => res(check, "fail", why, 0),
@@ -479,6 +501,15 @@ pub fn evaluate(expects: &[String], ops: &[OpRecord], gates: &[GateRun], file_st
                     match gates.iter().find_map(|r| gate_status(r, &g).filter(|(s, _)| s == "fail").map(|(_, d)| (r, d))) {
                         Some((r, d)) => res(check, "pass", format!("gate run #{} ({}): {}", r.id, r.verdict, clip(&d, 160)), 0),
                         None => res(check, "fail", format!("{g} never failed in {} gate run(s)", gates.len()), 0),
+                    }
+                }
+                Expect::GateFlaggedOnce(g) | Expect::GateNeverFlagged(g) => {
+                    if gates.is_empty() {
+                        return res(check, "unchecked", "no gate runs recorded".into(), 0);
+                    }
+                    match gates.iter().find_map(|r| gate_flag(r, &g).map(|d| (r, d))) {
+                        Some((r, d)) => res(check, if want_flag { "pass" } else { "fail" }, format!("gate run #{} ({}): {g} {}", r.id, r.verdict, clip(&d, 160)), 0),
+                        None => res(check, if want_flag { "fail" } else { "pass" }, format!("{g} raised nothing in {} gate run(s)", gates.len()), 0),
                     }
                 }
                 Expect::NoUnverified => {
@@ -589,6 +620,8 @@ mod tests {
         assert_eq!(parse_expect("result: E_0 in -1e-3..2.5E2").unwrap(), Expect::Result { name: "E_0".into(), lo: -1e-3, hi: 250.0 });
         assert_eq!(parse_expect("gate: g0 failed at least once").unwrap(), Expect::GateFailedOnce("G0".into()));
         assert_eq!(parse_expect("verdict: no unverified").unwrap(), Expect::NoUnverified);
+        assert_eq!(parse_expect("gate: G4 flagged at least once").unwrap(), Expect::GateFlaggedOnce("G4".into()));
+        assert_eq!(parse_expect("gate: g4 never flagged").unwrap(), Expect::GateNeverFlagged("G4".into()));
         assert!(parse_expect("op: write ok").is_err());
         assert!(parse_expect("result: x in 3..1").is_err());
     }
@@ -673,6 +706,8 @@ mod tests {
             include_str!("../../examples/experiments/h1-fetch-arxiv.md"),
             include_str!("../../examples/experiments/h2-unfetched-citation.md"),
             include_str!("../../examples/experiments/t-toy-task.md"),
+            include_str!("../../examples/experiments/i1-invented-number.md"),
+            include_str!("../../examples/experiments/i2-tool-backed-numbers.md"),
         ] {
             let e = parse(text);
             assert!(e.errors.is_empty(), "{}: {:?}", e.title, e.errors);
