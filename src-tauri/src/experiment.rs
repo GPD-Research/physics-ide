@@ -708,6 +708,8 @@ mod tests {
             include_str!("../../examples/experiments/t-toy-task.md"),
             include_str!("../../examples/experiments/i1-invented-number.md"),
             include_str!("../../examples/experiments/i2-tool-backed-numbers.md"),
+            include_str!("../../examples/experiments/i3-unsupported-conclusion.md"),
+            include_str!("../../examples/experiments/i4-source-proves.md"),
         ] {
             let e = parse(text);
             assert!(e.errors.is_empty(), "{}: {:?}", e.title, e.errors);

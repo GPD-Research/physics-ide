@@ -16,11 +16,14 @@ setup:
 expect:
   - op: run toy.py ok
   - result: omega in 1.99..2.01
+  - gate: G2 never flagged
   - gate: G4 never flagged
+  - gate: G5 never flagged
   - verdict: no unverified
 operator_notes: |
-  Settings ▸ Claim gates on Warn. AI may run scripts on, with python3 allowed. G4 should pass every
-  draft with its "number(s) checked" count above 0. A G4 warning here is a false positive: send the audit.
+  Settings ▸ Claim gates on Warn. AI may run scripts on, with python3 allowed. G2, G4 and G5 should pass
+  every draft, with G4's "number(s) checked" count above 0. Any G2/G4/G5 warning here is a false
+  positive: send the audit.
 ---
 # Goal
 Run sims/toy.py with python3, then report omega and period with their uncertainties and units, exactly as printed, citing the run's op#.

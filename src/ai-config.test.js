@@ -149,6 +149,7 @@ test('main window stays hidden behind a splash until startup finishes', () => {
 
 test('G4 runs through verify_claim_gates and only warns unless claim gates are set to enforce', () => {
   assert.ok(html.includes("invoke('verify_claim_gates'"), 'expected G4 to call the Rust claim gates');
-  assert.ok(html.includes("mode === 'enforce' ? RG.gateFail(issues, detail) : { status: 'pass', issues: [], warnings: issues"), 'expected warn mode to report without failing');
+  assert.ok(html.includes("if (mode === 'enforce') return RG.gateFail(issues, detail);") && html.includes("return { status: 'pass', issues: [], warnings: issues"), 'expected warn mode to report without failing');
+  assert.ok(['G2: async', 'G4: async', 'G5: async'].every((g) => html.includes(g)), 'expected G2, G4 and G5 to be wired');
   assert.ok(html.includes('id="settings-claim-gates"'), 'expected a Claim gates setting');
 });
