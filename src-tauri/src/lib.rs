@@ -2049,6 +2049,50 @@ async fn open_system_monitor(app: AppHandle, kind: String, theme_query: String) 
     Ok(())
 }
 
+const SPLASH_LABEL: &str = "splashscreen";
+const SPLASH_FALLBACK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The main window starts hidden and maximized; this splash covers startup until the
+/// frontend calls `startup_ready` (or the fallback fires if it never does).
+fn open_splash_window(app: &AppHandle) {
+    let version = app.package_info().version.to_string();
+    let built = tauri::WebviewWindowBuilder::new(app, SPLASH_LABEL, tauri::WebviewUrl::App("splash.html".into()))
+        .title("physics-ide")
+        .inner_size(420.0, 240.0)
+        .resizable(false)
+        .decorations(false)
+        .center()
+        .initialization_script(&format!("window.__APP_VERSION__ = {};", serde_json::Value::String(version)))
+        .build();
+    if built.is_err() {
+        reveal_main_window(app);
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SPLASH_FALLBACK);
+        reveal_main_window(&handle);
+    });
+}
+
+fn reveal_main_window(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        if !main.is_visible().unwrap_or(false) {
+            let _ = main.maximize();
+            let _ = main.show();
+            let _ = main.set_focus();
+        }
+    }
+    if let Some(splash) = app.get_webview_window(SPLASH_LABEL) {
+        let _ = splash.close();
+    }
+}
+
+#[tauri::command]
+async fn startup_ready(app: AppHandle) {
+    reveal_main_window(&app);
+}
+
 #[tauri::command]
 async fn get_help_doc(doc_id: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || get_help_doc_blocking(doc_id))
@@ -14181,6 +14225,7 @@ pub fn run() {
                 embedding_model: std::sync::Mutex::new(None),
             });
             app.manage(system_monitor::SystemMonitorState::default());
+            open_splash_window(app.handle());
 
             Ok(())
         })
@@ -14190,6 +14235,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_initial_state,
+            startup_ready,
             check_hardware_specs,
             get_local_ai_overview,
             get_local_model_info,

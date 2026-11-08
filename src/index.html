@@ -4016,6 +4016,8 @@
         initWatches();
       } catch (err) {
         appendTerminalLog(`Initialization runtime failure: ${err}`);
+      } finally {
+        invoke('startup_ready').catch(() => {});
       }
     }
     window.addEventListener('DOMContentLoaded', initializeApp);

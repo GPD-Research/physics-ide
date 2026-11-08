@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>physics-ide</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1e1e24; color: #e6e6eb; font-family: system-ui, sans-serif; overflow: hidden; user-select: none; }
+    body { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; border: 1px solid #3a3a46; box-sizing: border-box; }
+    h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: 0.5px; }
+    #version { font-size: 13px; color: #9a9aa8; }
+    #status { font-size: 13px; color: #c8c8d2; margin-top: 14px; }
+    .bar { width: 260px; height: 4px; background: #33333d; border-radius: 2px; overflow: hidden; }
+    .bar::after { content: ""; display: block; width: 35%; height: 100%; background: #4f9dff; border-radius: 2px; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+  </style>
+</head>
+<body>
+  <h1>Physics IDE</h1>
+  <div id="version"></div>
+  <div id="status">Loading workspace…</div>
+  <div class="bar"></div>
+  <script>
+    document.getElementById('version').textContent = window.__APP_VERSION__ ? `v${window.__APP_VERSION__}` : '';
+  </script>
+</body>
+</html>
