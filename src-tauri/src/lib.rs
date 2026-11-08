@@ -11096,15 +11096,31 @@ struct ClaimGatesPayload {
     inputs: String,
 }
 
+/// The ledger keeps a bounded copy of each FETCH; claim gates check against the full saved text.
+fn expand_fetch_results(ops: &mut [op_ledger::OpRecord], root: &Path) {
+    let saved_re = regex::Regex::new(r#""saved":"(\.scratch/fetch/[0-9a-f]{12}\.txt)""#).unwrap();
+    for o in ops.iter_mut().filter(|o| o.kind == "fetch" && o.status == "ok") {
+        let Some(rel) = saved_re.captures(&o.result).map(|c| c[1].to_string()) else { continue };
+        if let Ok(text) = fs::read_to_string(root.join(&rel)) {
+            o.result = text.chars().take(500_000).collect();
+        }
+    }
+}
+
 #[tauri::command]
 async fn verify_claim_gates(payload: ClaimGatesPayload, app: tauri::AppHandle) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let c = open_op_ledger(&app)?;
-        let ops = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), 500)?;
+        let mut ops = op_ledger::list(&c, payload.pane.trim(), payload.thread_id.trim(), 500)?;
+        if let Ok(config) = load_app_config(&app) {
+            expand_fetch_results(&mut ops, Path::new(config.project_root_dir.trim()));
+        }
         let (g4, checked) = claim_gates::untooled_numbers(&payload.reply, &ops, &payload.inputs);
+        let (g3, cited) = claim_gates::evidence_mismatches(&payload.reply, &ops, &payload.inputs);
         let claims = claim_gates::claim_status(&payload.reply, &ops);
         serde_json::to_string(&serde_json::json!({
             "g2": { "issues": claims.g2, "claims": claims.claims },
+            "g3": { "issues": g3, "cited_sentences": cited },
             "g4": { "issues": g4, "numbers_checked": checked },
             "g5": { "issues": claims.g5 },
             "ops_checked": ops.len(),

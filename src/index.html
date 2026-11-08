@@ -4499,6 +4499,12 @@
           const detail = claims.length ? `${claims.length} claim(s): ${Object.entries(counts).map(([s, n]) => `${s.replace(/_/g, ' ')} ${n}`).join(', ')}` : 'no conclusion-shaped claims';
           return claimGateResult(r.g2?.issues || [], detail);
         },
+        G3: async () => {
+          const r = await claimChecks();
+          if (!r) return RG.gateSkip('claim gates are off in Settings');
+          const n = r.g3?.cited_sentences || 0;
+          return claimGateResult(r.g3?.issues || [], n ? `${n} cited sentence(s) checked` : 'no cited evidence');
+        },
         G4: async () => {
           const r = await claimChecks();
           if (!r) return RG.gateSkip('claim gates are off in Settings');
