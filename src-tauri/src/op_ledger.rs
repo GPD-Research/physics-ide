@@ -127,6 +127,8 @@ pub fn list(connection: &rusqlite::Connection, pane: &str, thread: &str, limit: 
 
 const WRITE_VERBS: &str = r"(?:created|wrote|written|saved|placed|generated|updated|edited|appended|patched|produced)";
 const RUN_VERBS: &str = r"(?:ran|executed|tested|verified by running|run and)";
+/// "X was executed, and the results were copied into Y" makes a run claim about X only.
+const CLAUSE_BREAK: &str = r"(?i),\s*(?:and|but|then|while|so)\b|;|\s+then\s+";
 const NEGATION: &str = r"(?:not|never|unable|cannot|can't|couldn't|didn't|failed to|no)\b[^.!?\n]{0,40}$";
 /// A sentence retracting an earlier claim ("the incorrect claim that X was written") is not itself a claim.
 const RETRACTION: &str = r"(?i)\b(?:(?:incorrect|false|wrong|mistaken|erroneous|unbacked|unsupported|inaccurate)\s+(?:claims?|statements?|assertions?|reports?)|(?:falsely|wrongly|incorrectly|mistakenly)\s+(?:claimed|stated|said|reported))\b(?:[^.!?\n]|[.!?]\S){0,80}$";
@@ -173,6 +175,7 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     let cite_re = regex::Regex::new(r"(?i)\bop#(\d+)\b").unwrap();
     let pathless_run_re = regex::Regex::new(PATHLESS_RUN_CLAIM).unwrap();
     let failure_ack_re = regex::Regex::new(FAILURE_ACK).unwrap();
+    let clause_re = regex::Regex::new(CLAUSE_BREAK).unwrap();
 
     let ok_writes: Vec<String> = ops
         .iter()
@@ -197,13 +200,18 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     let mut pathless_reported = false;
     for sentence in sentence_re.split(reply) {
         let claims_write = affirmed(sentence, &write_re);
-        let claims_run = affirmed(sentence, &run_re);
+        let breaks: Vec<(usize, usize)> = clause_re.find_iter(sentence).map(|m| (m.start(), m.end())).collect();
+        let claims_run_at = |at: usize| {
+            let start = breaks.iter().filter(|b| b.1 <= at).map(|b| b.1).last().unwrap_or(0);
+            let end = breaks.iter().find(|b| b.0 >= at).map(|b| b.0).unwrap_or(sentence.len());
+            affirmed(&sentence[start..end], &run_re)
+        };
         let mentions = path_mentions(sentence, &path_re);
         let is_topic: Vec<bool> = mentions.iter().map(|(at, _)| topic_re.is_match(&sentence[..*at])).collect();
         // Topic mentions are skipped only when the sentence names another target for the action.
         let has_target = is_topic.iter().any(|t| !t);
-        let paths: Vec<&String> = mentions.iter().zip(&is_topic).filter(|(_, t)| !(has_target && **t)).map(|((_, p), _)| p).collect();
-        for path in paths.iter().copied() {
+        let paths: Vec<(usize, &String)> = mentions.iter().zip(&is_topic).filter(|(_, t)| !(has_target && **t)).map(|((at, p), _)| (*at, p)).collect();
+        for (at, path) in paths.iter().copied() {
             let base = basename(path);
             if base.is_empty() || reported.contains(&base) {
                 continue;
@@ -220,7 +228,7 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
                     sentence.trim().chars().take(100).collect::<String>()
                 ));
                 reported.insert(base);
-            } else if claims_run && !claims_write && !ok_runs.iter().any(|t| t.contains(&base)) {
+            } else if !claims_write && claims_run_at(at) && !ok_runs.iter().any(|t| t.contains(&base)) {
                 issues.push(format!(
                     "\"{}\" claims {path} was run, but the ledger has no successful RUN/CALC involving it in this thread.",
                     sentence.trim().chars().take(100).collect::<String>()
@@ -506,6 +514,17 @@ mod tests {
         assert!(unbacked_action_claims("Result from op#3: 1.616e-35 m.", &ops).is_empty());
         let bad = unbacked_action_claims("See op#4 and op#9.", &ops);
         assert_eq!(bad.len(), 2, "{bad:?}");
+    }
+
+    #[test]
+    fn a_run_verb_only_claims_the_paths_in_its_own_clause() {
+        let ops = vec![op(94, "run", "python3 sims/toy.py", "ok"), op(95, "write", "results.md", "ok")];
+        let honest = "The script `sims/toy.py` was executed, and the results were copied exactly into `results.md`.";
+        assert!(unbacked_action_claims(honest, &ops).is_empty(), "{:?}", unbacked_action_claims(honest, &ops));
+        let both = unbacked_action_claims("I ran sims/toy.py and sims/other.py.", &ops);
+        assert_eq!(both.len(), 1, "a list after one run verb is still checked: {both:?}");
+        let later = unbacked_action_claims("I read sims/other.py, and then executed sims/other.py.", &ops);
+        assert_eq!(later.len(), 1, "{later:?}");
     }
 
     #[test]
