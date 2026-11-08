@@ -40,11 +40,42 @@ fn source_numbers(ops: &[OpRecord], inputs: &str) -> Vec<f64> {
     texts.iter().flat_map(|t| num_re.find_iter(t).filter_map(|m| m.as_str().replace('−', "-").parse::<f64>().ok())).collect()
 }
 
-/// G4: numbers the reply reports as results (`name = v`, `v ± e`, `v <unit>`) must appear, to their
-/// stated precision, in a successful RUN/CALC/READ/FETCH/watch output or in the thread's inputs.
+fn candidate_re() -> regex::Regex {
+    regex::Regex::new(&format!(r"(?:=|≈|≃)\s*({NUM})|({NUM})\s*(?:±|\+/-|\+-)|({NUM})\s?(?:×\s?10\^?[-+]?\d+\s?)?(?:{UNITS})")).unwrap()
+}
+
+/// Numbers a sentence reports as results: `name = v`, `v ± e`, `v <unit>`; not identifiers or bare years.
+fn reported_numbers<'a>(sentence: &'a str, candidate: &regex::Regex) -> Vec<(&'a str, f64, f64)> {
+    let mut out = Vec::new();
+    for cap in candidate.captures_iter(sentence) {
+        let m = cap.get(1).or(cap.get(2)).or(cap.get(3)).unwrap();
+        let before = sentence[..m.start()].chars().next_back();
+        if before.is_some_and(|c| c.is_alphanumeric() || "_./#:".contains(c)) {
+            continue;
+        }
+        let Some((value, tol)) = parse_num(m.as_str()) else { continue };
+        let year_like = !m.as_str().contains(['.', 'e', 'E']) && (1900.0..=2100.0).contains(&value) && cap.get(2).is_none();
+        if !year_like {
+            out.push((m.as_str(), value, tol));
+        }
+    }
+    out
+}
+
+fn contains_number(sources: &[f64], value: f64, tol: f64) -> bool {
+    sources.iter().any(|s| (s - value).abs() <= tol * (1.0 + 1e-9) || (s + value).abs() <= tol * (1.0 + 1e-9))
+}
+
+fn numbers_in(text: &str) -> Vec<f64> {
+    let num_re = regex::Regex::new(NUM).unwrap();
+    num_re.find_iter(text).filter_map(|m| m.as_str().replace('−', "-").parse::<f64>().ok()).collect()
+}
+
+/// G4: numbers the reply reports as results must appear, to their stated precision, in a
+/// successful RUN/CALC/READ/FETCH/watch output or in the thread's inputs.
 pub fn untooled_numbers(reply: &str, ops: &[OpRecord], inputs: &str) -> (Vec<String>, usize) {
     let prose = strip_non_prose(reply);
-    let candidate_re = regex::Regex::new(&format!(r"(?:=|≈|≃)\s*({NUM})|({NUM})\s*(?:±|\+/-|\+-)|({NUM})\s?(?:×\s?10\^?[-+]?\d+\s?)?(?:{UNITS})")).unwrap();
+    let candidate = candidate_re();
     let hedge_re = regex::Regex::new(HEDGE).unwrap();
     let sentence_re = regex::Regex::new(r"[.!?]\s+|\n+").unwrap();
     let sources = source_numbers(ops, inputs);
@@ -55,24 +86,56 @@ pub fn untooled_numbers(reply: &str, ops: &[OpRecord], inputs: &str) -> (Vec<Str
         if hedge_re.is_match(sentence) {
             continue;
         }
-        for cap in candidate_re.captures_iter(sentence) {
-            let m = cap.get(1).or(cap.get(2)).or(cap.get(3)).unwrap();
-            let before = sentence[..m.start()].chars().next_back();
-            if before.is_some_and(|c| c.is_alphanumeric() || "_./#:".contains(c)) {
-                continue;
-            }
-            let token = m.as_str();
-            let Some((value, tol)) = parse_num(token) else { continue };
-            let year_like = !token.contains(['.', 'e', 'E']) && (1900.0..=2100.0).contains(&value) && cap.get(2).is_none();
-            if year_like || !seen.insert(token.to_string()) {
+        for (token, value, tol) in reported_numbers(sentence, &candidate) {
+            if !seen.insert(token.to_string()) {
                 continue;
             }
             checked += 1;
-            if sources.iter().any(|s| (s - value).abs() <= tol * (1.0 + 1e-9) || (s + value).abs() <= tol * (1.0 + 1e-9)) {
+            if !contains_number(&sources, value, tol) {
+                let quote: String = sentence.trim().chars().take(100).collect();
+                issues.push(format!("\"{quote}\" reports {token}, but no RUN/CALC/READ/FETCH output or input in this thread contains it; compute it with a CALC or RUN, or mark it as an estimate or tentative."));
+            }
+        }
+    }
+    (issues, checked)
+}
+
+/// G3: a sentence that cites evidence (op#N, or a fetched arXiv ID) must report numbers that are
+/// in that evidence. Numbers from the thread's inputs (parameters) are allowed alongside.
+pub fn evidence_mismatches(reply: &str, ops: &[OpRecord], inputs: &str) -> (Vec<String>, usize) {
+    let prose = strip_non_prose(reply);
+    let candidate = candidate_re();
+    let hedge_re = regex::Regex::new(HEDGE).unwrap();
+    let sentence_re = regex::Regex::new(r"[.!?]\s+|\n+").unwrap();
+    let cite = regex::Regex::new(r"(?i)\bop#(\d+)\b").unwrap();
+    let arxiv = regex::Regex::new(r"(?i)\barxiv(?:\.org/(?:abs|pdf)/|:\s*|\s+)(\d{4}\.\d{4,5})").unwrap();
+    let input_numbers = numbers_in(inputs);
+    let mut issues = Vec::new();
+    let mut checked = 0;
+    for sentence in sentence_re.split(&prose) {
+        if hedge_re.is_match(sentence) {
+            continue;
+        }
+        let mut cited: Vec<&OpRecord> = cite.captures_iter(sentence).filter_map(|c| c[1].parse::<i64>().ok()).filter_map(|id| ops.iter().find(|o| o.id == id && o.status == "ok")).collect();
+        for c in arxiv.captures_iter(sentence) {
+            cited.extend(ops.iter().filter(|o| o.status == "ok" && o.kind == "fetch" && o.target.to_ascii_lowercase().contains(&c[1].to_ascii_lowercase())));
+        }
+        if cited.is_empty() {
+            continue;
+        }
+        checked += 1;
+        let cited_numbers: Vec<f64> = cited.iter().flat_map(|o| numbers_in(&o.result)).collect();
+        let names = cited.iter().map(|o| format!("op#{}", o.id)).collect::<Vec<_>>().join("/");
+        for (token, value, tol) in reported_numbers(sentence, &candidate) {
+            if contains_number(&cited_numbers, value, tol) || contains_number(&input_numbers, value, tol) {
                 continue;
             }
+            let elsewhere = ops.iter().filter(|o| o.status == "ok" && !cited.iter().any(|c| c.id == o.id)).find(|o| contains_number(&numbers_in(&o.result), value, tol));
             let quote: String = sentence.trim().chars().take(100).collect();
-            issues.push(format!("\"{quote}\" reports {token}, but no RUN/CALC/READ/FETCH output or input in this thread contains it; compute it with a CALC or RUN, or mark it as an estimate or tentative."));
+            issues.push(match elsewhere {
+                Some(o) => format!("\"{quote}\" reports {token} citing {names}, but it is in op#{} ({} {}), not in the cited evidence; cite op#{} instead.", o.id, o.kind, o.target, o.id),
+                None => format!("\"{quote}\" reports {token} citing {names}, but the cited evidence does not contain it."),
+            });
         }
     }
     (issues, checked)
@@ -255,5 +318,21 @@ mod tests {
         assert_eq!(t.g5.len(), 1, "{t:?}");
         let unfetched = claim_status("arXiv:2001.00001 proves the tension is 1 TeV.", &ops);
         assert_eq!(unfetched.g2.len(), 1, "an unfetched citation is no basis: {unfetched:?}");
+    }
+
+    #[test]
+    fn cited_evidence_must_contain_the_reported_numbers() {
+        let mut ops = run94();
+        ops.push(op(95, "read", "params/toy.json", r#"{"content":"{\"k\": 4.0}"}"#));
+        ops.push(op(85, "fetch", "https://arxiv.org/abs/1905.09311", "repulsive interactions grow from 200 to 19.6 GeV"));
+        let (ok, n) = evidence_mismatches("op#94 gives omega = 2.0000 rad/s for k = 4.0 (op#95 has k).", &ops, "");
+        assert!(ok.is_empty() && n == 1, "{ok:?}");
+        let (wrong, _) = evidence_mismatches("The read op#95 gives omega = 2.0000 rad/s.", &ops, "");
+        assert_eq!(wrong.len(), 1, "{wrong:?}");
+        assert!(wrong[0].contains("op#94"), "{wrong:?}");
+        assert!(evidence_mismatches("arXiv:1905.09311 reports the trend down to 19.6 GeV.", &ops, "").0.is_empty());
+        assert_eq!(evidence_mismatches("arXiv:1905.09311 reports the trend down to 27.5 GeV.", &ops, "").0.len(), 1);
+        assert!(evidence_mismatches("With k = 9.662, op#94 gives omega = 2.0000 rad/s.", &ops, "k = 9.662").0.is_empty(), "inputs may sit beside a citation");
+        assert!(evidence_mismatches("omega = 7.7 rad/s.", &ops, "").0.is_empty(), "no citation, nothing for G3 (G4 covers it)");
     }
 }

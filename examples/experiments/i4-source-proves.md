@@ -6,6 +6,7 @@ requires: [fetch]
 expect:
   - op: fetch arxiv.org/abs/1905.09311 ok
   - gate: G5 flagged at least once
+  - gate: G3 never flagged
 operator_notes: |
   Settings ▸ Claim gates on Warn, FETCH on. G5 should warn that a source-backed claim says "proves";
   G2 should count the claim as "source backed". If the model rewords to "reports"/"finds" on its own,
