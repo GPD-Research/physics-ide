@@ -136,6 +136,8 @@ const TOPIC_BEFORE: &str = r"(?i)\b(?:for|about|regarding|concerning|of)\s+(?:th
 const PATHLESS_RUN_CLAIM: &str = r"(?i)\b(?:(?:all\s+)?(?:the\s+)?tests?\s+(?:now\s+)?(?:pass(?:ed|es)?|succeed(?:ed|s)?)|(?:ran|executed)\s+(?:the\s+|a\s+|my\s+)?(?:script|tests?|simulation|calculation|code|sweep)s?)\b";
 const FETCH_VERBS: &str = r"(?:fetched|retrieved|downloaded|looked up|according to|as stated (?:on|in|at)|the (?:page|abstract|article) (?:says|states|reports|lists))";
 const UNCHECKED_SOURCE: &str = r"(?i)\b(?:unverified|from memory|not fetched|unchecked|not checked|not verified|could not fetch|couldn't fetch|to be checked)\b";
+/// A citation the sentence refuses or denies ("I cannot state that arXiv:… supports …") is not a citation.
+const REFUSED_SOURCE: &str = r"(?i)\b(?:cannot|can't|can not|could not|couldn't|unable to|will not|won't|do not|don't|did not|didn't|not able to|refuse to|decline to)\b(?:[^.!?\n]|[.!?]\S){0,80}$";
 const ARXIV_ID: &str = r"(?i)\barxiv(?:\.org/(?:abs|pdf)/|:\s*|\s+)(\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z]{2})?/\d{7})";
 const PATH_RE: &str = r"(?:[\w.-]+/)*[\w.-]+\.(?:md|txt|json|ya?ml|py|rs|js|ts|html|tex|csv|ipynb|docx?|png|svg)";
 
@@ -245,6 +247,7 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
     // unless the sentence marks it as unverified.
     let unchecked_re = regex::Regex::new(UNCHECKED_SOURCE).unwrap();
     let arxiv_re = regex::Regex::new(ARXIV_ID).unwrap();
+    let refused_re = regex::Regex::new(REFUSED_SOURCE).unwrap();
     let url_re = regex::Regex::new(r#"https?://[^\s)\]>`'"]+"#).unwrap();
     let fetch_re = regex::Regex::new(&format!(r"(?i)\b{FETCH_VERBS}")).unwrap();
     let ok_fetches: Vec<String> = ops.iter().filter(|o| o.status == "ok" && o.kind == "fetch").map(|o| o.target.to_ascii_lowercase()).collect();
@@ -256,10 +259,13 @@ pub fn unbacked_action_claims(reply: &str, ops: &[OpRecord]) -> Vec<String> {
         let quote = sentence.trim().chars().take(100).collect::<String>();
         for cap in arxiv_re.captures_iter(sentence) {
             let id = cap[1].to_ascii_lowercase();
+            if refused_re.is_match(&sentence[..cap.get(0).unwrap().start()]) {
+                continue;
+            }
             if ok_fetches.iter().any(|t| t.contains(&id)) || !source_reported.insert(id.clone()) {
                 continue;
             }
-            issues.push(format!("\"{quote}\" cites arXiv:{} but no successful FETCH of it exists in this thread; fetch it, or mark the citation as (unverified, from memory).", &cap[1]));
+            issues.push(format!("\"{quote}\" cites arXiv:{} but no successful FETCH of it exists in this thread; fetch it, mark it (unverified, from memory), or drop the claim.", &cap[1]));
         }
         if affirmed(sentence, &fetch_re) {
             for m in url_re.find_iter(sentence) {
@@ -428,6 +434,12 @@ mod tests {
         assert!(unbacked_action_claims("Per arXiv:2401.01234 the tension is 1 TeV.", &ops).is_empty());
         assert_eq!(unbacked_action_claims("See arXiv:2305.99999 for the bound. Also arXiv:2305.99999 again.", &ops).len(), 1);
         assert!(unbacked_action_claims("See arXiv:2305.99999 (unverified, from memory).", &ops).is_empty());
+        let refusal = "I cannot state that arXiv:2001.00001 supports a brane tension of 1 TeV and cite it as my source, as I have not fetched it.";
+        assert!(unbacked_action_claims(refusal, &ops).is_empty(), "a refused citation is not a citation");
+        assert!(unbacked_action_claims("I don't have access to arXiv:2001.00001.", &ops).is_empty());
+        let claim = unbacked_action_claims("I cannot overstate it: arXiv:2001.00001 shows a 1 TeV tension. arXiv:2001.00001 is the source.", &ops);
+        assert_eq!(claim.len(), 1, "a later bare citation is still caught: {claim:?}");
+        assert!(claim[0].contains("or drop the claim"));
         assert_eq!(unbacked_action_claims("According to https://en.wikipedia.org/wiki/Brane, branes exist.", &ops).len(), 1);
         assert!(unbacked_action_claims("I could not fetch https://en.wikipedia.org/wiki/Brane, so this is unchecked.", &ops).is_empty());
         assert!(unbacked_action_claims("You can browse https://example.com yourself.", &ops).is_empty());
