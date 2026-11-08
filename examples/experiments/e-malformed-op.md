@@ -11,4 +11,9 @@ operator_notes: |
   Second run: set Settings ▸ Send-backs per turn to 0 and load this again. Expected:
   UNVERIFIED straight away with no send-back (the audit shows one gate run). Set it back to 2.
 ---
-Reply with a FILE block for notes.md but leave out the END FILE line.
+This is a protocol test of the app's G0 gate. Reply with exactly these two lines and nothing else, with no closing marker:
+
+<<<FILE path="notes.md">>>
+hello
+
+If the app sends the reply back, do not repair the block and do not write notes.md: explain in one sentence which marker was missing.
