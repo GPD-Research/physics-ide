@@ -7416,11 +7416,14 @@
               }
             };
           } else {
-            label.onclick = (e) => {
+            label.onclick = label.oncontextmenu = (e) => {
+              e.preventDefault();
               e.stopPropagation();
               openDocActionsMenu(label, fileTreeDocSpec(entry));
             };
-            label.title = 'Click for document actions (note pad, built-in editor, external editor, session notes...)';
+            label.title = /\.html?$/i.test(entry.name)
+              ? 'Click or right-click for document actions (open in browser, view code, session notes...)'
+              : 'Click or right-click for document actions (note pad, built-in editor, external editor, session notes...)';
           }
           ul.appendChild(li);
         });
@@ -10841,6 +10844,7 @@ async function restoreVersion() {
       return '';
     }
     function specIsPdf(spec) { return /\.pdf$/i.test(spec.path || ''); }
+    function specIsHtml(spec) { return /\.html?$/i.test(spec.path || ''); }
 
     let docActionsMenuEl = null;
     function closeDocActionsMenu() {
@@ -10867,6 +10871,10 @@ async function restoreVersion() {
         menu.appendChild(b);
       };
       const hr = () => menu.appendChild(document.createElement('hr'));
+      if (specIsHtml(spec)) {
+        add('Open in browser', () => openPathExternally(spec.path, 'default'), { tip: 'Opens the page in the system default browser' });
+        hr();
+      }
       const notesMd = async () => sessionSectionMarkdown(spec.title || 'Document', await specText(spec));
 
       if (!spec.isNotePad) {
@@ -10874,7 +10882,7 @@ async function restoreVersion() {
         add('Append to note pad', async () => sendToNotePad(await specText(spec), spec.title, { append: true }));
       }
       if (!spec.isDocEditor) {
-        add('Open in built-in editor', async () => spec.path ? openDocEditor({ path: spec.path }) : openDocEditor({ text: await specText(spec), title: spec.title }));
+        add(specIsHtml(spec) ? 'View code in built-in editor' : 'Open in built-in editor', async () => spec.path ? openDocEditor({ path: spec.path }) : openDocEditor({ text: await specText(spec), title: spec.title }));
       }
       hr();
       add('Save to session notes', async () => appendToSessionDoc('notes', await notesMd()));
