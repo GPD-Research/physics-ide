@@ -154,6 +154,7 @@ The project has moved from a simple desktop shell toward a more practical theory
 - "Agentic Build-out" documentation, then watch-mode experiment sweeps and a self-verification pass;
 - add a Table Fixer and an HTML/KaTeX PDF export route for table-heavy manuscripts;
 - implement lazy directory token-cost guidance and complete the production release audit.
+- planned, after the gates/tests stage is stable: a Theory Map pane with import and generate ([docs/planned/theory-map.md](docs/planned/theory-map.md)).
 
 ## Version 8 Implementation Order
 
